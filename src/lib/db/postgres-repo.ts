@@ -53,7 +53,7 @@ export class PostgresRepository implements Repository {
       escalation_summary text,
       disclosed_ai boolean,
       csat integer,
-      meta jsonb
+      meta text
     )`;
     await this.sql`CREATE TABLE IF NOT EXISTS messages (
       id text PRIMARY KEY,
@@ -61,12 +61,22 @@ export class PostgresRepository implements Repository {
       role text NOT NULL,
       content text NOT NULL,
       ts bigint NOT NULL,
-      meta jsonb
+      meta text
     )`;
     await this.sql`CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages (conversation_id)`;
   }
 
   // ---------- mappers ----------
+  private parseMeta(v: unknown): Record<string, unknown> | undefined {
+    if (!v) return undefined;
+    if (typeof v === "object") return v as Record<string, unknown>;
+    try {
+      return JSON.parse(v as string);
+    } catch {
+      return undefined;
+    }
+  }
+
   private toCustomer(r: Record<string, unknown>): Customer {
     return {
       id: r.id as string,
@@ -93,7 +103,7 @@ export class PostgresRepository implements Repository {
       escalationSummary: (r.escalation_summary as string) ?? undefined,
       disclosedAi: (r.disclosed_ai as boolean) ?? undefined,
       csat: (r.csat as number) ?? undefined,
-      meta: (r.meta as Record<string, unknown>) ?? undefined,
+      meta: this.parseMeta(r.meta),
     };
   }
   private toMessage(r: Record<string, unknown>): StoredMessage {
@@ -103,7 +113,7 @@ export class PostgresRepository implements Repository {
       role: r.role as StoredMessage["role"],
       content: r.content as string,
       ts: Number(r.ts),
-      meta: (r.meta as Record<string, unknown>) ?? undefined,
+      meta: this.parseMeta(r.meta),
     };
   }
 
