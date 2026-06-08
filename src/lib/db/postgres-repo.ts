@@ -74,6 +74,10 @@ export class PostgresRepository implements Repository {
       created_at bigint NOT NULL,
       answered_at bigint
     )`;
+    await this.sql`CREATE TABLE IF NOT EXISTS settings (
+      key text PRIMARY KEY,
+      value text NOT NULL
+    )`;
   }
 
   private toLearnedQA(r: Record<string, unknown>): LearnedQA {
@@ -282,5 +286,18 @@ export class PostgresRepository implements Repository {
   async deleteLearnedQA(id: string): Promise<void> {
     await this.init();
     await this.sql`DELETE FROM learned_qa WHERE id = ${id}`;
+  }
+
+  async getSetting(key: string): Promise<string | null> {
+    await this.init();
+    const rows = await this.sql`SELECT value FROM settings WHERE key = ${key}`;
+    return rows[0] ? (rows[0].value as string) : null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    await this.init();
+    await this.sql`
+      INSERT INTO settings (key, value) VALUES (${key}, ${value})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
   }
 }

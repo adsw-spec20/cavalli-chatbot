@@ -128,6 +128,12 @@ export async function handleIncomingMessage(
     return { conversationId: conversation.id, reply: null, status: "human" };
   }
 
+  // כפתור כיבוי גלובלי: אם הבוט כבוי, הוא שותק וההודעה ממתינה לצוות (רשת ביטחון)
+  const botEnabled = (await repo.getSetting("bot_enabled")) !== "false";
+  if (!botEnabled) {
+    return { conversationId: conversation.id, reply: null, status: conversation.status };
+  }
+
   const isFirstTurn = !conversation.disclosedAi;
 
   // בניית היסטוריה למודל (רק הודעות לקוח/בוט, חלון אחרון)

@@ -111,4 +111,8 @@ export interface Repository {
   listLearnedQA(status?: "open" | "answered"): Promise<LearnedQA[]>;
   answerLearnedQA(id: string, answer: string): Promise<LearnedQA | null>;
   deleteLearnedQA(id: string): Promise<void>;
+
+  // ----- הגדרות מערכת (key-value), למשל כפתור כיבוי הבוט -----
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string): Promise<void>;
 }

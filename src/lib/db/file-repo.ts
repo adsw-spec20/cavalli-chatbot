@@ -23,13 +23,20 @@ interface StoreShape {
   conversations: Record<string, Conversation>;
   messages: StoredMessage[];
   learnedQA: LearnedQA[];
+  settings: Record<string, string>;
 }
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 
 function emptyStore(): StoreShape {
-  return { customers: {}, conversations: {}, messages: [], learnedQA: [] };
+  return {
+    customers: {},
+    conversations: {},
+    messages: [],
+    learnedQA: [],
+    settings: {},
+  };
 }
 
 export class FileRepository implements Repository {
@@ -185,6 +192,17 @@ export class FileRepository implements Repository {
   async deleteLearnedQA(id: string): Promise<void> {
     const store = await this.load();
     store.learnedQA = store.learnedQA.filter((q) => q.id !== id);
+    await this.persist();
+  }
+
+  async getSetting(key: string): Promise<string | null> {
+    const store = await this.load();
+    return store.settings[key] ?? null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    const store = await this.load();
+    store.settings[key] = value;
     await this.persist();
   }
 }

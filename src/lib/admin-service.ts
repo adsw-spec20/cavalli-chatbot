@@ -26,6 +26,8 @@ export interface ConversationListItem {
   updatedAt: number;
   lastMessage?: string;
   messageCount: number;
+  /** האם ההודעה האחרונה מהלקוח (כלומר ממתינה למענה) */
+  awaiting: boolean;
 }
 
 export async function listConversations(): Promise<ConversationListItem[]> {
@@ -34,9 +36,9 @@ export async function listConversations(): Promise<ConversationListItem[]> {
   const all = await repo.getAllMessages();
   return convs.map((c) => {
     const msgs = all.filter((m) => m.conversationId === c.id);
-    const lastUserOrBot = [...msgs]
+    const lastNonSystem = [...msgs]
       .reverse()
-      .find((m) => m.role === "user" || m.role === "assistant");
+      .find((m) => m.role !== "system");
     return {
       id: c.id,
       channel: c.channel,
@@ -46,10 +48,19 @@ export async function listConversations(): Promise<ConversationListItem[]> {
       customerName: undefined,
       customerId: c.customerId,
       updatedAt: c.updatedAt,
-      lastMessage: lastUserOrBot?.content.slice(0, 80),
+      lastMessage: lastNonSystem?.content.slice(0, 80),
       messageCount: msgs.length,
+      awaiting: lastNonSystem?.role === "user",
     };
   });
+}
+
+/** כפתור כיבוי: האם הבוט פעיל */
+export async function getBotEnabled(): Promise<boolean> {
+  return (await getRepo().getSetting("bot_enabled")) !== "false";
+}
+export async function setBotEnabled(enabled: boolean): Promise<void> {
+  await getRepo().setSetting("bot_enabled", enabled ? "true" : "false");
 }
 
 export interface ConversationDetail {
