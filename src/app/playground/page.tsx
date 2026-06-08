@@ -11,13 +11,13 @@ import type { ConversationMessage } from "@/lib/channels/types";
 export default function Playground() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [pending, setPending] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const conversationId = useRef<string | undefined>(undefined);
   const clientId = useRef<string>("");
 
-  // מזהה דפדפן יציב (כדי לדמות "לקוח חוזר") + מזהה שיחה מתמשך
+  // מזהה דפדפן יציב (כדי לדמות "לקוח חוזר") + מזהה שיחה שנוצר מראש (לטיפול ברצף)
   useEffect(() => {
     let id = localStorage.getItem("cavalli_client_id");
     if (!id) {
@@ -25,30 +25,29 @@ export default function Playground() {
       localStorage.setItem("cavalli_client_id", id);
     }
     clientId.current = id;
+    if (!conversationId.current) conversationId.current = crypto.randomUUID();
   }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, pending]);
 
   function resetConversation() {
-    conversationId.current = undefined;
+    conversationId.current = crypto.randomUUID();
     setMessages([]);
     setError(null);
   }
 
+  // אפשר לשלוח גם בזמן שהבוט "מקליד" (כמו בפלטפורמות אמיתיות). השרת מטפל ברצף
+  // ההודעות: ההודעה האחרונה מנצחת, ותשובות שהוחלפו חוזרות כ-null ומתעלמים מהן.
   async function send() {
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text) return;
 
     setError(null);
-    const newHistory: ConversationMessage[] = [
-      ...messages,
-      { role: "user", content: text },
-    ];
-    setMessages(newHistory);
     setInput("");
-    setLoading(true);
+    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    setPending((p) => p + 1);
 
     try {
       const res = await fetch("/api/chat", {
@@ -64,18 +63,18 @@ export default function Playground() {
       if (!res.ok) throw new Error(data.error || "שגיאה בשרת");
       conversationId.current = data.conversationId;
       if (data.reply) {
-        setMessages([...newHistory, { role: "assistant", content: data.reply }]);
-      } else {
-        // נציג אנושי השתלט על השיחה - הבוט שותק
-        setMessages([
-          ...newHistory,
+        setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+      } else if (data.status === "human") {
+        setMessages((prev) => [
+          ...prev,
           { role: "assistant", content: "(נציג אנושי יענה לך בקרוב 🙋)" },
         ]);
       }
+      // reply=null עם status=bot => ההודעה הוחלפה ע"י חדשה יותר, לא מציגים כלום
     } catch (err) {
       setError(err instanceof Error ? err.message : "שגיאה לא ידועה");
     } finally {
-      setLoading(false);
+      setPending((p) => p - 1);
     }
   }
 
@@ -121,10 +120,12 @@ export default function Playground() {
               </div>
             </div>
           ))}
-          {loading && (
+          {pending > 0 && (
             <div className="flex justify-end">
-              <div className="bg-emerald-700/50 rounded-2xl px-4 py-2 text-sm">
-                מקליד…
+              <div className="bg-emerald-700/50 rounded-2xl px-4 py-2 text-sm flex gap-1 items-center">
+                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
               </div>
             </div>
           )}
@@ -144,8 +145,7 @@ export default function Playground() {
           />
           <button
             onClick={send}
-            disabled={loading}
-            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition-colors px-5 py-2 rounded-lg text-sm font-semibold"
+            className="bg-emerald-600 hover:bg-emerald-500 transition-colors px-5 py-2 rounded-lg text-sm font-semibold"
           >
             שלח
           </button>

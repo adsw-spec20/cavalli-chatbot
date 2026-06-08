@@ -69,6 +69,37 @@ function buildHandoffMessage(firstTurn: boolean): string {
 
 const HISTORY_LIMIT = 12;
 
+// טיפול ברצף הודעות + הגבלת קצב
+const DEBOUNCE_MS = 1000; // המתנה קצרה לראות אם המשתמש שולח עוד הודעה
+const RATE_PER_MIN = 15;
+const RATE_PER_HOUR = 50;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** האם הגיעה הודעת לקוח חדשה יותר (כדי לדעת אם הקריאה הזו "הוחלפה" ע"י חדשה) */
+async function hasNewerUserMessage(
+  conversationId: string,
+  afterTs: number
+): Promise<boolean> {
+  const msgs = await getRepo().getMessages(conversationId);
+  return msgs.some((m) => m.role === "user" && m.ts > afterTs);
+}
+
+/** ממזג הודעות רצופות מאותו תפקיד להודעה אחת (רצף הודעות לקוח = תור אחד) */
+function mergeConsecutive(
+  history: ConversationMessage[]
+): ConversationMessage[] {
+  const out: ConversationMessage[] = [];
+  for (const m of history) {
+    const last = out[out.length - 1];
+    if (last && last.role === m.role) last.content += "\n" + m.content;
+    else out.push({ ...m });
+  }
+  // המודל מצפה שההיסטוריה תתחיל בהודעת לקוח
+  while (out.length && out[0].role === "assistant") out.shift();
+  return out;
+}
+
 export interface HandleInput {
   channel: Channel;
   /** מזהה ייחודי של המשתמש בתוך הערוץ (טלפון / PSID / clientId בדפדפן) */
@@ -101,13 +132,19 @@ export async function handleIncomingMessage(
     name: input.customerName,
   });
 
-  // מציאת שיחה פעילה או יצירת חדשה
+  // מציאת שיחה: לפי מזהה אם ניתן, אחרת לפי הלקוח (חשוב לרצף הודעות בלי מזהה,
+  // למשל בוואטסאפ ששם המפתח הוא הלקוח). כך הודעות עוקבות מאותו אדם נכנסות לאותה שיחה.
   let conversation = input.conversationId
     ? await repo.getConversation(input.conversationId)
     : null;
+  if (!conversation && !input.conversationId) {
+    const all = await repo.listConversations();
+    conversation =
+      all.find((c) => c.customerId === customerId && c.status !== "closed") ?? null;
+  }
   if (!conversation || conversation.status === "closed") {
     conversation = await repo.createConversation({
-      id: randomUUID(),
+      id: input.conversationId ?? randomUUID(), // מכבד מזהה שנוצר אצל הלקוח (Playground)
       channel: input.channel,
       customerId,
       status: "bot",
@@ -115,11 +152,12 @@ export async function handleIncomingMessage(
   }
 
   // שמירת הודעת המשתמש
+  const myTs = Date.now();
   await repo.addMessage({
     conversationId: conversation.id,
     role: "user",
     content: input.text,
-    ts: Date.now(),
+    ts: myTs,
     meta: input.meta,
   });
 
@@ -134,14 +172,36 @@ export async function handleIncomingMessage(
     return { conversationId: conversation.id, reply: null, status: conversation.status };
   }
 
+  // ----- הגבלת קצב (rate limit): הגנה מפני הצפת הודעות -----
+  {
+    const recent = await repo.getMessages(conversation.id);
+    const now = Date.now();
+    const perMin = recent.filter((m) => m.role === "user" && m.ts > now - 60_000).length;
+    const perHour = recent.filter((m) => m.role === "user" && m.ts > now - 3_600_000).length;
+    if (perMin > RATE_PER_MIN || perHour > RATE_PER_HOUR) {
+      console.log(`[RATE_LIMIT] conv=${conversation.id} perMin=${perMin} perHour=${perHour}`);
+      return { conversationId: conversation.id, reply: null, status: conversation.status };
+    }
+  }
+
+  // ----- טיפול ברצף הודעות: דבאונס + "ההודעה האחרונה מנצחת" -----
+  // מחכים רגע קצר; אם בינתיים הגיעה הודעה חדשה יותר, הקריאה הזו פורשת
+  // (הקריאה החדשה תטפל בכל ההודעות יחד, ותחזיר תשובה אחת קוהרנטית).
+  await sleep(DEBOUNCE_MS);
+  if (await hasNewerUserMessage(conversation.id, myTs)) {
+    return { conversationId: conversation.id, reply: null, status: conversation.status };
+  }
+
   const isFirstTurn = !conversation.disclosedAi;
 
-  // בניית היסטוריה למודל (רק הודעות לקוח/בוט, חלון אחרון)
+  // בניית היסטוריה (ממוזגת - רצף הודעות לקוח נחשב כתור אחד)
   const stored = await repo.getMessages(conversation.id);
-  const history: ConversationMessage[] = stored
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .slice(-HISTORY_LIMIT)
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+  const history = mergeConsecutive(
+    stored
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(-HISTORY_LIMIT)
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))
+  );
 
   // ידע נלמד: שאלות שהצוות ענה עליהן מוזרקות לבוט
   const answeredQA = await repo.listLearnedQA("answered");
@@ -153,6 +213,12 @@ export async function handleIncomingMessage(
     firstTurn: isFirstTurn,
     learnedFaqs,
   });
+
+  // בדיקה סופית: אם בזמן שהמודל ניסח, הגיעה הודעה חדשה - זורקים את התשובה
+  // (הקריאה החדשה תייצר תשובה מעודכנת). מונע תשובה כפולה/לא מעודכנת.
+  if (await hasNewerUserMessage(conversation.id, myTs)) {
+    return { conversationId: conversation.id, reply: null, status: conversation.status };
+  }
 
   // ----- המודל החליט להעביר לנציג אנושי -----
   if (result.escalate) {
