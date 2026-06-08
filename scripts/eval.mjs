@@ -21,6 +21,12 @@ const GLOBAL_FORBIDDEN = [
 // סימן ל"ברכה גנרית במקום תשובה"
 const GREETING_SIG = "אז איך אפשר לעזור";
 
+// כל הדרכים שבהן הבוט מאותת "אין לי תשובה מלאה" (לבדיקת מקרי פער)
+const GAP_SIGNALS = [
+  "צוות", "אין לי", "לא מופיע", "לא יודע", "לא בטוח", "בוודאות",
+  "ברר", "אנחש", "לבדוק", "לשאול", "8149",
+];
+
 const CASES = [
   { name: "ברכה", turns: ["היי"], includeAny: ["קוואלי"], greetingOk: true },
   { name: "מחיר קרואסון", turns: ["כמה עולה קרואסון שחיתות?"], includeAny: ["72"] },
@@ -31,17 +37,18 @@ const CASES = [
   { name: "כשרות", turns: ["אתם כשרים?"], includeAny: ["בית יוסף", "חלבי", "כשר"] },
   { name: "טייק אווי", turns: ["אפשר טייק אווי?"], includeAny: ["טייק", "כן"] },
   { name: "ילדים חכם", turns: ["אני מגיע עם ילדים, מה לאכול חוץ מפסטה?"], includeAny: ["פיצה", "צ'יפס", "פיש"] },
-  { name: "גלוטן באמצע שיחה", turns: ["היי", "יש מנות ללא גלוטן?"], includeAny: ["גלוטן", "צוות", "ברר"], exclude: [GREETING_SIG] },
+  { name: "גלוטן באמצע שיחה", turns: ["היי", "יש מנות ללא גלוטן?"], includeAny: GAP_SIGNALS.concat(["גלוטן"]), exclude: [GREETING_SIG] },
   { name: "שגיאת כתיב", turns: ["כמה עולה קורסון?"], includeAny: ["72"] },
-  { name: "שאלה לא ידועה", turns: ["באיזה שנה המקום נפתח?"], includeAny: ["אין לי", "צוות", "8149"] },
+  { name: "שאלה לא ידועה", turns: ["באיזה שנה המקום נפתח?"], includeAny: GAP_SIGNALS },
   { name: "מחוץ לתחום - אייפל", turns: ["מה הגובה של מגדל אייפל?"], includeAny: ["קוואלי", "בית הקפה", "חולון", "תפריט"], exclude: ["330 מטר", "324 מטר"] },
   { name: "מחוץ לתחום - טריוויה", turns: ["מי ראש ממשלת צרפת?"], includeAny: ["קוואלי", "בית הקפה", "חולון", "תפריט"] },
+  { name: "מחוץ לתחום - תספורת", turns: ["כמה עולה תספורת?"], includeAny: ["קוואלי", "קפה", "תפריט"] },
   { name: "רגיש", turns: ["יש לי כאבים חזקים בחזה"], includeAny: ["101", "רפוא", "רופא"] },
   { name: "הסלמה - תלונה", turns: ["אני רוצה להתלונן על שירות גרוע מאוד"], includeAny: ["צוות", "נציג", "8149"] },
   { name: "פתוחים עכשיו", turns: ["אתם פתוחים עכשיו?"], includeAny: ["פתוח", "סגור"] },
-  { name: "שירותים (פער קטן)", turns: ["איפה השירותים?"], includeAny: ["צוות", "אין לי", "לא מופיע", "בהגעה", "אנחש", "8149"] },
-  { name: "שינוי מנה (פער קטן)", turns: ["אפשר להפריד את החציל מהטחינה?"], includeAny: ["צוות", "אין לי", "לא מופיע", "ברר", "אנחש", "8149"] },
-  { name: "מספר עובדים (פער קטן)", turns: ["כמה עובדים יש אצלכם?"], includeAny: ["צוות", "אין לי", "לא מופיע", "אנחש", "8149"] },
+  { name: "שירותים (פער קטן)", turns: ["איפה השירותים?"], includeAny: GAP_SIGNALS.concat(["בהגעה"]) },
+  { name: "שינוי מנה (פער קטן)", turns: ["אפשר להפריד את החציל מהטחינה?"], includeAny: GAP_SIGNALS },
+  { name: "מספר עובדים (פער קטן)", turns: ["כמה עובדים יש אצלכם?"], includeAny: GAP_SIGNALS },
 ];
 
 async function send(text, conversationId, clientId) {
@@ -72,6 +79,15 @@ for (let i = 0; i < CASES.length; i++) {
 
   for (const g of GLOBAL_FORBIDDEN) {
     if (reply.includes(g.p)) problems.push(`מכיל אסור (${g.why})`);
+  }
+  // קול מילוי "הה"/"אהה" כמילה עצמאית
+  if (/(^|[\s,.!])(הה|אהה)([\s,.!]|$)/.test(reply)) {
+    problems.push("קול מילוי (הה/אהה)");
+  }
+  // מילת יחס תלויה בסוף שורה (למשל "...לעזור עם" עם אימוג'י/נקודה אחריו)
+  const firstLineHe = reply.split("\n")[0].replace(/[^֐-׿]+$/u, "");
+  if (firstLineHe.endsWith("לעזור עם") || firstLineHe.endsWith("אני כאן על")) {
+    problems.push("מילת יחס תלויה/שגויה");
   }
   if (!c.greetingOk && reply.includes(GREETING_SIG)) {
     problems.push("ברכה גנרית במקום תשובה");
