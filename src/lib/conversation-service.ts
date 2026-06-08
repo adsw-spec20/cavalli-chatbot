@@ -13,30 +13,6 @@ import { businessConfig } from "./business-config";
 import { isOpenNow } from "./business-hours";
 import type { Channel, ConversationMessage } from "./channels/types";
 
-// זיהוי "רק ברכה" (היי / שלום / בוקר טוב) כדי לפתוח בהודעת גילוי אחת ונקייה,
-// בלי קריאת מודל מיותרת ובלי ברכה כפולה.
-const GREETING_WORDS = new Set([
-  "היי", "הי", "הייי", "שלום", "אהלן", "יו", "הלו", "הולו", "heyy", "hi",
-  "hello", "hey", "בוקר", "טוב", "ערב", "צהריים", "טובים", "מה", "נשמע",
-  "קורה", "המצב", "שלומך",
-]);
-
-function normalizeText(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[׳ʼ'’"״`]/g, "")
-    .replace(/[^֐-׿a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function isGreetingOnly(text: string): boolean {
-  const words = normalizeText(text).split(" ").filter(Boolean);
-  if (words.length === 0) return true;
-  if (words.length > 3) return false;
-  return words.every((w) => GREETING_WORDS.has(w));
-}
-
 /** מנסח הודעת העברה לאדם, לפי שעות הפעילות */
 function buildHandoffMessage(): string {
   const phone = businessConfig.contact.phone;
@@ -109,23 +85,6 @@ export async function handleIncomingMessage(
   }
 
   const isFirstTurn = !conversation.disclosedAi;
-
-  // פתיחה נקייה: אם זו ההודעה הראשונה והלקוח רק בירך, החזר את משפט הגילוי בלבד
-  // (הוא כבר מברך ושואל "איך אפשר לעזור"), בלי קריאת מודל ובלי ברכה כפולה.
-  if (isFirstTurn && businessConfig.aiDisclosure && isGreetingOnly(input.text)) {
-    await repo.updateConversation(conversation.id, { disclosedAi: true });
-    await repo.addMessage({
-      conversationId: conversation.id,
-      role: "assistant",
-      content: businessConfig.aiDisclosure,
-      ts: Date.now(),
-    });
-    return {
-      conversationId: conversation.id,
-      reply: businessConfig.aiDisclosure,
-      status: "bot",
-    };
-  }
 
   // בניית היסטוריה למודל (רק הודעות לקוח/בוט, חלון אחרון)
   const stored = await repo.getMessages(conversation.id);
