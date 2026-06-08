@@ -7,16 +7,16 @@
  */
 
 import type { BusinessConfig } from "./business-config";
-import { getCategoryNames } from "./knowledge-retrieval";
+import { renderMenuCategories } from "./knowledge-retrieval";
 
 export function buildSystemPrompt(config: BusinessConfig): string {
   const hoursText = config.hours
     .map((h) => `  - ${h.day}: ${h.hours ?? "סגור"}`)
     .join("\n");
 
-  // התפריט המלא לא נשלח כאן (חיסכון בעלות). נשלחות רק שמות הקטגוריות, והפירוט
-  // של הקטגוריות הרלוונטיות לשאלה מצורף בנפרד (ראה knowledge-retrieval.ts).
-  const categoryNames = getCategoryNames(config).join(", ");
+  // התפריט המלא נכלל ב-System Prompt הקבוע (שנשמר במטמון), כך שכל הודעה משלמת
+  // עליו בזול (cache read) במקום לשלוח אותו דינמית ולא-מטומן בכל פעם.
+  const menuText = renderMenuCategories(config.menu);
 
   const contactLines = [
     config.contact.phone && `  - טלפון: ${config.contact.phone}`,
@@ -107,9 +107,8 @@ ${hoursText}
 
 (התאריך והשעה הנוכחיים בישראל מצורפים בנפרד בכל הודעה. השתמש בהם **בשקט** כדי לדעת אם פתוח עכשיו ולענות על "אתם פתוחים?". אל תכריז על היום או השעה כשלא שאלו על זה - הלקוח כבר יודע איזה יום היום, זה נשמע מתחכם. פשוט אמור בטבעיות, למשל "היום אנחנו פתוחים עד 18:00" בלי "היום יום שני". זכור: סגורים בשבת.)
 
-# תפריט
-התפריט כולל את הקטגוריות הבאות: ${categoryNames}.
-(פירוט המנות והמחירים של הקטגוריות הרלוונטיות לשאלה מצורף בנפרד בכל הודעה, תחת הכותרת "פירוט תפריט". אם הלקוח שואל על מנה ספציפית והפירוט שלה לא מצורף, בקש הבהרה קצרה במקום לנחש מחיר או מרכיבים.)
+# תפריט ומחירים
+${menuText}
 ${parkingText}${eventsText}${amenitiesText}${policiesText}${faqsText}
 # כללי ברזל - חובה לפעול לפיהם
 

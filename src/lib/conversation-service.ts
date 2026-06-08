@@ -67,7 +67,7 @@ function buildHandoffMessage(firstTurn: boolean): string {
   return `הבנתי 🙋 אני ${body}`;
 }
 
-const HISTORY_LIMIT = 20;
+const HISTORY_LIMIT = 12;
 
 export interface HandleInput {
   channel: Channel;

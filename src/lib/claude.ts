@@ -8,7 +8,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { businessConfig } from "./business-config";
 import { buildSystemPrompt } from "./system-prompt";
-import { buildMenuContext } from "./knowledge-retrieval";
 import type { ConversationMessage } from "./channels/types";
 
 // מודל ברירת מחדל: Sonnet 4.6 - עברית נקייה ומדויקת, מתאים לבוט שמדבר עם לקוחות.
@@ -121,12 +120,6 @@ export async function generateReply(
 
   const systemPrompt = buildSystemPrompt(businessConfig);
 
-  const recentText = history
-    .slice(-4)
-    .map((m) => m.content)
-    .join("\n");
-  const menuContext = buildMenuContext(businessConfig, recentText);
-
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {
       type: "text",
@@ -134,9 +127,6 @@ export async function generateReply(
       cache_control: { type: "ephemeral" },
     },
   ];
-  if (menuContext) {
-    systemBlocks.push({ type: "text", text: menuContext });
-  }
   if (options.learnedFaqs && options.learnedFaqs.length) {
     const faqText = options.learnedFaqs
       .map((f) => `  שאלה: ${f.question}\n  תשובה: ${f.answer}`)
@@ -161,6 +151,19 @@ export async function generateReply(
     role: m.role,
     content: m.content,
   }));
+
+  // שמירת היסטוריית השיחה במטמון: מסמנים את ההודעה האחרונה כנקודת מטמון, כך
+  // שבתור הבא כל ההיסטוריה שעד כאן נקראת מהמטמון בזול במקום להישלח שוב במלואה.
+  const lastMsg = reqMessages[reqMessages.length - 1];
+  if (lastMsg) {
+    lastMsg.content = [
+      {
+        type: "text",
+        text: lastMsg.content as string,
+        cache_control: { type: "ephemeral" },
+      },
+    ];
+  }
 
   const response = await anthropic.messages.create({
     model: MODEL,
