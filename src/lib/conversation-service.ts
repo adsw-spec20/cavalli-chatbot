@@ -13,14 +13,58 @@ import { businessConfig } from "./business-config";
 import { isOpenNow } from "./business-hours";
 import type { Channel, ConversationMessage } from "./channels/types";
 
-/** מנסח הודעת העברה לאדם, לפי שעות הפעילות */
-function buildHandoffMessage(): string {
+// ביטויים שמעידים שהבוט לא ידע לענות (פער ידע) -> נרשום את שאלת הלקוח
+const GAP_PATTERNS = [
+  "אין לי את",
+  "אין לי מידע",
+  "אין לי פרט",
+  "אין לי כרגע",
+  "אין לי גישה",
+  "אין לי את הפרט",
+  "אין לי את התאריך",
+  "אין לי את כל הפרט",
+  "לא מופיע אצלי",
+  "לא נמצא אצלי",
+  "לא מצאתי",
+  "כדאי לברר",
+  "שווה לברר",
+  "לברר עם הצוות",
+  "לברר ישירות",
+  "לבדוק עם הצוות",
+  "לבדוק מול הצוות",
+  "הצוות ישמח לספר",
+  "הצוות יוכל לעדכן",
+];
+
+function detectKnowledgeGap(reply: string): boolean {
+  return GAP_PATTERNS.some((p) => reply.includes(p));
+}
+
+/** רושם שאלה פתוחה (עם מניעת כפילויות מול שאלות פתוחות ושנענו) */
+async function logOpenQuestion(
+  question: string,
+  conversationId: string
+): Promise<void> {
+  const q = question.trim();
+  if (q.length < 4) return;
+  const repo = getRepo();
+  const all = await repo.listLearnedQA();
+  const key = q.toLowerCase();
+  if (all.some((e) => e.question.trim().toLowerCase() === key)) return;
+  await repo.addOpenQuestion({ question: q, conversationId });
+}
+
+/** מנסח הודעת העברה לאדם, לפי שעות הפעילות. ב-firstTurn שוזר גילוי AI בלי "איך אפשר לעזור". */
+function buildHandoffMessage(firstTurn: boolean): string {
   const phone = businessConfig.contact.phone;
   const phoneLine = phone ? ` אפשר גם להתקשר ל-${phone}.` : "";
-  if (isOpenNow(businessConfig)) {
-    return `הבנתי 🙋 אני מעביר אותך לנציג אנושי מהצוות, והוא יחזור אליך כאן בהקדם.${phoneLine}`;
+  const body = isOpenNow(businessConfig)
+    ? `מעביר אותך לנציג אנושי מהצוות, והוא יחזור אליך כאן בהקדם.${phoneLine}`
+    : `מעביר את פנייתך לצוות. אנחנו כרגע סגורים, אז הם יחזרו אליך בשעות הפעילות.${phoneLine}`;
+  if (firstTurn) {
+    return `אני העוזר הדיגיטלי של ${businessConfig.name}, ואני ${body}`;
   }
-  return `הבנתי 🙋 אני מעביר את פנייתך לצוות. אנחנו כרגע סגורים, אז הם יחזרו אליך בשעות הפעילות.${phoneLine}`;
+  return `הבנתי 🙋 אני ${body}`;
 }
 
 const HISTORY_LIMIT = 20;
@@ -104,22 +148,6 @@ export async function handleIncomingMessage(
     learnedFaqs,
   });
 
-  // תיעוד שאלות שהבוט לא ידע לענות עליהן (עם מניעת כפילויות)
-  if (result.unknownQuestions?.length) {
-    const existingOpen = await repo.listLearnedQA("open");
-    const seen = new Set(existingOpen.map((q) => q.question.trim().toLowerCase()));
-    for (const q of result.unknownQuestions) {
-      const key = q.trim().toLowerCase();
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        await repo.addOpenQuestion({
-          question: q,
-          conversationId: conversation.id,
-        });
-      }
-    }
-  }
-
   // ----- המודל החליט להעביר לנציג אנושי -----
   if (result.escalate) {
     await repo.updateConversation(conversation.id, {
@@ -136,9 +164,8 @@ export async function handleIncomingMessage(
       meta: { escalation: true, summary: result.escalate.summary },
     });
 
-    let handoff = buildHandoffMessage();
-    if (isFirstTurn && businessConfig.aiDisclosure) {
-      handoff = `${businessConfig.aiDisclosure}\n\n${handoff}`;
+    const handoff = buildHandoffMessage(isFirstTurn);
+    if (isFirstTurn) {
       await repo.updateConversation(conversation.id, { disclosedAi: true });
     }
     await repo.addMessage({
@@ -160,10 +187,16 @@ export async function handleIncomingMessage(
   // אז לא מדביקים משפט קבוע. (פתיחה של "רק ברכה" טופלה למעלה במסלול נפרד.)
   let reply = (result.text ?? "").trim();
   if (!reply) {
-    reply = businessConfig.aiDisclosure ?? "סליחה, אפשר לנסות שוב?";
+    reply = "סליחה, לא הבנתי. אפשר לנסות שוב? 🙂";
   }
   if (isFirstTurn) {
     await repo.updateConversation(conversation.id, { disclosedAi: true });
+  }
+
+  // זיהוי אוטומטי של "פער ידע": אם הבוט אמר שאין לו מידע, רושמים את שאלת
+  // הלקוח כדי שהצוות יענה והבוט ילמד (דטרמיניסטי ועקבי, לא תלוי בהחלטת המודל).
+  if (detectKnowledgeGap(reply)) {
+    await logOpenQuestion(input.text, conversation.id);
   }
 
   await repo.addMessage({

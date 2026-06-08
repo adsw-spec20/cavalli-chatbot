@@ -67,8 +67,6 @@ export interface GenerateResult {
   text: string | null;
   /** אם המודל החליט להעביר לנציג אנושי */
   escalate?: { reason: string; summary: string };
-  /** שאלות עסקיות שהבוט לא ידע לענות עליהן (לתיעוד באדמין ולמידה) */
-  unknownQuestions?: string[];
 }
 
 // כלי שמאפשר למודל להחליט מתי להעביר לנציג אנושי, עם סיכום לטובת הנציג.
@@ -90,23 +88,6 @@ const ESCALATE_TOOL: Anthropic.Tool = {
       },
     },
     required: ["reason", "summary"],
-  },
-};
-
-// כלי לתיעוד שאלה עסקית שאין עליה תשובה, כדי שהצוות יענה והבוט ילמד.
-const LOG_UNKNOWN_TOOL: Anthropic.Tool = {
-  name: "log_unanswered_question",
-  description:
-    "תעד שאלה של לקוח שקשורה לעסק אבל אין לך עליה תשובה מלאה. חשוב: זה כולל גם מצב שבו יש לך מידע כללי אבל הלקוח שואל על פרט ספציפי שאין לך (למשל: אתה יודע שיש גינת ילדים עם דמויות ומתקנים, אבל הלקוח שואל אילו דמויות בדיוק - תעד את זה). בכל פעם שאתה אומר ללקוח 'אין לי את הפרט הזה' או 'כדאי לברר עם הצוות', קרא לכלי הזה עם השאלה. אל תשתמש בו רק לשאלות שאתה עונה עליהן במלואן, או לשאלות שלא קשורות לעסק.",
-  input_schema: {
-    type: "object",
-    properties: {
-      question: {
-        type: "string",
-        description: "ניסוח תמציתי וברור של השאלה שהלקוח שאל ואין עליה תשובה.",
-      },
-    },
-    required: ["question"],
   },
 };
 
@@ -158,72 +139,30 @@ export async function generateReply(
     });
   }
 
-  const messages: Anthropic.MessageParam[] = history.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
-  const unknownQuestions: string[] = [];
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    system: systemBlocks,
+    tools: [ESCALATE_TOOL],
+    messages: history.map((m) => ({ role: m.role, content: m.content })),
+  });
 
-  for (let i = 0; i < 3; i++) {
-    const response = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: systemBlocks,
-      tools: [ESCALATE_TOOL, LOG_UNKNOWN_TOOL],
-      messages,
-    });
-
-    if (process.env.NODE_ENV !== "production") {
-      const u = response.usage;
-      console.log(
-        `[cost] in=${u.input_tokens} cache_read=${u.cache_read_input_tokens ?? 0} cache_write=${u.cache_creation_input_tokens ?? 0} out=${u.output_tokens}`
-      );
-    }
-
-    const textBlock = response.content.find((b) => b.type === "text");
-    const text = textBlock && textBlock.type === "text" ? textBlock.text : null;
-    const escalateUse = response.content.find(
-      (b) => b.type === "tool_use" && b.name === "escalate_to_human"
+  if (process.env.NODE_ENV !== "production") {
+    const u = response.usage;
+    console.log(
+      `[cost] in=${u.input_tokens} cache_read=${u.cache_read_input_tokens ?? 0} cache_write=${u.cache_creation_input_tokens ?? 0} out=${u.output_tokens}`
     );
-    const logUses = response.content.filter(
-      (b) => b.type === "tool_use" && b.name === "log_unanswered_question"
-    );
-
-    const unknowns = unknownQuestions.length ? unknownQuestions : undefined;
-
-    if (escalateUse && escalateUse.type === "tool_use") {
-      const input = escalateUse.input as { reason: string; summary: string };
-      return { text, escalate: input, unknownQuestions: unknowns };
-    }
-
-    if (logUses.length) {
-      for (const u of logUses) {
-        if (u.type === "tool_use") {
-          const q = (u.input as { question: string }).question;
-          if (q) unknownQuestions.push(q);
-        }
-      }
-      // מאכילים tool_result וממשיכים, כדי שהמודל ייצר תשובה ללקוח
-      messages.push({ role: "assistant", content: response.content });
-      const firstTurnNote = options.firstTurn
-        ? " כיוון שזו ההודעה הראשונה בשיחה, שלב בטבעיות ובקצרה גם שאתה העוזר הדיגיטלי (AI) של העסק ושאפשר נציג אנושי."
-        : "";
-      messages.push({
-        role: "user",
-        content: logUses.map((u) => ({
-          type: "tool_result" as const,
-          tool_use_id: (u as Anthropic.ToolUseBlock).id,
-          content: `נרשם לצוות. עכשיו כתוב את התשובה ללקוח בעצמך: אם יש לך מידע כללי רלוונטי שתף אותו, ואז אמור בכנות ובחום שאת הפרט המדויק כדאי לברר עם הצוות (טלפון). ענה לגופה של השאלה, אל תפתח בברכה גנרית מנותקת.${firstTurnNote}`,
-        })),
-      });
-      continue;
-    }
-
-    return { text, unknownQuestions: unknowns };
   }
 
-  return {
-    text: null,
-    unknownQuestions: unknownQuestions.length ? unknownQuestions : undefined,
-  };
+  const textBlock = response.content.find((b) => b.type === "text");
+  const text = textBlock && textBlock.type === "text" ? textBlock.text : null;
+  const escalateUse = response.content.find(
+    (b) => b.type === "tool_use" && b.name === "escalate_to_human"
+  );
+
+  if (escalateUse && escalateUse.type === "tool_use") {
+    return { text, escalate: escalateUse.input as { reason: string; summary: string } };
+  }
+
+  return { text };
 }
