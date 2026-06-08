@@ -7,16 +7,16 @@
  */
 
 import { FileRepository } from "./file-repo";
+import { PostgresRepository } from "./postgres-repo";
 import type { Repository } from "./types";
 
 let repo: Repository | null = null;
 
 export function getRepo(): Repository {
   if (!repo) {
-    // עתידי:
-    // if (process.env.DATABASE_URL) repo = new PostgresRepository(process.env.DATABASE_URL);
-    // else repo = new FileRepository();
-    repo = new FileRepository();
+    const url = process.env.DATABASE_URL;
+    // בפרודקשן (Vercel) מוגדר DATABASE_URL → Postgres. מקומית → אחסון קובץ.
+    repo = url ? new PostgresRepository(url) : new FileRepository();
   }
   return repo;
 }
