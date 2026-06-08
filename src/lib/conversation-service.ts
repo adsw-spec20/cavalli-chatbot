@@ -171,15 +171,14 @@ export async function handleIncomingMessage(
   }
 
   // ----- תשובה רגילה -----
+  // בהודעה ראשונה עם שאלה, המודל כבר שזר את גילוי ה-AI בתוך התשובה (ראה claude.ts),
+  // אז לא מדביקים משפט קבוע. (פתיחה של "רק ברכה" טופלה למעלה במסלול נפרד.)
   let reply = (result.text ?? "").trim();
-  if (isFirstTurn && businessConfig.aiDisclosure) {
-    // משלבים את גילוי ה-AI כפתיח. אם הבוט בחר לא להוסיף כלום (רק ברכה), נשאר הגילוי בלבד.
-    reply = reply
-      ? `${businessConfig.aiDisclosure}\n\n${reply}`
-      : businessConfig.aiDisclosure;
+  if (!reply) {
+    reply = businessConfig.aiDisclosure ?? "סליחה, אפשר לנסות שוב?";
+  }
+  if (isFirstTurn) {
     await repo.updateConversation(conversation.id, { disclosedAi: true });
-  } else if (!reply) {
-    reply = "מצטער, לא הצלחתי לעבד את הבקשה. אפשר לנסות שוב?";
   }
 
   await repo.addMessage({
