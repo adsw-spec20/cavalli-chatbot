@@ -92,7 +92,33 @@ export async function handleIncomingMessage(
     .filter((m) => m.role === "user" || m.role === "assistant")
     .slice(-HISTORY_LIMIT)
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
-  const result = await generateReply(history, { firstTurn: isFirstTurn });
+
+  // ידע נלמד: שאלות שהצוות ענה עליהן מוזרקות לבוט
+  const answeredQA = await repo.listLearnedQA("answered");
+  const learnedFaqs = answeredQA
+    .filter((q) => q.answer)
+    .map((q) => ({ question: q.question, answer: q.answer as string }));
+
+  const result = await generateReply(history, {
+    firstTurn: isFirstTurn,
+    learnedFaqs,
+  });
+
+  // תיעוד שאלות שהבוט לא ידע לענות עליהן (עם מניעת כפילויות)
+  if (result.unknownQuestions?.length) {
+    const existingOpen = await repo.listLearnedQA("open");
+    const seen = new Set(existingOpen.map((q) => q.question.trim().toLowerCase()));
+    for (const q of result.unknownQuestions) {
+      const key = q.trim().toLowerCase();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        await repo.addOpenQuestion({
+          question: q,
+          conversationId: conversation.id,
+        });
+      }
+    }
+  }
 
   // ----- המודל החליט להעביר לנציג אנושי -----
   if (result.escalate) {

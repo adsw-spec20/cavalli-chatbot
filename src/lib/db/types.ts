@@ -65,6 +65,20 @@ export interface ConversationFilter {
   escalated?: boolean;
 }
 
+/**
+ * שאלה שהבוט לא ידע לענות עליה (status=open), והתשובה שבעל העסק נתן (answered).
+ * שאלות שנענו מוזרקות לידע של הבוט כדי שיידע לענות בפעם הבאה.
+ */
+export interface LearnedQA {
+  id: string;
+  question: string;
+  answer: string | null;
+  status: "open" | "answered";
+  conversationId?: string;
+  createdAt: number;
+  answeredAt?: number;
+}
+
 export interface Repository {
   // ----- לקוחות -----
   upsertCustomer(
@@ -88,4 +102,13 @@ export interface Repository {
   addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage>;
   getMessages(conversationId: string): Promise<StoredMessage[]>;
   getAllMessages(): Promise<StoredMessage[]>;
+
+  // ----- ידע נלמד (שאלות פתוחות + תשובות) -----
+  addOpenQuestion(data: {
+    question: string;
+    conversationId?: string;
+  }): Promise<LearnedQA>;
+  listLearnedQA(status?: "open" | "answered"): Promise<LearnedQA[]>;
+  answerLearnedQA(id: string, answer: string): Promise<LearnedQA | null>;
+  deleteLearnedQA(id: string): Promise<void>;
 }

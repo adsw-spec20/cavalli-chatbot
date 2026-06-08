@@ -7,7 +7,7 @@
 
 import { getRepo } from "./db";
 import { whatsappAdapter } from "./channels/whatsapp";
-import type { Conversation, Customer, StoredMessage } from "./db";
+import type { Conversation, Customer, LearnedQA, StoredMessage } from "./db";
 
 const STOPWORDS = new Set([
   "של", "עם", "מה", "יש", "לי", "אני", "הוא", "היא", "את", "על", "או", "גם",
@@ -106,6 +106,19 @@ export async function agentReply(id: string, text: string) {
   return message;
 }
 
+/** ניהול הידע הנלמד: שאלות פתוחות + תשובות הצוות */
+export async function listKnowledge(
+  status?: "open" | "answered"
+): Promise<LearnedQA[]> {
+  return getRepo().listLearnedQA(status);
+}
+export async function answerKnowledge(id: string, answer: string) {
+  return getRepo().answerLearnedQA(id, answer);
+}
+export async function deleteKnowledge(id: string) {
+  return getRepo().deleteLearnedQA(id);
+}
+
 export interface Stats {
   totalConversations: number;
   byStatus: { bot: number; human: number; closed: number };
@@ -115,6 +128,7 @@ export interface Stats {
   last7Days: { date: string; count: number }[];
   topWords: { word: string; count: number }[];
   needsAttention: number; // שיחות שמחכות לטיפול אנושי
+  openQuestions: number; // שאלות שממתינות לתשובת הצוות
 }
 
 export async function computeStats(): Promise<Stats> {
@@ -123,6 +137,7 @@ export async function computeStats(): Promise<Stats> {
   const msgs = await repo.getAllMessages();
   const userMsgs = msgs.filter((m) => m.role === "user");
 
+  const openQuestions = (await repo.listLearnedQA("open")).length;
   const total = convs.length;
   const escalated = convs.filter((c) => c.escalated).length;
   const byStatus = {
@@ -168,5 +183,6 @@ export async function computeStats(): Promise<Stats> {
     last7Days,
     topWords,
     needsAttention: byStatus.human,
+    openQuestions,
   };
 }

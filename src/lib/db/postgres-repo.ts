@@ -11,6 +11,7 @@ import type {
   Conversation,
   ConversationFilter,
   Customer,
+  LearnedQA,
   Repository,
   StoredMessage,
 } from "./types";
@@ -64,6 +65,27 @@ export class PostgresRepository implements Repository {
       meta text
     )`;
     await this.sql`CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages (conversation_id)`;
+    await this.sql`CREATE TABLE IF NOT EXISTS learned_qa (
+      id text PRIMARY KEY,
+      question text NOT NULL,
+      answer text,
+      status text NOT NULL,
+      conversation_id text,
+      created_at bigint NOT NULL,
+      answered_at bigint
+    )`;
+  }
+
+  private toLearnedQA(r: Record<string, unknown>): LearnedQA {
+    return {
+      id: r.id as string,
+      question: r.question as string,
+      answer: (r.answer as string) ?? null,
+      status: r.status as "open" | "answered",
+      conversationId: (r.conversation_id as string) ?? undefined,
+      createdAt: Number(r.created_at),
+      answeredAt: r.answered_at ? Number(r.answered_at) : undefined,
+    };
   }
 
   // ---------- mappers ----------
@@ -226,5 +248,39 @@ export class PostgresRepository implements Repository {
     await this.init();
     const rows = await this.sql`SELECT * FROM messages ORDER BY ts ASC`;
     return rows.map((r) => this.toMessage(r));
+  }
+
+  async addOpenQuestion(data: {
+    question: string;
+    conversationId?: string;
+  }): Promise<LearnedQA> {
+    await this.init();
+    const id = crypto.randomUUID();
+    const rows = await this.sql`
+      INSERT INTO learned_qa (id, question, answer, status, conversation_id, created_at, answered_at)
+      VALUES (${id}, ${data.question}, ${null}, ${"open"}, ${data.conversationId ?? null}, ${Date.now()}, ${null})
+      RETURNING *`;
+    return this.toLearnedQA(rows[0]);
+  }
+
+  async listLearnedQA(status?: "open" | "answered"): Promise<LearnedQA[]> {
+    await this.init();
+    const rows = status
+      ? await this.sql`SELECT * FROM learned_qa WHERE status = ${status} ORDER BY created_at DESC`
+      : await this.sql`SELECT * FROM learned_qa ORDER BY created_at DESC`;
+    return rows.map((r) => this.toLearnedQA(r));
+  }
+
+  async answerLearnedQA(id: string, answer: string): Promise<LearnedQA | null> {
+    await this.init();
+    const rows = await this.sql`
+      UPDATE learned_qa SET answer = ${answer}, status = ${"answered"}, answered_at = ${Date.now()}
+      WHERE id = ${id} RETURNING *`;
+    return rows[0] ? this.toLearnedQA(rows[0]) : null;
+  }
+
+  async deleteLearnedQA(id: string): Promise<void> {
+    await this.init();
+    await this.sql`DELETE FROM learned_qa WHERE id = ${id}`;
   }
 }

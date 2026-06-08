@@ -16,6 +16,15 @@ interface Stats {
   last7Days: { date: string; count: number }[];
   topWords: { word: string; count: number }[];
   needsAttention: number;
+  openQuestions: number;
+}
+
+interface LearnedQA {
+  id: string;
+  question: string;
+  answer: string | null;
+  status: string;
+  createdAt: number;
 }
 
 interface ConvItem {
@@ -55,6 +64,9 @@ export default function Admin() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [reply, setReply] = useState("");
   const [token, setToken] = useState("");
+  const [openQA, setOpenQA] = useState<LearnedQA[]>([]);
+  const [answeredQA, setAnsweredQA] = useState<LearnedQA[]>([]);
+  const [qaAnswers, setQaAnswers] = useState<Record<string, string>>({});
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
 
@@ -70,16 +82,34 @@ export default function Admin() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [s, c] = await Promise.all([
+      const [s, c, open, answered] = await Promise.all([
         fetch("/api/admin/stats", { headers: authHeaders() }).then((r) => r.json()),
         fetch("/api/admin/conversations", { headers: authHeaders() }).then((r) => r.json()),
+        fetch("/api/admin/knowledge?status=open", { headers: authHeaders() }).then((r) => r.json()),
+        fetch("/api/admin/knowledge?status=answered", { headers: authHeaders() }).then((r) => r.json()),
       ]);
       if (!s.error) setStats(s);
       if (Array.isArray(c)) setConvs(c);
+      if (Array.isArray(open)) setOpenQA(open);
+      if (Array.isArray(answered)) setAnsweredQA(answered);
     } catch {
       /* ignore transient */
     }
   }, [authHeaders]);
+
+  async function knowledgeAction(id: string, body: object) {
+    await fetch(`/api/admin/knowledge/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    });
+    setQaAnswers((p) => {
+      const n = { ...p };
+      delete n[id];
+      return n;
+    });
+    await fetchAll();
+  }
 
   const fetchDetail = useCallback(
     async (id: string) => {
@@ -155,7 +185,7 @@ export default function Admin() {
 
         {/* כרטיסי סטטיסטיקה */}
         {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
             <Card label="שיחות סה״כ" value={stats.totalConversations} />
             <Card
               label="% הכלה (בוט סגר)"
@@ -166,6 +196,11 @@ export default function Admin() {
               label="ממתינות לנציג"
               value={stats.needsAttention}
               accent={stats.needsAttention > 0 ? "amber" : undefined}
+            />
+            <Card
+              label="שאלות ללא מענה"
+              value={stats.openQuestions}
+              accent={stats.openQuestions > 0 ? "amber" : undefined}
             />
             <Card label="הסלמות" value={stats.escalated} />
             <Card label="הודעות לקוחות" value={stats.totalUserMessages} />
@@ -208,6 +243,89 @@ export default function Admin() {
             </div>
           </div>
         )}
+
+        {/* ידע נלמד: שאלות שהבוט לא ידע, ותשובות שהופכות לידע */}
+        <div className="bg-neutral-900 rounded-xl p-3 mb-4">
+          <div className="text-sm font-semibold mb-2">
+            🧠 ידע הבוט - שאלות שצריך לענות עליהן
+          </div>
+          {openQA.length === 0 && (
+            <div className="text-xs text-neutral-600 mb-2">
+              אין כרגע שאלות פתוחות. כשהבוט ייתקל בשאלה שאין לו תשובה עליה, היא תופיע כאן.
+            </div>
+          )}
+          <div className="space-y-2">
+            {openQA.map((q) => (
+              <div
+                key={q.id}
+                className="bg-neutral-800 rounded-lg p-2.5 flex flex-col gap-2"
+              >
+                <div className="text-sm">
+                  <span className="text-amber-400">שאלה:</span> {q.question}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={qaAnswers[q.id] ?? ""}
+                    onChange={(e) =>
+                      setQaAnswers((p) => ({ ...p, [q.id]: e.target.value }))
+                    }
+                    onKeyDown={(e) =>
+                      e.key === "Enter" &&
+                      qaAnswers[q.id]?.trim() &&
+                      knowledgeAction(q.id, { answer: qaAnswers[q.id].trim() })
+                    }
+                    placeholder="כתוב את התשובה, והבוט ילמד אותה…"
+                    className="flex-1 bg-neutral-900 rounded px-2 py-1.5 text-sm outline-none"
+                  />
+                  <button
+                    onClick={() =>
+                      qaAnswers[q.id]?.trim() &&
+                      knowledgeAction(q.id, { answer: qaAnswers[q.id].trim() })
+                    }
+                    className="text-xs bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1.5 font-semibold"
+                  >
+                    שמור ולמד
+                  </button>
+                  <button
+                    onClick={() => knowledgeAction(q.id, { action: "delete" })}
+                    className="text-xs bg-neutral-700 hover:bg-neutral-600 rounded px-2 py-1.5"
+                  >
+                    התעלם
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {answeredQA.length > 0 && (
+            <details className="mt-3">
+              <summary className="text-xs text-neutral-400 cursor-pointer">
+                ידע שנלמד ({answeredQA.length})
+              </summary>
+              <div className="space-y-1.5 mt-2">
+                {answeredQA.map((q) => (
+                  <div
+                    key={q.id}
+                    className="text-xs bg-neutral-800/60 rounded p-2 flex items-start justify-between gap-2"
+                  >
+                    <div>
+                      <span className="text-emerald-400">שאלה:</span> {q.question}
+                      <br />
+                      <span className="text-neutral-400">תשובה:</span> {q.answer}
+                    </div>
+                    <button
+                      onClick={() => knowledgeAction(q.id, { action: "delete" })}
+                      className="text-neutral-500 hover:text-red-400 shrink-0"
+                      title="מחק"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
 
         {/* אינבוקס: רשימה + שיחה */}
         <div className="grid md:grid-cols-[320px_1fr] gap-3">

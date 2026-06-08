@@ -50,9 +50,16 @@ function getClient(): Anthropic {
   return client;
 }
 
+export interface LearnedFaq {
+  question: string;
+  answer: string;
+}
+
 export interface GenerateOptions {
   /** האם זו ההודעה הראשונה בשיחה (כדי לשלב את גילוי ה-AI בלי ברכה כפולה) */
   firstTurn?: boolean;
+  /** שאלות שנענו על ידי הצוות, מוזרקות לידע של הבוט */
+  learnedFaqs?: LearnedFaq[];
 }
 
 export interface GenerateResult {
@@ -60,6 +67,8 @@ export interface GenerateResult {
   text: string | null;
   /** אם המודל החליט להעביר לנציג אנושי */
   escalate?: { reason: string; summary: string };
+  /** שאלות עסקיות שהבוט לא ידע לענות עליהן (לתיעוד באדמין ולמידה) */
+  unknownQuestions?: string[];
 }
 
 // כלי שמאפשר למודל להחליט מתי להעביר לנציג אנושי, עם סיכום לטובת הנציג.
@@ -84,8 +93,26 @@ const ESCALATE_TOOL: Anthropic.Tool = {
   },
 };
 
+// כלי לתיעוד שאלה עסקית שאין עליה תשובה, כדי שהצוות יענה והבוט ילמד.
+const LOG_UNKNOWN_TOOL: Anthropic.Tool = {
+  name: "log_unanswered_question",
+  description:
+    "תעד שאלה של לקוח שקשורה לעסק אבל אין לך עליה תשובה במידע שברשותך (פרט שלא מופיע בתפריט/במידע). קרא לכלי הזה כדי שהצוות יוכל לענות בעתיד, ובמקביל ענה ללקוח בכנות שאין לך את המידע וכדאי לברר מול הצוות. אל תשתמש בו לשאלות שאתה כן יכול לענות עליהן, ולא לשאלות שלא קשורות לעסק.",
+  input_schema: {
+    type: "object",
+    properties: {
+      question: {
+        type: "string",
+        description: "ניסוח תמציתי וברור של השאלה שהלקוח שאל ואין עליה תשובה.",
+      },
+    },
+    required: ["question"],
+  },
+};
+
 /**
  * מקבל את היסטוריית השיחה ומחזיר את תשובת הבוט, או החלטה להסלים לנציג.
+ * תומך בלולאת tool-use: אם המודל מתעד שאלה לא ידועה, ממשיכים עד לקבלת תשובה ללקוח.
  */
 export async function generateReply(
   history: ConversationMessage[],
@@ -95,7 +122,6 @@ export async function generateReply(
 
   const systemPrompt = buildSystemPrompt(businessConfig);
 
-  // שליפה חכמה: מצרפים רק את קטגוריות התפריט הרלוונטיות לשיחה האחרונה.
   const recentText = history
     .slice(-4)
     .map((m) => m.content)
@@ -106,12 +132,20 @@ export async function generateReply(
     {
       type: "text",
       text: systemPrompt,
-      // נקודת המטמון: ה-System Prompt הקבוע נשמר, והבלוקים הדינמיים שאחריו לא שוברים אותו.
       cache_control: { type: "ephemeral" },
     },
   ];
   if (menuContext) {
     systemBlocks.push({ type: "text", text: menuContext });
+  }
+  if (options.learnedFaqs && options.learnedFaqs.length) {
+    const faqText = options.learnedFaqs
+      .map((f) => `  שאלה: ${f.question}\n  תשובה: ${f.answer}`)
+      .join("\n\n");
+    systemBlocks.push({
+      type: "text",
+      text: `# ידע נוסף שהצוות הוסיף (השתמש בו כמו בשאר המידע על העסק)\n${faqText}`,
+    });
   }
   systemBlocks.push({
     type: "text",
@@ -124,30 +158,69 @@ export async function generateReply(
     });
   }
 
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: MAX_TOKENS,
-    system: systemBlocks,
-    tools: [ESCALATE_TOOL],
-    messages: history.map((m) => ({ role: m.role, content: m.content })),
-  });
+  const messages: Anthropic.MessageParam[] = history.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+  const unknownQuestions: string[] = [];
 
-  // לוג עלות (טוקנים) - עוזר לראות שהחיסכון עובד. רק בפיתוח.
-  if (process.env.NODE_ENV !== "production") {
-    const u = response.usage;
-    console.log(
-      `[cost] in=${u.input_tokens} cache_read=${u.cache_read_input_tokens ?? 0} cache_write=${u.cache_creation_input_tokens ?? 0} out=${u.output_tokens}`
+  for (let i = 0; i < 3; i++) {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      system: systemBlocks,
+      tools: [ESCALATE_TOOL, LOG_UNKNOWN_TOOL],
+      messages,
+    });
+
+    if (process.env.NODE_ENV !== "production") {
+      const u = response.usage;
+      console.log(
+        `[cost] in=${u.input_tokens} cache_read=${u.cache_read_input_tokens ?? 0} cache_write=${u.cache_creation_input_tokens ?? 0} out=${u.output_tokens}`
+      );
+    }
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    const text = textBlock && textBlock.type === "text" ? textBlock.text : null;
+    const escalateUse = response.content.find(
+      (b) => b.type === "tool_use" && b.name === "escalate_to_human"
     );
+    const logUses = response.content.filter(
+      (b) => b.type === "tool_use" && b.name === "log_unanswered_question"
+    );
+
+    const unknowns = unknownQuestions.length ? unknownQuestions : undefined;
+
+    if (escalateUse && escalateUse.type === "tool_use") {
+      const input = escalateUse.input as { reason: string; summary: string };
+      return { text, escalate: input, unknownQuestions: unknowns };
+    }
+
+    if (logUses.length) {
+      for (const u of logUses) {
+        if (u.type === "tool_use") {
+          const q = (u.input as { question: string }).question;
+          if (q) unknownQuestions.push(q);
+        }
+      }
+      // מאכילים tool_result וממשיכים, כדי שהמודל ייצר תשובה ללקוח
+      messages.push({ role: "assistant", content: response.content });
+      messages.push({
+        role: "user",
+        content: logUses.map((u) => ({
+          type: "tool_result" as const,
+          tool_use_id: (u as Anthropic.ToolUseBlock).id,
+          content: "נרשם לצוות.",
+        })),
+      });
+      continue;
+    }
+
+    return { text, unknownQuestions: unknowns };
   }
 
-  const toolUse = response.content.find((b) => b.type === "tool_use");
-  const textBlock = response.content.find((b) => b.type === "text");
-  const text = textBlock && textBlock.type === "text" ? textBlock.text : null;
-
-  if (toolUse && toolUse.type === "tool_use" && toolUse.name === "escalate_to_human") {
-    const input = toolUse.input as { reason: string; summary: string };
-    return { text, escalate: { reason: input.reason, summary: input.summary } };
-  }
-
-  return { text };
+  return {
+    text: null,
+    unknownQuestions: unknownQuestions.length ? unknownQuestions : undefined,
+  };
 }

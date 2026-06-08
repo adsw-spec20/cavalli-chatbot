@@ -13,6 +13,7 @@ import type {
   Conversation,
   ConversationFilter,
   Customer,
+  LearnedQA,
   Repository,
   StoredMessage,
 } from "./types";
@@ -21,13 +22,14 @@ interface StoreShape {
   customers: Record<string, Customer>;
   conversations: Record<string, Conversation>;
   messages: StoredMessage[];
+  learnedQA: LearnedQA[];
 }
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 
 function emptyStore(): StoreShape {
-  return { customers: {}, conversations: {}, messages: [] };
+  return { customers: {}, conversations: {}, messages: [], learnedQA: [] };
 }
 
 export class FileRepository implements Repository {
@@ -142,5 +144,47 @@ export class FileRepository implements Repository {
   async getAllMessages(): Promise<StoredMessage[]> {
     const store = await this.load();
     return [...store.messages].sort((a, b) => a.ts - b.ts);
+  }
+
+  async addOpenQuestion(data: {
+    question: string;
+    conversationId?: string;
+  }): Promise<LearnedQA> {
+    const store = await this.load();
+    const qa: LearnedQA = {
+      id: randomUUID(),
+      question: data.question,
+      answer: null,
+      status: "open",
+      conversationId: data.conversationId,
+      createdAt: Date.now(),
+    };
+    store.learnedQA.push(qa);
+    await this.persist();
+    return qa;
+  }
+
+  async listLearnedQA(status?: "open" | "answered"): Promise<LearnedQA[]> {
+    const store = await this.load();
+    return store.learnedQA
+      .filter((q) => (status ? q.status === status : true))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async answerLearnedQA(id: string, answer: string): Promise<LearnedQA | null> {
+    const store = await this.load();
+    const qa = store.learnedQA.find((q) => q.id === id);
+    if (!qa) return null;
+    qa.answer = answer;
+    qa.status = "answered";
+    qa.answeredAt = Date.now();
+    await this.persist();
+    return qa;
+  }
+
+  async deleteLearnedQA(id: string): Promise<void> {
+    const store = await this.load();
+    store.learnedQA = store.learnedQA.filter((q) => q.id !== id);
+    await this.persist();
   }
 }
