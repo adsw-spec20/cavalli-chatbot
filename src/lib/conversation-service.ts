@@ -193,9 +193,13 @@ export async function handleIncomingMessage(
     await repo.updateConversation(conversation.id, { disclosedAi: true });
   }
 
-  // זיהוי אוטומטי של "פער ידע": אם הבוט אמר שאין לו מידע, רושמים את שאלת
-  // הלקוח כדי שהצוות יענה והבוט ילמד (דטרמיניסטי ועקבי, לא תלוי בהחלטת המודל).
-  if (detectKnowledgeGap(reply)) {
+  // תיעוד פערי ידע: עדיפות לשאלות שהמודל סימן במפורש (report_knowledge_gap),
+  // ובגיבוי - זיהוי דטרמיניסטי לפי ניסוח התשובה. כך נתפסת כל שאלה שלא נענתה.
+  if (result.gapQuestions?.length) {
+    for (const q of result.gapQuestions) {
+      await logOpenQuestion(q, conversation.id);
+    }
+  } else if (detectKnowledgeGap(reply)) {
     await logOpenQuestion(input.text, conversation.id);
   }
 

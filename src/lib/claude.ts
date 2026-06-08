@@ -67,6 +67,8 @@ export interface GenerateResult {
   text: string | null;
   /** אם המודל החליט להעביר לנציג אנושי */
   escalate?: { reason: string; summary: string };
+  /** שאלות עסקיות שהבוט לא ענה עליהן במלואן (לתיעוד באדמין) */
+  gapQuestions?: string[];
 }
 
 // כלי שמאפשר למודל להחליט מתי להעביר לנציג אנושי, עם סיכום לטובת הנציג.
@@ -91,9 +93,25 @@ const ESCALATE_TOOL: Anthropic.Tool = {
   },
 };
 
+// כלי דיווח שקט: המודל מסמן כל שאלה עסקית שלא ענה עליה במלואה, במקביל לתשובה.
+const REPORT_GAP_TOOL: Anthropic.Tool = {
+  name: "report_knowledge_gap",
+  description:
+    "סמן ברקע (בשקט) כל שאלה שקשורה לעסק שלא יכולת לענות עליה במלואה מהמידע שברשותך - אפילו הקטנה והשולית ביותר (איפה השירותים, האם אפשר להפריד/להוסיף/להוריד רכיב במנה, כמה עובדים יש, כמה מקומות ישיבה, וכו'). חשוב: זה לא מחליף את התשובה ללקוח - תמיד כתוב גם תשובה רגילה וטבעית כטקסט. הכלי רק מתעד לצוות כדי שיוכלו לענות בעתיד. אל תשתמש בו לשאלות שלא קשורות לעסק, ולא לשאלות שענית עליהן במלואן מהמידע שיש לך.",
+  input_schema: {
+    type: "object",
+    properties: {
+      question: {
+        type: "string",
+        description: "ניסוח תמציתי וברור של השאלה העסקית שלא ידעת לענות עליה.",
+      },
+    },
+    required: ["question"],
+  },
+};
+
 /**
- * מקבל את היסטוריית השיחה ומחזיר את תשובת הבוט, או החלטה להסלים לנציג.
- * תומך בלולאת tool-use: אם המודל מתעד שאלה לא ידועה, ממשיכים עד לקבלת תשובה ללקוח.
+ * מקבל את היסטוריית השיחה ומחזיר את תשובת הבוט, החלטה להסלים, ושאלות שלא נענו.
  */
 export async function generateReply(
   history: ConversationMessage[],
@@ -139,12 +157,17 @@ export async function generateReply(
     });
   }
 
+  const reqMessages: Anthropic.MessageParam[] = history.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: MAX_TOKENS,
     system: systemBlocks,
-    tools: [ESCALATE_TOOL],
-    messages: history.map((m) => ({ role: m.role, content: m.content })),
+    tools: [ESCALATE_TOOL, REPORT_GAP_TOOL],
+    messages: reqMessages,
   });
 
   if (process.env.NODE_ENV !== "production") {
@@ -155,14 +178,35 @@ export async function generateReply(
   }
 
   const textBlock = response.content.find((b) => b.type === "text");
-  const text = textBlock && textBlock.type === "text" ? textBlock.text : null;
+  let text = textBlock && textBlock.type === "text" ? textBlock.text : null;
+
   const escalateUse = response.content.find(
     (b) => b.type === "tool_use" && b.name === "escalate_to_human"
   );
-
   if (escalateUse && escalateUse.type === "tool_use") {
     return { text, escalate: escalateUse.input as { reason: string; summary: string } };
   }
 
-  return { text };
+  // קוצרים את כל דיווחי פערי הידע
+  const gapQuestions = response.content
+    .filter((b) => b.type === "tool_use" && b.name === "report_knowledge_gap")
+    .map((b) => ((b as Anthropic.ToolUseBlock).input as { question: string }).question)
+    .filter((q): q is string => !!q);
+
+  // הגנה: אם המודל סימן פער אבל לא כתב תשובה ללקוח, מבקשים תשובה בקריאה אחת בלי כלים
+  if (!text || !text.trim()) {
+    const retry = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      system: systemBlocks,
+      messages: reqMessages,
+    });
+    const rt = retry.content.find((b) => b.type === "text");
+    text = rt && rt.type === "text" ? rt.text : null;
+  }
+
+  return {
+    text,
+    gapQuestions: gapQuestions.length ? gapQuestions : undefined,
+  };
 }
