@@ -32,4 +32,6 @@ export interface ChannelAdapter {
   channel: Channel;
   /** שולח טקסט חזרה למשתמש בערוץ */
   sendText(recipientId: string, text: string): Promise<void>;
+  /** מציג "מקליד..." (אם הערוץ תומך) */
+  sendTyping?(recipientId: string): Promise<void>;
 }
