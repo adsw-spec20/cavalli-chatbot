@@ -144,7 +144,8 @@ export function renderMenuCategories(categories: MenuCategory[]): string {
           const desc = item.description ? ` - ${item.description}` : "";
           const tags =
             item.tags && item.tags.length ? ` [${item.tags.join(", ")}]` : "";
-          return `    • ${item.name}${desc}: ${item.price}${tags}`;
+          const soldOut = item.available === false ? " (אזל כרגע - לא זמין)" : "";
+          return `    • ${item.name}${desc}: ${item.price}${tags}${soldOut}`;
         })
         .join("\n");
       return `  ## ${cat.name}${note}\n${items}`;

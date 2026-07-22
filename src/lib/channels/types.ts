@@ -19,8 +19,12 @@ export interface IncomingMessage {
   channel: Channel;
   /** מזהה ייחודי של השולח בתוך הערוץ (מספר טלפון / PSID / IG id) */
   senderId: string;
-  /** תוכן ההודעה כטקסט */
+  /** שם השולח אם הערוץ מספק אותו בתוך ה-webhook (למשל וואטסאפ) */
+  senderName?: string;
+  /** תוכן ההודעה כטקסט (ריק אם זו הודעה קולית שעוד לא תומללה) */
   text: string;
+  /** הודעה קולית/אודיו נכנסת - לתמלול. וואטסאפ נותן mediaId, מטא נותן URL ישיר. */
+  audio?: { mediaId?: string; url?: string; mime?: string };
   /** מזהה ההודעה המקורית בערוץ (אם קיים) */
   messageId?: string;
   /** חותמת זמן (ms) */
@@ -34,4 +38,8 @@ export interface ChannelAdapter {
   sendText(recipientId: string, text: string): Promise<void>;
   /** מציג "מקליד..." (אם הערוץ תומך) */
   sendTyping?(recipientId: string): Promise<void>;
+  /** שולף את שם הפרופיל של המשתמש (אם הערוץ תומך, למשל דרך Graph API) */
+  getProfileName?(userId: string): Promise<string | undefined>;
+  /** שולח מדיה (תמונה/סרטון) לפי כתובת URL ציבורית */
+  sendMedia?(recipientId: string, url: string, type: "image" | "video"): Promise<void>;
 }

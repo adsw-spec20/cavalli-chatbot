@@ -1,0 +1,907 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  api,
+  CHANNELS,
+  relTime,
+  waitLabel,
+  waitSeverity,
+  type ConvItem,
+  type Detail,
+  type QuickReply,
+} from "./types";
+
+/* ============================== עזרים ============================== */
+
+function initials(name?: string, fallback = "?"): string {
+  if (!name) return fallback;
+  const parts = name.trim().split(/\s+/);
+  return (parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "");
+}
+
+function Avatar({ name, channel, size = 38 }: { name?: string; channel: string; size?: number }) {
+  const dot = CHANNELS[channel]?.dot ?? "bg-neutral-500";
+  return (
+    <div
+      className={`shrink-0 rounded-full ${dot} grid place-items-center text-white font-semibold`}
+      style={{ width: size, height: size, fontSize: size * 0.38 }}
+    >
+      {initials(name) || "🙂"}
+    </div>
+  );
+}
+
+const SEV_CLS: Record<string, string> = {
+  ok: "text-[var(--muted)]",
+  warn: "text-amber-400",
+  urgent: "text-red-400 font-semibold",
+};
+
+/** קישורים לחיצים ובטוחים בתוך הודעה: http/https בלבד, בלי לרנדר HTML */
+function renderContent(text: string) {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((p, i) =>
+    /^https?:\/\//.test(p) ? (
+      <a key={i} href={p} target="_blank" rel="noopener noreferrer" className="underline break-all">
+        {p}
+      </a>
+    ) : (
+      <span key={i}>{p}</span>
+    )
+  );
+}
+
+/** תווית יום להפרדה בין הודעות */
+function dayLabel(ts: number): string {
+  const d = new Date(ts);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const same = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (same(d, today)) return "היום";
+  if (same(d, yesterday)) return "אתמול";
+  return d.toLocaleDateString("he-IL", { day: "numeric", month: "long" });
+}
+
+/** state שנשמר ב-storage (מסננים ב-session, טיוטות ו"נקרא" ב-local) */
+function readStorage(store: "session" | "local", key: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const s = store === "session" ? sessionStorage : localStorage;
+    return s.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writeStorage(store: "session" | "local", key: string, value: string) {
+  try {
+    const s = store === "session" ? sessionStorage : localStorage;
+    s.setItem(key, value);
+  } catch {
+    /* private mode */
+  }
+}
+
+type Filter = "all" | "awaiting" | "escalated" | "human" | "closed";
+export interface InboxFilterIntent {
+  status?: Filter;
+}
+
+const READ_KEY = "inbox_read_v1";
+function loadReadMap(): Record<string, number> {
+  try {
+    return JSON.parse(readStorage("local", READ_KEY, "{}"));
+  } catch {
+    return {};
+  }
+}
+
+/* ============================== רכיב ראשי ============================== */
+
+export default function Inbox({
+  token,
+  agentName,
+  conversations,
+  loaded,
+  selectedId,
+  setSelectedId,
+  onMutate,
+  templates,
+  intent,
+  onIntentConsumed,
+}: {
+  token: string;
+  agentName: string;
+  conversations: ConvItem[];
+  loaded: boolean;
+  selectedId: string | null;
+  setSelectedId: (id: string | null) => void;
+  onMutate: () => void;
+  templates: QuickReply[];
+  intent: InboxFilterIntent | null;
+  onIntentConsumed: () => void;
+}) {
+  const [detail, setDetail] = useState<Detail | null>(null);
+  // מסננים וחיפוש שורדים מעבר בין מסכים (session) - כך שחזרה מהדשבורד לא מאפסת.
+  // נטענים ב-effect (ולא באתחול ה-state) כדי לא ליצור hydration mismatch מול ה-SSR.
+  const [search, setSearch] = useState("");
+  const [channelFilter, setChannelFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<Filter>("all");
+  const storageHydrated = useRef(false);
+  useEffect(() => {
+    setSearch(readStorage("session", "inbox_q", ""));
+    setChannelFilter(readStorage("session", "inbox_ch", "all"));
+    setStatusFilter((readStorage("session", "inbox_st", "all") as Filter) || "all");
+    storageHydrated.current = true;
+  }, []);
+  const [reply, setReply] = useState("");
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false); // מניעת שליחה כפולה גם בלחיצות מהירות
+  const [suggesting, setSuggesting] = useState(false);
+  const [err, setErr] = useState("");
+  const [sendFailed, setSendFailed] = useState(false);
+  const [showCard, setShowCard] = useState(false);
+  const [readMap, setReadMap] = useState<Record<string, number>>(loadReadMap);
+  const [newBelow, setNewBelow] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const listScrollPos = useRef(0);
+  const nearBottom = useRef(true);
+  const prevMsgCount = useRef(0);
+  const prevConvId = useRef<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (storageHydrated.current) writeStorage("session", "inbox_q", search);
+  }, [search]);
+  useEffect(() => {
+    if (storageHydrated.current) writeStorage("session", "inbox_ch", channelFilter);
+  }, [channelFilter]);
+  useEffect(() => {
+    if (storageHydrated.current) writeStorage("session", "inbox_st", statusFilter);
+  }, [statusFilter]);
+
+  // כוונת סינון שמגיעה מהדשבורד ("ממתינות למענה" וכו')
+  useEffect(() => {
+    if (!intent) return;
+    if (intent.status) setStatusFilter(intent.status);
+    setSelectedId(null);
+    onIntentConsumed();
+  }, [intent, onIntentConsumed, setSelectedId]);
+
+  const markRead = useCallback((id: string) => {
+    setReadMap((prev) => {
+      const next = { ...prev, [id]: Date.now() };
+      writeStorage("local", READ_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const loadDetail = useCallback(
+    async (id: string) => {
+      try {
+        setDetail(await api<Detail>(token, `/conversations/${id}`));
+      } catch {
+        /* ignore - הבאנר הגלובלי מטפל בניתוק */
+      }
+    },
+    [token]
+  );
+
+  // טעינת פרטי השיחה הנבחרת + ריענון חי כל 4 שניות
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      return;
+    }
+    loadDetail(selectedId);
+    const t = setInterval(() => loadDetail(selectedId), 4000);
+    return () => clearInterval(t);
+  }, [selectedId, loadDetail]);
+
+  // טיוטה פר-שיחה: נטענת בכניסה, נשמרת בכל הקלדה, שורדת רענון ומעבר בין שיחות
+  useEffect(() => {
+    if (!selectedId) return;
+    setReply(readStorage("local", `draft_${selectedId}`, ""));
+    setErr("");
+    setSendFailed(false);
+    setShowCard(false);
+  }, [selectedId]);
+
+  function updateReply(v: string) {
+    setReply(v);
+    if (selectedId) writeStorage("local", `draft_${selectedId}`, v);
+    autoGrow();
+  }
+  function autoGrow() {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 128) + "px";
+  }
+  // התאמת גובה גם כשטיוטה נטענת מהאחסון (ולא רק בהקלדה)
+  useEffect(() => {
+    autoGrow();
+  }, [reply]);
+
+  // גלילה חכמה: לתחתית רק בפתיחת שיחה או כשהמשתמש כבר קרוב לתחתית.
+  // כשקוראים הודעות ישנות למעלה - לא קופצים, אלא מציגים צ'יפ "הודעות חדשות".
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !detail) return;
+    const opened = prevConvId.current !== detail.conversation.id;
+    const grew = detail.messages.length > prevMsgCount.current;
+    prevConvId.current = detail.conversation.id;
+    prevMsgCount.current = detail.messages.length;
+    if (opened || nearBottom.current) {
+      el.scrollTop = el.scrollHeight;
+      setNewBelow(false);
+    } else if (grew) {
+      setNewBelow(true);
+    }
+  }, [detail]);
+
+  // שיחה פתוחה = נקראת (גם כשמגיעות הודעות חדשות תוך כדי צפייה)
+  useEffect(() => {
+    if (selectedId && detail?.conversation.id === selectedId) markRead(selectedId);
+  }, [selectedId, detail, markRead]);
+
+  function openConversation(id: string) {
+    listScrollPos.current = listRef.current?.scrollTop ?? 0;
+    setSelectedId(id);
+  }
+  function backToList() {
+    setSelectedId(null);
+  }
+  // חזרה משיחה מחזירה לאותו מיקום ברשימה (במובייל הרשימה הוסתרה בינתיים)
+  useEffect(() => {
+    if (!selectedId && listRef.current) listRef.current.scrollTop = listScrollPos.current;
+  }, [selectedId]);
+
+  const counts = useMemo(() => {
+    const open = conversations.filter((c) => c.status !== "closed");
+    return {
+      awaiting: open.filter((c) => c.awaiting).length,
+      escalated: open.filter((c) => c.escalated).length,
+      human: conversations.filter((c) => c.status === "human").length,
+    };
+  }, [conversations]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return conversations.filter((c) => {
+      if (statusFilter === "closed") {
+        if (c.status !== "closed") return false;
+      } else {
+        // "הכל" = שיחות שאינן סגורות; לסגורות יש מסנן ייעודי
+        if (c.status === "closed") return false;
+        if (statusFilter === "awaiting" && !c.awaiting) return false;
+        if (statusFilter === "escalated" && !c.escalated) return false;
+        if (statusFilter === "human" && c.status !== "human") return false;
+      }
+      if (channelFilter !== "all" && c.channel !== channelFilter) return false;
+      if (q) {
+        const hay = `${c.customerName ?? ""} ${c.lastMessage ?? ""} ${c.customerId} ${(c.tags ?? []).join(" ")}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [conversations, search, channelFilter, statusFilter]);
+
+  async function act(action: string, extra: Record<string, unknown> = {}) {
+    if (!selectedId) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await api(token, `/conversations/${selectedId}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action, agentName, ...extra }),
+      });
+      await loadDetail(selectedId);
+      onMutate();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "שגיאה");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendReply() {
+    const text = reply.trim();
+    if (!text || !detail || busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setErr("");
+    setSendFailed(false);
+    try {
+      // מענה ידני משתיק את הבוט בשיחה הזו כדי שלא יענה גם הוא
+      if (detail.conversation.status !== "human" && !detail.conversation.botPaused) {
+        await api(token, `/conversations/${detail.conversation.id}/action`, {
+          method: "POST",
+          body: JSON.stringify({ action: "pauseBot" }),
+        });
+      }
+      await api(token, `/conversations/${detail.conversation.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: "reply", text, agentName }),
+      });
+      // רק אחרי שהשרת אישר: מנקים את הטיוטה
+      setReply("");
+      if (selectedId) writeStorage("local", `draft_${selectedId}`, "");
+      nearBottom.current = true;
+      await loadDetail(detail.conversation.id);
+      onMutate();
+    } catch (e) {
+      // הטיוטה נשארת בשדה - שום דבר לא הולך לאיבוד
+      setErr(e instanceof Error ? e.message : "שליחה נכשלה");
+      setSendFailed(true);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function suggest() {
+    if (!detail) return;
+    setSuggesting(true);
+    setErr("");
+    try {
+      const r = await api<{ suggestion: string }>(token, `/conversations/${detail.conversation.id}/suggest`, { method: "POST" });
+      if (r.suggestion) updateReply(r.suggestion);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "שגיאה");
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  const conv = detail?.conversation;
+  const closed = conv?.status === "closed";
+  const botState = conv?.status === "human" ? "human" : conv?.botPaused ? "paused" : "active";
+
+  /* ============================== רינדור ============================== */
+
+  return (
+    <div className="grid md:grid-cols-[340px_minmax(0,1fr)] md:gap-4 h-full">
+      {/* ===== רשימת שיחות ===== */}
+      <aside
+        className={`${selectedId ? "hidden md:flex" : "flex"} flex-col bg-[var(--panel)] md:border border-[var(--border)] md:rounded-2xl overflow-hidden min-h-0`}
+      >
+        <div className="p-3 border-b border-[var(--border)] space-y-2 shrink-0">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="חיפוש לפי שם, טקסט, תגית…"
+            aria-label="חיפוש שיחות"
+            className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+          />
+          <div className="flex gap-1 flex-wrap text-xs" role="tablist" aria-label="סינון לפי מצב">
+            {(
+              [
+                ["all", "הכל"],
+                ["awaiting", counts.awaiting ? `ממתינות · ${counts.awaiting}` : "ממתינות"],
+                ["escalated", counts.escalated ? `הסלמות · ${counts.escalated}` : "הסלמות"],
+                ["human", counts.human ? `אצל נציג · ${counts.human}` : "אצל נציג"],
+                ["closed", "סגורות"],
+              ] as [Filter, string][]
+            ).map(([k, l]) => (
+              <button
+                key={k}
+                onClick={() => setStatusFilter(k)}
+                aria-pressed={statusFilter === k}
+                className={`rounded-lg px-2.5 py-1.5 transition ${statusFilter === k ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)]"}`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1 flex-wrap text-xs">
+            <button
+              onClick={() => setChannelFilter("all")}
+              className={`rounded-lg px-2 py-1 ${channelFilter === "all" ? "bg-[var(--panel2)] text-[var(--text)]" : "text-[var(--muted)]"}`}
+            >
+              כל הערוצים
+            </button>
+            {Object.entries(CHANNELS).map(([k, v]) => (
+              <button
+                key={k}
+                onClick={() => setChannelFilter(k)}
+                className={`rounded-lg px-2 py-1 flex items-center gap-1 ${channelFilter === k ? "bg-[var(--panel2)] text-[var(--text)]" : "text-[var(--muted)]"}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${v.dot}`} />
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain">
+          {!loaded && (
+            <div className="p-3 space-y-3" aria-label="טוען שיחות">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex gap-2.5 animate-pulse">
+                  <div className="w-10 h-10 rounded-full bg-[var(--panel2)]" />
+                  <div className="flex-1 space-y-2 py-1">
+                    <div className="h-3 bg-[var(--panel2)] rounded w-1/2" />
+                    <div className="h-2.5 bg-[var(--panel2)] rounded w-3/4" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {loaded && filtered.length === 0 && (
+            <div className="text-sm text-[var(--muted)] p-8 text-center">
+              {conversations.length === 0 ? "עדיין אין שיחות. ברגע שלקוח יכתוב - זה יופיע כאן." : "אין שיחות בסינון הזה"}
+            </div>
+          )}
+          {loaded &&
+            filtered.map((c) => {
+              const sev = c.awaiting && c.status !== "closed" ? waitSeverity(c.lastUserTs) : "none";
+              const unread = c.updatedAt > (readMap[c.id] ?? 0);
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => openConversation(c.id)}
+                  className={`w-full text-right p-3 border-b border-[var(--border)] hover:bg-[var(--panel2)] transition flex gap-2.5 ${selectedId === c.id ? "bg-[var(--panel2)]" : ""}`}
+                >
+                  <div className="relative shrink-0">
+                    <Avatar name={c.customerName} channel={c.channel} />
+                    {unread && (
+                      <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--accent)] border-2 border-[var(--panel)]" title="יש חדש" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-sm truncate flex items-center gap-1 ${unread ? "font-bold" : "font-semibold"}`}>
+                        {c.vip && <span title="VIP">⭐</span>}
+                        {c.customerName || "לקוח"}
+                      </span>
+                      <span className="text-[10px] text-[var(--muted)] shrink-0">{relTime(c.updatedAt)}</span>
+                    </div>
+                    <div className={`text-xs truncate mt-0.5 ${unread ? "text-[var(--text)]" : "text-[var(--muted)]"}`} dir="auto">
+                      {c.lastMessage || "(אין הודעות)"}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${CHANNELS[c.channel]?.chip}`}>
+                        {CHANNELS[c.channel]?.label}
+                      </span>
+                      {c.status === "closed" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-500/15 text-neutral-400">סגורה</span>}
+                      {c.urgent && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-300 font-semibold">🔴 דחוף</span>}
+                      {c.escalated && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300">הסלמה</span>}
+                      {c.status === "human" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-500/15 text-sky-300">נציג מטפל</span>}
+                      {c.botPaused && c.status !== "human" && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300">בוט מושהה</span>
+                      )}
+                      {sev !== "none" && (
+                        <span className={`text-[10px] ${SEV_CLS[sev]}`}>● ממתין {waitLabel(c.lastUserTs)}</span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+        </div>
+      </aside>
+
+      {/* ===== שיחה ===== */}
+      <section
+        className={`${selectedId ? "flex" : "hidden md:flex"} flex-col bg-[var(--panel)] md:border border-[var(--border)] md:rounded-2xl overflow-hidden min-h-0`}
+      >
+        {!conv && !selectedId && (
+          <div className="flex-1 grid place-items-center text-[var(--muted)] text-sm p-8 text-center">
+            בחר שיחה מהרשימה כדי לצפות, להגיב ולנהל
+          </div>
+        )}
+        {!conv && selectedId && (
+          <div className="flex-1 grid place-items-center text-[var(--muted)] text-sm p-8">
+            <div className="text-center space-y-3">
+              <div>טוען שיחה…</div>
+              <button onClick={backToList} className="md:hidden text-xs underline">חזרה לרשימה</button>
+            </div>
+          </div>
+        )}
+        {conv && (
+          <>
+            {/* כותרת - קומפקטית, עם חזרה ברורה במובייל */}
+            <header className="pt-[env(safe-area-inset-top)] border-b border-[var(--border)] shrink-0">
+              <div className="p-2 md:p-3 flex items-center gap-1.5">
+                <button
+                  onClick={backToList}
+                  className="md:hidden shrink-0 w-11 h-11 grid place-items-center rounded-xl text-[var(--text)] hover:bg-[var(--panel2)] text-xl"
+                  aria-label="חזרה לרשימת השיחות"
+                >
+                  ←
+                </button>
+                <button onClick={() => setShowCard((s) => !s)} className="flex items-center gap-2 min-w-0 flex-1 text-right" aria-expanded={showCard} aria-label="פרטי הלקוח">
+                  <Avatar name={detail?.customer?.name} channel={conv.channel} size={34} />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm truncate flex items-center gap-1">
+                      {detail?.customer?.vip && <span>⭐</span>}
+                      {detail?.customer?.name || "לקוח"}
+                    </div>
+                    <div className="text-[11px] text-[var(--muted)] flex items-center gap-1.5">
+                      <span className={`px-1.5 rounded ${CHANNELS[conv.channel]?.chip}`}>{CHANNELS[conv.channel]?.label}</span>
+                      <span className={closed ? "text-neutral-400" : botState === "human" ? "text-sky-300" : botState === "paused" ? "text-purple-300" : "text-emerald-400"}>
+                        {closed ? "שיחה סגורה" : botState === "human" ? "נציג מטפל" : botState === "paused" ? "בוט מושהה" : "בוט עונה"}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+                <div className="flex gap-1.5 shrink-0">
+                  {!closed && botState === "active" && (
+                    <button onClick={() => act("pauseBot")} disabled={busy} className="text-xs bg-purple-600/90 hover:bg-purple-600 text-white rounded-lg px-2.5 py-2 min-h-9">
+                      השהה בוט
+                    </button>
+                  )}
+                  {!closed && botState === "paused" && (
+                    <button onClick={() => act("resumeBot")} disabled={busy} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-2.5 py-2 min-h-9">
+                      הפעל בוט
+                    </button>
+                  )}
+                  {!closed && botState === "human" && (
+                    <button onClick={() => act("release")} disabled={busy} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-2.5 py-2 min-h-9">
+                      החזר לבוט
+                    </button>
+                  )}
+                  {!closed ? (
+                    <button onClick={() => act("close")} disabled={busy} className="text-xs bg-[var(--panel2)] hover:opacity-80 rounded-lg px-2.5 py-2 min-h-9">
+                      סגור
+                    </button>
+                  ) : (
+                    <button onClick={() => act("release")} disabled={busy} className="text-xs bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-lg px-2.5 py-2 min-h-9">
+                      פתח מחדש
+                    </button>
+                  )}
+                </div>
+              </div>
+            </header>
+
+            {/* כרטיס לקוח (נפתח בלחיצה על השם) */}
+            {showCard && detail && (
+              <div className="shrink-0 max-h-[45%] overflow-y-auto">
+                <CustomerCard
+                  token={token}
+                  detail={detail}
+                  onSaved={() => loadDetail(conv.id)}
+                  onMutate={onMutate}
+                  onMarkUnread={() => {
+                    setReadMap((prev) => {
+                      const next = { ...prev, [conv.id]: 0 };
+                      writeStorage("local", READ_KEY, JSON.stringify(next));
+                      return next;
+                    });
+                    backToList();
+                  }}
+                />
+              </div>
+            )}
+
+            {/* סיכום הסלמה */}
+            {conv.escalationSummary && (
+              <div className="mx-3 mt-2 shrink-0 text-xs bg-amber-500/10 border border-amber-500/25 rounded-xl p-2.5 text-amber-200">
+                <span className="font-semibold">📋 סיכום לנציג:</span> {conv.escalationSummary}
+              </div>
+            )}
+
+            {/* הודעות */}
+            <div className="relative flex-1 min-h-0">
+              <div
+                ref={scrollRef}
+                onScroll={() => {
+                  const el = scrollRef.current;
+                  if (!el) return;
+                  nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                  if (nearBottom.current) setNewBelow(false);
+                }}
+                className="h-full overflow-y-auto overscroll-contain p-3 space-y-2"
+              >
+                {detail?.messages.map((m, i) => {
+                  const prev = detail.messages[i - 1];
+                  const daySep = !prev || dayLabel(prev.ts) !== dayLabel(m.ts) ? (
+                    <div key={`day-${m.id}`} className="text-center py-1">
+                      <span className="text-[10px] text-[var(--muted)] bg-[var(--panel2)] rounded-full px-3 py-1">{dayLabel(m.ts)}</span>
+                    </div>
+                  ) : null;
+
+                  if (m.role === "system") {
+                    if (!m.meta?.activity) return daySep;
+                    return (
+                      <div key={m.id}>
+                        {daySep}
+                        <div className="text-center">
+                          <span className="text-[10px] text-[var(--muted)] bg-[var(--panel2)] rounded-full px-2.5 py-0.5">
+                            {m.content} · {new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  }
+                  const mine = m.role !== "user";
+                  return (
+                    <div key={m.id}>
+                      {daySep}
+                      <div className={`flex ${mine ? "justify-start" : "justify-end"}`}>
+                        <div className="max-w-[85%] md:max-w-[70%]">
+                          <div
+                            dir="auto"
+                            className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words leading-relaxed ${
+                              m.role === "user"
+                                ? "bg-[var(--panel2)] text-[var(--text)]"
+                                : m.role === "agent"
+                                ? "bg-amber-600 text-white"
+                                : "bg-[var(--accent)] text-[var(--accent-fg)]"
+                            }`}
+                          >
+                            {renderContent(m.content)}
+                          </div>
+                          <div className={`text-[10px] text-[var(--muted)] mt-0.5 ${mine ? "text-left" : "text-right"}`}>
+                            {m.role === "agent"
+                              ? `נציג${m.meta?.agentName ? ` · ${String(m.meta?.agentName)}` : ""} ✓`
+                              : m.role === "assistant"
+                              ? "בוט"
+                              : ""}{" "}
+                            {new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {newBelow && (
+                <button
+                  onClick={() => {
+                    const el = scrollRef.current;
+                    if (el) el.scrollTop = el.scrollHeight;
+                    setNewBelow(false);
+                  }}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-full px-3 py-1.5 shadow-lg"
+                >
+                  הודעות חדשות ↓
+                </button>
+              )}
+            </div>
+
+            {/* תיבת מענה */}
+            <div className="border-t border-[var(--border)] p-2.5 space-y-2 shrink-0 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+              {err && (
+                <div className="text-xs text-red-400 flex items-center gap-2 flex-wrap">
+                  <span>⚠ {err}</span>
+                  {sendFailed && (
+                    <button onClick={sendReply} disabled={busy} className="underline font-semibold">
+                      נסה לשלוח שוב
+                    </button>
+                  )}
+                </div>
+              )}
+              {closed ? (
+                <div className="text-xs text-[var(--muted)] flex items-center gap-2 py-1">
+                  השיחה סגורה - כדי לענות ללקוח, פתח אותה מחדש.
+                  <button onClick={() => act("release")} disabled={busy} className="text-[var(--accent)] underline font-semibold">
+                    פתח מחדש
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {templates.length > 0 && (
+                    <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                      {templates.map((t, i) => (
+                        <button
+                          key={i}
+                          onClick={() => updateReply((reply ? reply + " " : "") + t.text)}
+                          title={t.text}
+                          className="shrink-0 text-xs bg-[var(--panel2)] hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] border border-[var(--border)] rounded-full px-3 py-1.5 transition"
+                        >
+                          {t.title || t.text.slice(0, 20)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2 items-end">
+                    <button
+                      onClick={suggest}
+                      disabled={suggesting || busy}
+                      title="הבוט יכין טיוטת תשובה שתוכל לערוך ולשלוח"
+                      className="shrink-0 text-xs border border-[var(--border)] text-[var(--accent)] rounded-xl px-2.5 min-h-11 hover:bg-[var(--panel2)] disabled:opacity-50"
+                    >
+                      {suggesting ? "…" : "✨ הצע"}
+                    </button>
+                    <textarea
+                      ref={textareaRef}
+                      value={reply}
+                      onChange={(e) => updateReply(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          sendReply();
+                        }
+                      }}
+                      rows={1}
+                      placeholder="כתוב תשובה כנציג…"
+                      aria-label="תשובה ללקוח"
+                      className="flex-1 resize-none bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)] max-h-32"
+                    />
+                    <button
+                      onClick={sendReply}
+                      disabled={busy || !reply.trim()}
+                      className="bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-xl px-4 min-h-11 text-sm disabled:opacity-40"
+                    >
+                      {busy ? "שולח…" : "שלח"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* ============================== כרטיס לקוח ============================== */
+
+function CustomerCard({
+  token,
+  detail,
+  onSaved,
+  onMutate,
+  onMarkUnread,
+}: {
+  token: string;
+  detail: Detail;
+  onSaved: () => void;
+  onMutate: () => void;
+  onMarkUnread: () => void;
+}) {
+  const cust = detail.customer;
+  const [name, setName] = useState(cust?.name ?? "");
+  const [tags, setTags] = useState<string[]>(cust?.tags ?? []);
+  const [tagInput, setTagInput] = useState("");
+  const [notes, setNotes] = useState(cust?.notes ?? "");
+  const [vip, setVip] = useState(!!cust?.vip);
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
+
+  useEffect(() => {
+    setName(cust?.name ?? "");
+    setTags(cust?.tags ?? []);
+    setNotes(cust?.notes ?? "");
+    setVip(!!cust?.vip);
+  }, [cust?.id, cust?.name, cust?.tags, cust?.notes, cust?.vip]);
+
+  if (!cust) return null;
+
+  async function save(patch: Record<string, unknown>) {
+    setSaving(true);
+    setSaveErr("");
+    try {
+      await api(token, `/customer/${encodeURIComponent(cust!.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      onSaved();
+      onMutate();
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : "שמירה נכשלה");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function addTag() {
+    const t = tagInput.trim();
+    if (!t || tags.includes(t)) return;
+    const next = [...tags, t];
+    setTags(next);
+    setTagInput("");
+    save({ tags: next });
+  }
+  function removeTag(t: string) {
+    const next = tags.filter((x) => x !== t);
+    setTags(next);
+    save({ tags: next });
+  }
+
+  const PRESETS = ["קבוע", "VIP", "תלונה", "ליד לאירוע", "אלרגיה"];
+
+  return (
+    <div className="mx-3 mt-2 bg-[var(--panel2)] border border-[var(--border)] rounded-xl p-3 text-sm space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[var(--muted)] text-xs truncate">מזהה: {cust.channelUserId}</span>
+        <div className="flex items-center gap-3 shrink-0">
+          <button onClick={onMarkUnread} className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] underline">
+            סמן כלא נקרא
+          </button>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={vip}
+              onChange={(e) => {
+                setVip(e.target.checked);
+                save({ vip: e.target.checked });
+              }}
+            />
+            ⭐ VIP
+          </label>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-[var(--muted)] text-xs shrink-0">שם:</span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => name.trim() !== (cust.name ?? "") && save({ name: name.trim() })}
+          placeholder="שם הלקוח…"
+          className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[var(--accent)]"
+        />
+      </div>
+      <div>
+        <div className="text-[var(--muted)] text-xs mb-1">תגיות</div>
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {tags.map((t) => (
+            <span key={t} className="text-xs bg-[var(--accent)]/15 text-[var(--accent)] rounded-full px-2 py-0.5 flex items-center gap-1">
+              {t}
+              <button onClick={() => removeTag(t)} className="opacity-70 hover:opacity-100" aria-label={`הסר תגית ${t}`}>×</button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {PRESETS.filter((p) => !tags.includes(p)).map((p) => (
+            <button
+              key={p}
+              onClick={() => {
+                const next = [...tags, p];
+                setTags(next);
+                save({ tags: next });
+              }}
+              className="text-[11px] text-[var(--muted)] border border-[var(--border)] rounded-full px-2 py-0.5 hover:text-[var(--text)]"
+            >
+              + {p}
+            </button>
+          ))}
+          <input
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addTag()}
+            placeholder="תגית חדשה…"
+            className="text-xs bg-[var(--panel)] border border-[var(--border)] rounded-full px-2 py-0.5 w-24 outline-none"
+          />
+        </div>
+      </div>
+      <div>
+        <div className="text-[var(--muted)] text-xs mb-1">הערות פנימיות</div>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          onBlur={() => notes !== (cust.notes ?? "") && save({ notes })}
+          rows={2}
+          placeholder="הערות שרק הצוות רואה…"
+          className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[var(--accent)]"
+        />
+      </div>
+      {cust.memory && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[var(--muted)] text-xs">🧠 מה שהבוט זוכר</div>
+            <button
+              onClick={() => confirm("לנקות את זיכרון הבוט על הלקוח?") && save({ memory: "" })}
+              className="text-[10px] text-[var(--muted)] hover:text-[var(--text)]"
+            >
+              נקה
+            </button>
+          </div>
+          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs text-[var(--muted)] leading-relaxed">
+            {cust.memory}
+          </div>
+        </div>
+      )}
+      {saving && <div className="text-[10px] text-[var(--muted)]">שומר…</div>}
+      {saveErr && <div className="text-[10px] text-red-400">⚠ {saveErr}</div>}
+    </div>
+  );
+}

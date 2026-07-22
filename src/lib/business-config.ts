@@ -20,6 +20,8 @@ export interface MenuItem {
   price: string;
   /** תגיות: "פופולרי", "טבעוני", "צמחוני", "ללא גלוטן", "חריף", "חדש" */
   tags?: string[];
+  /** false = אזל כרגע (הבוט יציין שהמנה לא זמינה). ברירת מחדל: זמין. */
+  available?: boolean;
 }
 
 export interface MenuCategory {
@@ -44,10 +46,31 @@ export interface ParkingInfo {
 }
 
 export interface CafeEvent {
-  title: string;
-  description: string;
-  when: string;
-  active: boolean;
+  title?: string;
+  description?: string;
+  /** טקסט חופשי לתצוגה ("היום 22:00", "מוצ״ש"). לאירוע מתוארך לא נדרש. */
+  when?: string;
+  active?: boolean;
+  /** תאריך האירוע (YYYY-MM-DD). אם מוגדר, האירוע "פעיל" אוטומטית מהיום ועד שהוא עובר. */
+  date?: string;
+  /** סוג האירוע. כרגע "screening" = הקרנת משחק. */
+  kind?: "screening";
+  /** שם התחרות/האליפות ("מונדיאל", "ליגת האלופות", "ליגת העל"). */
+  competition?: string;
+  teamA?: string;
+  teamB?: string;
+  /** שעת האירוע (HH:MM). */
+  time?: string;
+}
+
+/** דריסת שעות נקודתית לתאריך מסוים (חג / לילה מיוחד / סגירה חריגה). */
+export interface HoursOverride {
+  /** תאריך (YYYY-MM-DD). */
+  date: string;
+  /** שעות לאותו יום, או null = סגור. */
+  hours: string | null;
+  /** הסבר אופציונלי ("פתוח עד מאוחר - מונדיאל", "סגור - חג"). */
+  note?: string;
 }
 
 export interface FAQ {
@@ -74,6 +97,10 @@ export interface BusinessConfig {
 
   kashrut?: string;
   hours: BusinessHours[];
+  /** דריסות שעות נקודתיות לתאריכים מסוימים (גוברות על השעות הקבועות). */
+  hoursOverrides?: HoursOverride[];
+  /** המנה/מבצע של היום - טקסט קצר שהבוט יזכיר כשרלוונטי. */
+  specialToday?: string;
   menu: MenuCategory[];
   parking?: ParkingInfo;
   events?: CafeEvent[];

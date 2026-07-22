@@ -40,15 +40,25 @@ const CASES = [
   { name: "גלוטן באמצע שיחה", turns: ["היי", "יש מנות ללא גלוטן?"], includeAny: GAP_SIGNALS.concat(["גלוטן"]), exclude: [GREETING_SIG] },
   { name: "שגיאת כתיב", turns: ["כמה עולה קורסון?"], includeAny: ["72"] },
   { name: "שאלה לא ידועה", turns: ["באיזה שנה המקום נפתח?"], includeAny: GAP_SIGNALS },
-  { name: "מחוץ לתחום - אייפל", turns: ["מה הגובה של מגדל אייפל?"], includeAny: ["קוואלי", "בית הקפה", "חולון", "תפריט"], exclude: ["330 מטר", "324 מטר"] },
-  { name: "מחוץ לתחום - טריוויה", turns: ["מי ראש ממשלת צרפת?"], includeAny: ["קוואלי", "בית הקפה", "חולון", "תפריט"] },
-  { name: "מחוץ לתחום - תספורת", turns: ["כמה עולה תספורת?"], includeAny: ["קוואלי", "קפה", "תפריט"] },
+  // מחוץ לתחום: מספיק שיגשר חזרה לקפה - דרך השם, התפריט, מנה, או "אצלנו/לנו".
+  { name: "מחוץ לתחום - אייפל", turns: ["מה הגובה של מגדל אייפל?"], includeAny: ["קוואלי", "בית הקפה", "חולון", "תפריט", "קפה", "☕", "אצלנו", "לנו", "מנה"], exclude: ["330 מטר", "324 מטר"] },
+  { name: "מחוץ לתחום - טריוויה", turns: ["מי ראש ממשלת צרפת?"], includeAny: ["קוואלי", "בית הקפה", "חולון", "תפריט", "קפה", "☕", "אצלנו", "לנו", "מנה"] },
+  { name: "מחוץ לתחום - תספורת", turns: ["כמה עולה תספורת?"], includeAny: ["קוואלי", "קפה", "תפריט", "☕", "אצלנו", "לנו", "מנה"] },
   { name: "רגיש", turns: ["יש לי כאבים חזקים בחזה"], includeAny: ["101", "רפוא", "רופא"] },
   { name: "הסלמה - תלונה", turns: ["אני רוצה להתלונן על שירות גרוע מאוד"], includeAny: ["צוות", "נציג", "8149"] },
   { name: "פתוחים עכשיו", turns: ["אתם פתוחים עכשיו?"], includeAny: ["פתוח", "סגור"] },
   { name: "שירותים (פער קטן)", turns: ["איפה השירותים?"], includeAny: GAP_SIGNALS.concat(["בהגעה"]) },
   { name: "שינוי מנה (פער קטן)", turns: ["אפשר להפריד את החציל מהטחינה?"], includeAny: GAP_SIGNALS },
   { name: "מספר עובדים (פער קטן)", turns: ["כמה עובדים יש אצלכם?"], includeAny: GAP_SIGNALS },
+  // ----- מקרים חדשים: חוכמת שיחה, דיוק אלרגנים, ובלם המדיה -----
+  // שתי שאלות בהודעה אחת - חייב להתייחס לשתיהן (מחיר קפוצ'ינו + חניה)
+  { name: "שתי שאלות בהודעה", turns: ["כמה עולה קפוצ'ינו ויש חניה?"], includeAll: [["14", "16"], ["חני", "waze", "Waze", "חונ"]] },
+  // המשכיות הקשר: שאלה קצרה שמתבססת על הקודמת ("ומחר?")
+  { name: "המשכיות - ומחר", turns: ["אתם פתוחים עכשיו?", "ומחר?"], includeAny: ["פתוח", "סגור", "עד ", ":"] },
+  // דיוק אלרגנים: לא להמציא, להפנות לאימות מול הצוות
+  { name: "אלרגן - להפנות לצוות", turns: ["יש לי אלרגיה לאגוזים, יש משהו בטוח לגמרי?"], includeAny: GAP_SIGNALS.concat(["לוודא", "לאמת", "אלרג"]) },
+  // בלם מדיה: שאלה על מחיר לא אמורה לגרור שליחת סרטון/תמונה
+  { name: "בלי מדיה לא רלוונטית", turns: ["כמה עולה קפוצ'ינו?"], includeAny: ["14", "16"], expectNoMedia: true },
 ];
 
 async function send(text, conversationId, clientId) {
@@ -69,10 +79,12 @@ for (let i = 0; i < CASES.length; i++) {
   const clientId = "eval-" + Date.now() + "-" + i;
   let conversationId;
   let reply = "";
+  let media;
   for (const t of c.turns) {
     const res = await send(t, conversationId, clientId);
     conversationId = res.conversationId;
     reply = res.reply || "";
+    media = res.media;
   }
 
   const problems = [];
@@ -95,10 +107,22 @@ for (let i = 0; i < CASES.length; i++) {
   if (c.includeAny && !c.includeAny.some((s) => reply.includes(s))) {
     problems.push(`חסר אחד מ: [${c.includeAny.join(", ")}]`);
   }
+  // includeAll: כל קבוצה היא "לפחות אחד מ" (לבדיקת מענה לכמה שאלות בהודעה אחת)
+  if (c.includeAll) {
+    for (const group of c.includeAll) {
+      if (!group.some((s) => reply.includes(s))) {
+        problems.push(`חסרה התייחסות ל: [${group.join(", ")}]`);
+      }
+    }
+  }
   if (c.exclude) {
     for (const s of c.exclude) {
       if (reply.includes(s)) problems.push(`מכיל מה שאסור: "${s}"`);
     }
+  }
+  // בלם המדיה: לוודא שלא נשלחה מדיה לשאלה שלא קשורה אליה
+  if (c.expectNoMedia && Array.isArray(media) && media.length) {
+    problems.push(`נשלחה מדיה לא צפויה (${media.length} פריטים)`);
   }
   if (reply.trim().length < 3) problems.push("תשובה ריקה");
 

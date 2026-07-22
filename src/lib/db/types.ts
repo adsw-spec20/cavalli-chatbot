@@ -21,12 +21,18 @@ export interface Customer {
   name?: string;
   /** לקוח VIP - יקבל עדיפות בהעברה לאדם */
   vip?: boolean;
+  /** תגיות חופשיות שהצוות מוסיף (קבוע / תלונה / ליד לאירוע וכו') */
+  tags?: string[];
   /** האם הסכים לקבל הודעות יזומות (תזכורות/ביקורות) */
   optInMarketing?: boolean;
   firstSeen: number;
   lastSeen: number;
   /** הערות חופשיות שהצוות יכול להוסיף */
   notes?: string;
+  /** "כרטיס זיכרון" שהבוט מתחזק על הלקוח (תמצית להמשכיות בין שיחות) */
+  memory?: string;
+  /** מתי עודכן הזיכרון לאחרונה (ms) - לוויסות תדירות העדכון */
+  memoryUpdatedAt?: number;
 }
 
 export interface StoredMessage {
@@ -54,6 +60,8 @@ export interface Conversation {
   escalationSummary?: string;
   /** האם נשלח גילוי "אני בוט AI" (תאימות Meta) */
   disclosedAi?: boolean;
+  /** הבוט מושהה לשיחה הזו בלבד (נציג מטפל ידנית בלי לכבות את הבוט לכולם) */
+  botPaused?: boolean;
   /** דירוג שביעות רצון 1-5 אם נאסף */
   csat?: number;
   meta?: Record<string, unknown>;
@@ -77,6 +85,25 @@ export interface LearnedQA {
   conversationId?: string;
   createdAt: number;
   answeredAt?: number;
+  /** עדכון אחרון של שאלה/תשובה מהפאנל (לעריכה ולמניעת דריסה מקבילה) */
+  updatedAt?: number;
+}
+
+/**
+ * שורת סיכום לרשימת השיחות בפאנל: כל מה שהאינבוקס צריך בשאילתה אחת,
+ * בלי למשוך את כל ההודעות (קריטי לביצועים כשיש אלפי הודעות).
+ */
+export interface ConversationSummary {
+  conversation: Conversation;
+  customerName?: string;
+  customerVip?: boolean;
+  customerTags?: string[];
+  /** ההודעה האחרונה שאינה system (קטומה להצגה) */
+  lastMessage?: string;
+  lastMessageRole?: MessageRole;
+  /** חותמת ההודעה האחרונה של הלקוח (לחישוב זמן המתנה) */
+  lastUserTs?: number;
+  messageCount: number;
 }
 
 export interface Repository {
@@ -86,6 +113,7 @@ export interface Repository {
       Partial<Pick<Customer, "firstSeen" | "lastSeen">>
   ): Promise<Customer>;
   getCustomer(id: string): Promise<Customer | null>;
+  updateCustomer(id: string, patch: Partial<Customer>): Promise<Customer | null>;
 
   // ----- שיחות -----
   createConversation(
@@ -97,6 +125,8 @@ export interface Repository {
     patch: Partial<Conversation>
   ): Promise<Conversation | null>;
   listConversations(filter?: ConversationFilter): Promise<Conversation[]>;
+  /** רשימת שיחות + נתוני תצוגה לאינבוקס בשאילתה יעילה אחת */
+  getConversationSummaries(): Promise<ConversationSummary[]>;
 
   // ----- הודעות -----
   addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage>;
@@ -110,6 +140,11 @@ export interface Repository {
   }): Promise<LearnedQA>;
   listLearnedQA(status?: "open" | "answered"): Promise<LearnedQA[]>;
   answerLearnedQA(id: string, answer: string): Promise<LearnedQA | null>;
+  /** עריכת שאלה/תשובה קיימת (הבוט משתמש בגרסה המעודכנת מיידית) */
+  updateLearnedQA(
+    id: string,
+    patch: { question?: string; answer?: string }
+  ): Promise<LearnedQA | null>;
   deleteLearnedQA(id: string): Promise<void>;
 
   // ----- הגדרות מערכת (key-value), למשל כפתור כיבוי הבוט -----

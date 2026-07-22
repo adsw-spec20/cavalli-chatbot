@@ -7,10 +7,43 @@
 
 html {
   direction: rtl;
+  /* מניעת ניפוח טקסט אוטומטי ב-iOS בלי לפגוע בזום ידני של המשתמש */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+}
+
+/*
+ * תיקון auto-zoom במובייל: iOS Safari מבצע זום אוטומטי בפוקוס על שדה שגודל
+ * הגופן שלו קטן מ-16px. במסכים קטנים כל שדות הקלט מקבלים מינימום 16px -
+ * זה גם קריא יותר באצבע. זום ידני (pinch) של המשתמש נשאר פעיל.
+ */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* פוקוס נראה לניווט מקלדת - בלי לצייר טבעת בלחיצות עכבר/מגע */
+:focus-visible {
+  outline: 2px solid var(--accent, #d4af37);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* כיבוד העדפת reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

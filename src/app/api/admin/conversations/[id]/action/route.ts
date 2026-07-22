@@ -4,6 +4,7 @@ import {
   closeConversation,
   releaseConversation,
   takeoverConversation,
+  setConversationBotPaused,
 } from "@/lib/admin-service";
 import { isAdminAuthorized } from "@/lib/admin-auth";
 
@@ -23,16 +24,20 @@ export async function POST(
   try {
     switch (action) {
       case "takeover":
-        return NextResponse.json(await takeoverConversation(id));
+        return NextResponse.json(await takeoverConversation(id, body.agentName));
       case "release":
-        return NextResponse.json(await releaseConversation(id));
+        return NextResponse.json(await releaseConversation(id, body.agentName));
       case "close":
-        return NextResponse.json(await closeConversation(id));
+        return NextResponse.json(await closeConversation(id, body.agentName));
+      case "pauseBot":
+        return NextResponse.json(await setConversationBotPaused(id, true));
+      case "resumeBot":
+        return NextResponse.json(await setConversationBotPaused(id, false));
       case "reply":
         if (!body.text) {
           return NextResponse.json({ error: "text required" }, { status: 400 });
         }
-        return NextResponse.json(await agentReply(id, body.text));
+        return NextResponse.json(await agentReply(id, body.text, body.agentName));
       default:
         return NextResponse.json({ error: "unknown action" }, { status: 400 });
     }

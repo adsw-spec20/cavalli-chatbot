@@ -8,9 +8,15 @@
  *  - WHATSAPP_VERIFY_TOKEN  מחרוזת שאתה בוחר, ומזין גם בהגדרת ה-webhook במטא.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { parseIncoming, whatsappAdapter } from "@/lib/channels/whatsapp";
+import { NextRequest, NextResponse, after } from "next/server";
+import {
+  parseIncoming,
+  whatsappAdapter,
+  transcribeWhatsAppAudio,
+} from "@/lib/channels/whatsapp";
 import { handleIncomingMessage } from "@/lib/conversation-service";
+import { maybeUpdateCustomerMemory } from "@/lib/customer-memory";
+import { verifyMetaSignature } from "@/lib/meta-signature";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -30,34 +36,69 @@ export async function GET(req: NextRequest) {
 
 /** קבלת הודעות נכנסות */
 export async function POST(req: NextRequest) {
+  // אימות חתימת Meta (אותו APP_SECRET כמו מסנג'ר/אינסטגרם) - בלי זה כל אחד
+  // שמכיר את ה-URL יכול לזייף הודעות נכנסות.
+  const raw = await req.text();
+  if (!verifyMetaSignature(raw, req.headers.get("x-hub-signature-256"))) {
+    return NextResponse.json({ error: "bad signature" }, { status: 403 });
+  }
+
   // מחזירים 200 מהר כדי שמטא לא ינסה לשלוח שוב; מעבדים אחרי הקריאה.
   let payload: unknown;
   try {
-    payload = await req.json();
+    payload = JSON.parse(raw);
   } catch {
     return NextResponse.json({ ok: true });
   }
 
   const incoming = parseIncoming(payload);
 
-  // מעבדים כל הודעה (בדרך כלל אחת)
-  await Promise.all(
-    incoming.map(async (msg) => {
-      try {
-        const result = await handleIncomingMessage({
-          channel: "whatsapp",
-          channelUserId: msg.senderId,
-          text: msg.text,
-        });
-        // אם נציג אנושי מטפל בשיחה, הבוט לא שולח כלום
-        if (result.reply) {
-          await whatsappAdapter.sendText(msg.senderId, result.reply);
+  // מחזירים 200 מיד ומעבדים ברקע (after) - כדי שמטא לא תשלח את ה-webhook שוב (retry).
+  after(async () => {
+    await Promise.all(
+      incoming.map(async (msg) => {
+        try {
+          // הודעה קולית - מתמללים לפני שמעבירים למוח
+          let text = msg.text;
+          let meta: Record<string, unknown> | undefined;
+          if (!text && msg.audio?.mediaId) {
+            const transcript = await transcribeWhatsAppAudio(msg.audio.mediaId);
+            if (transcript) {
+              text = transcript;
+              meta = { transcribedFromVoice: true };
+            } else {
+              text = "[הודעה קולית]";
+              meta = { transcribedFromVoice: true, voiceTranscriptionFailed: true };
+            }
+          }
+          if (!text) return; // הודעה שאינה טקסט/אודיו - מתעלמים
+
+          const result = await handleIncomingMessage({
+            channel: "whatsapp",
+            channelUserId: msg.senderId,
+            text,
+            messageId: msg.messageId,
+            customerName: msg.senderName,
+            meta,
+          });
+          if (result.reply) {
+            await whatsappAdapter.sendText(msg.senderId, result.reply);
+          }
+          if (result.media && whatsappAdapter.sendMedia) {
+            for (const m of result.media) {
+              await whatsappAdapter
+                .sendMedia(msg.senderId, m.url, m.type)
+                .catch((e) => console.error("[whatsapp] media send failed:", e));
+            }
+          }
+          // עדכון זיכרון הלקוח ברקע (אחרי שהתשובה כבר נשלחה)
+          await maybeUpdateCustomerMemory(result.conversationId);
+        } catch (err) {
+          console.error("[whatsapp webhook] failed to handle message:", err);
         }
-      } catch (err) {
-        console.error("[whatsapp webhook] failed to handle message:", err);
-      }
-    })
-  );
+      })
+    );
+  });
 
   return NextResponse.json({ ok: true });
 }

@@ -6,8 +6,10 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { businessConfig } from "./business-config";
+import { loadBusinessConfig } from "./business-config-store";
+import { loadMedia } from "./media-store";
 import { buildSystemPrompt } from "./system-prompt";
+import { memoryContextBlock } from "./customer-memory";
 import type { ConversationMessage } from "./channels/types";
 
 // מודל ברירת מחדל: Sonnet 4.6 - עברית נקייה ומדויקת, מתאים לבוט שמדבר עם לקוחות.
@@ -44,7 +46,9 @@ function getClient(): Anthropic {
         "חסר ANTHROPIC_API_KEY. הוסף אותו לקובץ .env.local (ראה .env.example)."
       );
     }
-    client = new Anthropic({ apiKey });
+    // maxRetries: ה-SDK מנסה שוב אוטומטית על שגיאות חולפות (429/5xx/רשת),
+    // עם backoff. timeout: לא להיתקע יותר מדי (יש לנו 30s ב-webhook).
+    client = new Anthropic({ apiKey, maxRetries: 2, timeout: 20_000 });
   }
   return client;
 }
@@ -59,15 +63,19 @@ export interface GenerateOptions {
   firstTurn?: boolean;
   /** שאלות שנענו על ידי הצוות, מוזרקות לידע של הבוט */
   learnedFaqs?: LearnedFaq[];
+  /** כרטיס הזיכרון של הלקוח (משיחות קודמות) - מוזרק כהקשר לא-ממוטמן */
+  customerMemory?: string;
 }
 
 export interface GenerateResult {
   /** טקסט התשובה (null אם המודל בחר רק להסלים) */
   text: string | null;
   /** אם המודל החליט להעביר לנציג אנושי */
-  escalate?: { reason: string; summary: string };
+  escalate?: { reason: string; summary: string; urgent?: boolean };
   /** שאלות עסקיות שהבוט לא ענה עליהן במלואן (לתיעוד באדמין) */
   gapQuestions?: string[];
+  /** מזהי מדיה שהמודל בחר לשלוח (ייפתרו לכתובות ויישלחו בערוץ) */
+  mediaIds?: string[];
 }
 
 // כלי שמאפשר למודל להחליט מתי להעביר לנציג אנושי, עם סיכום לטובת הנציג.
@@ -87,8 +95,30 @@ const ESCALATE_TOOL: Anthropic.Tool = {
         description:
           "סיכום קצר בעברית של מה שהלקוח צריך או הבעיה שלו, כדי שהנציג האנושי יקבל הקשר מלא ולא יצטרך לשאול מהתחלה.",
       },
+      urgent: {
+        type: "boolean",
+        description:
+          "true אם הלקוח כועס, מתוסכל, או שמדובר בעניין דחוף/רגיש שדורש טיפול מהיר. אחרת false.",
+      },
     },
     required: ["reason", "summary"],
+  },
+};
+
+// כלי לשליחת מדיה (תמונה/סרטון) ללקוח, לצד התשובה.
+const SEND_MEDIA_TOOL: Anthropic.Tool = {
+  name: "send_media",
+  description:
+    "שלח תמונה או סרטון ללקוח, בנוסף לתשובת הטקסט. השתמש בזה רק כשאחד מפריטי המדיה שברשותך באמת רלוונטי ועוזר לשאלה (למשל סרטון חניה כששואלים איך מגיעים, או תמונת מנה כששואלים עליה). אל תשלח מדיה לא רלוונטית.",
+  input_schema: {
+    type: "object",
+    properties: {
+      mediaId: {
+        type: "string",
+        description: "ה-id של פריט המדיה לשליחה (מתוך רשימת המדיה שב-System Prompt).",
+      },
+    },
+    required: ["mediaId"],
   },
 };
 
@@ -102,7 +132,8 @@ const REPORT_GAP_TOOL: Anthropic.Tool = {
     properties: {
       question: {
         type: "string",
-        description: "ניסוח תמציתי וברור של השאלה העסקית שלא ידעת לענות עליה.",
+        description:
+          "נסח מחדש את השאלה הבודדת שלא ידעת לענות עליה, כמשפט קצר וברור (עד ~10 מילים). אל תעתיק את כל הודעת הלקוח. אם הלקוח שאל כמה דברים שלא ידעת - קרא לכלי בנפרד לכל שאלה, עם ניסוח תמציתי משלה.",
       },
     },
     required: ["question"],
@@ -118,7 +149,9 @@ export async function generateReply(
 ): Promise<GenerateResult> {
   const anthropic = getClient();
 
-  const systemPrompt = buildSystemPrompt(businessConfig);
+  // המידע העסקי + ספריית המדיה נטענים דינמית (ניתנים לעריכה מהפאנל).
+  const [businessConfig, media] = await Promise.all([loadBusinessConfig(), loadMedia()]);
+  const systemPrompt = buildSystemPrompt(businessConfig, media);
 
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {
@@ -135,6 +168,11 @@ export async function generateReply(
       type: "text",
       text: `# ידע נוסף שהצוות הוסיף (השתמש בו כמו בשאר המידע על העסק)\n${faqText}`,
     });
+  }
+  // זיכרון הלקוח (אם קיים) - בלוק לא-ממוטמן, כי הוא שונה מלקוח ללקוח
+  const memoryBlock = memoryContextBlock(options.customerMemory);
+  if (memoryBlock) {
+    systemBlocks.push({ type: "text", text: memoryBlock });
   }
   systemBlocks.push({
     type: "text",
@@ -169,7 +207,7 @@ export async function generateReply(
     model: MODEL,
     max_tokens: MAX_TOKENS,
     system: systemBlocks,
-    tools: [ESCALATE_TOOL, REPORT_GAP_TOOL],
+    tools: [ESCALATE_TOOL, REPORT_GAP_TOOL, SEND_MEDIA_TOOL],
     messages: reqMessages,
   });
 
@@ -183,11 +221,21 @@ export async function generateReply(
   const textBlock = response.content.find((b) => b.type === "text");
   let text = textBlock && textBlock.type === "text" ? textBlock.text : null;
 
+  // מזהי מדיה שהמודל בחר לשלוח
+  const mediaIds = response.content
+    .filter((b) => b.type === "tool_use" && b.name === "send_media")
+    .map((b) => ((b as Anthropic.ToolUseBlock).input as { mediaId: string }).mediaId)
+    .filter((x): x is string => !!x);
+
   const escalateUse = response.content.find(
     (b) => b.type === "tool_use" && b.name === "escalate_to_human"
   );
   if (escalateUse && escalateUse.type === "tool_use") {
-    return { text, escalate: escalateUse.input as { reason: string; summary: string } };
+    return {
+      text,
+      escalate: escalateUse.input as { reason: string; summary: string; urgent?: boolean },
+      mediaIds: mediaIds.length ? mediaIds : undefined,
+    };
   }
 
   // קוצרים את כל דיווחי פערי הידע
@@ -211,5 +259,6 @@ export async function generateReply(
   return {
     text,
     gapQuestions: gapQuestions.length ? gapQuestions : undefined,
+    mediaIds: mediaIds.length ? mediaIds : undefined,
   };
 }

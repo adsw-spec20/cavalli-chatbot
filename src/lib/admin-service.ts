@@ -7,6 +7,16 @@
 
 import { getRepo } from "./db";
 import { whatsappAdapter } from "./channels/whatsapp";
+import { messengerAdapter, instagramAdapter } from "./channels/meta-messaging";
+import {
+  loadBusinessConfig,
+  saveBusinessConfig,
+  getDefaultBusinessConfig,
+} from "./business-config-store";
+import { loadMedia, saveMedia, type MediaItem } from "./media-store";
+import { generateReply } from "./claude";
+import type { BusinessConfig } from "./business-config";
+import type { ChannelAdapter, ConversationMessage } from "./channels/types";
 import type { Conversation, Customer, LearnedQA, StoredMessage } from "./db";
 
 const STOPWORDS = new Set([
@@ -21,36 +31,43 @@ export interface ConversationListItem {
   status: string;
   escalated?: boolean;
   escalationReason?: string;
+  urgent?: boolean;
+  botPaused?: boolean;
   customerName?: string;
   customerId: string;
+  vip?: boolean;
+  tags?: string[];
   updatedAt: number;
   lastMessage?: string;
+  /** חותמת זמן של הודעת הלקוח האחרונה (לחישוב זמן המתנה / SLA) */
+  lastUserTs?: number;
   messageCount: number;
   /** האם ההודעה האחרונה מהלקוח (כלומר ממתינה למענה) */
   awaiting: boolean;
 }
 
 export async function listConversations(): Promise<ConversationListItem[]> {
-  const repo = getRepo();
-  const convs = await repo.listConversations();
-  const all = await repo.getAllMessages();
-  return convs.map((c) => {
-    const msgs = all.filter((m) => m.conversationId === c.id);
-    const lastNonSystem = [...msgs]
-      .reverse()
-      .find((m) => m.role !== "system");
+  // שאילתת סיכום אחת (בלי למשוך את כל ההודעות) - נשאר מהיר גם עם אלפי הודעות
+  const summaries = await getRepo().getConversationSummaries();
+  return summaries.map((s) => {
+    const c = s.conversation;
     return {
       id: c.id,
       channel: c.channel,
       status: c.status,
       escalated: c.escalated,
       escalationReason: c.escalationReason,
-      customerName: undefined,
+      urgent: (c.meta as { urgent?: boolean } | undefined)?.urgent,
+      botPaused: c.botPaused,
+      customerName: s.customerName,
       customerId: c.customerId,
+      vip: s.customerVip,
+      tags: s.customerTags,
       updatedAt: c.updatedAt,
-      lastMessage: lastNonSystem?.content.slice(0, 80),
-      messageCount: msgs.length,
-      awaiting: lastNonSystem?.role === "user",
+      lastMessage: s.lastMessage,
+      lastUserTs: s.lastUserTs,
+      messageCount: s.messageCount,
+      awaiting: s.lastMessageRole === "user",
     };
   });
 }
@@ -80,41 +97,171 @@ export async function getConversationDetail(
   return { conversation, customer, messages };
 }
 
-export async function takeoverConversation(id: string) {
+/** רישום פעולה ביומן הפעילות של השיחה (מוצג בתוך השיחה). */
+async function logActivity(conversationId: string, text: string) {
+  await getRepo().addMessage({
+    conversationId,
+    role: "system",
+    content: text,
+    ts: Date.now(),
+    meta: { activity: true },
+  });
+}
+
+export async function takeoverConversation(id: string, agentName?: string) {
+  await logActivity(id, `${agentName || "נציג"} השתלט על השיחה`);
   return getRepo().updateConversation(id, { status: "human" });
 }
 
-export async function releaseConversation(id: string) {
+export async function releaseConversation(id: string, agentName?: string) {
+  await logActivity(id, `${agentName || "נציג"} החזיר את השיחה לבוט`);
   return getRepo().updateConversation(id, {
     status: "bot",
     escalated: false,
     escalationReason: undefined,
+    botPaused: false,
   });
 }
 
-export async function closeConversation(id: string) {
+export async function closeConversation(id: string, agentName?: string) {
+  await logActivity(id, `${agentName || "נציג"} סגר את השיחה`);
   return getRepo().updateConversation(id, { status: "closed" });
 }
 
-/** נציג אנושי שולח תשובה. בערוצים אמיתיים (וואטסאפ) גם נשלח ללקוח. */
-export async function agentReply(id: string, text: string) {
+/** מיפוי ערוץ -> אדפטר שליחה. ל-playground אין אדפטר (הדפדפן מושך בעצמו). */
+const CHANNEL_ADAPTERS: Record<string, ChannelAdapter | undefined> = {
+  whatsapp: whatsappAdapter,
+  messenger: messengerAdapter,
+  instagram: instagramAdapter,
+};
+
+/** נציג אנושי שולח תשובה. בערוצים אמיתיים (וואטסאפ/מסנג'ר/אינסטגרם) גם נשלחת ללקוח. */
+export async function agentReply(id: string, text: string, agentName?: string) {
   const repo = getRepo();
   const conversation = await repo.getConversation(id);
   if (!conversation) throw new Error("conversation not found");
 
-  const message = await repo.addMessage({
+  // מניעת שליחה כפולה: אם אותה תשובת נציג בדיוק נשמרה בשניות האחרונות
+  // (לחיצה כפולה / retry של הדפדפן), מחזירים את הקיימת בלי לשלוח שוב ללקוח.
+  const recent = await repo.getMessages(id);
+  const dup = [...recent]
+    .reverse()
+    .find((m) => m.role === "agent" && m.content === text && Date.now() - m.ts < 15_000);
+  if (dup) return dup;
+
+  // משלוח בערוץ האמיתי לפני השמירה - אם השליחה נכשלת, הנציג יקבל שגיאה ויידע שלא נשלח
+  const adapter = CHANNEL_ADAPTERS[conversation.channel];
+  if (adapter) {
+    const customer = await repo.getCustomer(conversation.customerId);
+    if (customer) await adapter.sendText(customer.channelUserId, text);
+  }
+
+  return repo.addMessage({
     conversationId: id,
     role: "agent",
     content: text,
     ts: Date.now(),
+    meta: agentName ? { agentName } : undefined,
   });
+}
 
-  // משלוח בערוץ האמיתי
-  const customer = await repo.getCustomer(conversation.customerId);
-  if (conversation.channel === "whatsapp" && customer) {
-    await whatsappAdapter.sendText(customer.channelUserId, text);
+/** השהיית/הפעלת הבוט לשיחה אחת בלבד (בלי לכבות אותו לכולם). */
+export async function setConversationBotPaused(id: string, paused: boolean) {
+  await logActivity(id, paused ? "הבוט הושהה בשיחה זו" : "הבוט הופעל מחדש בשיחה זו");
+  return getRepo().updateConversation(id, { botPaused: paused });
+}
+
+// ----- ספריית מדיה -----
+export async function getMediaLibrary(): Promise<MediaItem[]> {
+  return loadMedia();
+}
+export async function setMediaLibrary(items: MediaItem[]): Promise<void> {
+  await saveMedia(items);
+}
+
+// ----- בריאות הערוצים -----
+export interface ChannelHealth {
+  channel: string;
+  configured: boolean;
+  lastInbound?: number;
+}
+export async function getChannelHealth(): Promise<ChannelHealth[]> {
+  const summaries = await getRepo().getConversationSummaries();
+  const lastByChannel = new Map<string, number>();
+  for (const s of summaries) {
+    if (!s.lastUserTs) continue;
+    const ch = s.conversation.channel;
+    lastByChannel.set(ch, Math.max(lastByChannel.get(ch) ?? 0, s.lastUserTs));
   }
-  return message;
+  const tokens: Record<string, string | undefined> = {
+    whatsapp: process.env.WHATSAPP_ACCESS_TOKEN,
+    messenger: process.env.MESSENGER_PAGE_ACCESS_TOKEN,
+    instagram: process.env.INSTAGRAM_PAGE_ACCESS_TOKEN,
+  };
+  return ["whatsapp", "messenger", "instagram"].map((channel) => ({
+    channel,
+    configured: !!tokens[channel],
+    lastInbound: lastByChannel.get(channel),
+  }));
+}
+
+// ----- הצעת תשובה לנציג (טיוטה מהבוט) -----
+export async function suggestReply(conversationId: string): Promise<string> {
+  const msgs = await getRepo().getMessages(conversationId);
+  // בניית היסטוריה ממוזגת (רצף תפקידים זהים = הודעה אחת), כפי שה-API דורש
+  const merged: ConversationMessage[] = [];
+  for (const m of msgs) {
+    if (m.role !== "user" && m.role !== "assistant" && m.role !== "agent") continue;
+    const role: "user" | "assistant" = m.role === "user" ? "user" : "assistant";
+    const last = merged[merged.length - 1];
+    if (last && last.role === role) last.content += "\n" + m.content;
+    else merged.push({ role, content: m.content });
+  }
+  while (merged.length && merged[0].role === "assistant") merged.shift();
+  // המודל דורש שההיסטוריה תסתיים בהודעת לקוח - מסירים תשובות בוט/נציג מהסוף,
+  // כדי שהבוט יציע מענה לפנייה האחרונה של הלקוח.
+  while (merged.length && merged[merged.length - 1].role === "assistant") merged.pop();
+  if (!merged.length) return "";
+  const result = await generateReply(merged, {});
+  return result.text ?? "";
+}
+
+/** עדכון פרטי לקוח (תגיות, הערות, VIP, זיכרון) מהפאנל. */
+export async function updateCustomerDetails(
+  customerId: string,
+  patch: { name?: string; vip?: boolean; tags?: string[]; notes?: string; memory?: string }
+) {
+  return getRepo().updateCustomer(customerId, patch);
+}
+
+// ----- עריכת המידע העסקי מהפאנל -----
+export async function getBusinessConfig(): Promise<BusinessConfig> {
+  return loadBusinessConfig();
+}
+export async function updateBusinessConfig(config: BusinessConfig): Promise<void> {
+  await saveBusinessConfig(config);
+}
+export function defaultBusinessConfig(): BusinessConfig {
+  return getDefaultBusinessConfig();
+}
+
+// ----- תבניות תשובה מהירות (Quick replies) -----
+export interface QuickReply {
+  title: string;
+  text: string;
+}
+export async function getTemplates(): Promise<QuickReply[]> {
+  const raw = await getRepo().getSetting("quick_replies");
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+export async function setTemplates(items: QuickReply[]): Promise<void> {
+  await getRepo().setSetting("quick_replies", JSON.stringify(items));
 }
 
 /** ניהול הידע הנלמד: שאלות פתוחות + תשובות הצוות */
@@ -125,6 +272,22 @@ export async function listKnowledge(
 }
 export async function answerKnowledge(id: string, answer: string) {
   return getRepo().answerLearnedQA(id, answer);
+}
+/** עריכת פריט ידע קיים (שאלה ו/או תשובה). הבוט משתמש בגרסה החדשה מהתור הבא. */
+export async function updateKnowledge(
+  id: string,
+  patch: { question?: string; answer?: string }
+) {
+  return getRepo().updateLearnedQA(id, patch);
+}
+/** הוספת ידע יזומה מהפאנל (שאלה + תשובה מוכנות, בלי לחכות שלקוח ישאל). */
+export async function createKnowledge(question: string, answer: string) {
+  const qa = await getRepo().addOpenQuestion({ question: question.trim() });
+  return getRepo().answerLearnedQA(qa.id, answer.trim());
+}
+export async function getKnowledgeItem(id: string) {
+  const all = await getRepo().listLearnedQA();
+  return all.find((q) => q.id === id) ?? null;
 }
 export async function deleteKnowledge(id: string) {
   return getRepo().deleteLearnedQA(id);
@@ -138,15 +301,25 @@ export interface Stats {
   totalUserMessages: number;
   last7Days: { date: string; count: number }[];
   topWords: { word: string; count: number }[];
+  byChannel: { channel: string; count: number }[];
+  peakHours: { hour: number; count: number }[]; // עומס לפי שעה ביום (שעון ישראל)
   needsAttention: number; // שיחות שמחכות לטיפול אנושי
   openQuestions: number; // שאלות שממתינות לתשובת הצוות
+  /** שיחות פתוחות שההודעה האחרונה בהן היא של הלקוח (ממתינות למענה כלשהו) */
+  awaitingReplies: number;
 }
 
 export async function computeStats(): Promise<Stats> {
   const repo = getRepo();
-  const convs = await repo.listConversations();
-  const msgs = await repo.getAllMessages();
+  const [convs, msgs, summaries] = await Promise.all([
+    repo.listConversations(),
+    repo.getAllMessages(),
+    repo.getConversationSummaries(),
+  ]);
   const userMsgs = msgs.filter((m) => m.role === "user");
+  const awaitingReplies = summaries.filter(
+    (s) => s.lastMessageRole === "user" && s.conversation.status !== "closed"
+  ).length;
 
   const openQuestions = (await repo.listLearnedQA("open")).length;
   const total = convs.length;
@@ -185,6 +358,26 @@ export async function computeStats(): Promise<Stats> {
     .slice(0, 10)
     .map(([word, count]) => ({ word, count }));
 
+  // פילוח שיחות לפי ערוץ
+  const channelCounts = new Map<string, number>();
+  for (const c of convs) channelCounts.set(c.channel, (channelCounts.get(c.channel) ?? 0) + 1);
+  const byChannel = [...channelCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([channel, count]) => ({ channel, count }));
+
+  // עומס לפי שעה ביום (שעון ישראל) - מתוך הודעות הלקוחות
+  const hourFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jerusalem",
+    hour: "2-digit",
+    hour12: false,
+  });
+  const hourCounts = new Array(24).fill(0) as number[];
+  for (const m of userMsgs) {
+    const h = parseInt(hourFmt.format(new Date(m.ts)), 10) % 24;
+    if (!Number.isNaN(h)) hourCounts[h]++;
+  }
+  const peakHours = hourCounts.map((count, hour) => ({ hour, count }));
+
   return {
     totalConversations: total,
     byStatus,
@@ -193,7 +386,10 @@ export async function computeStats(): Promise<Stats> {
     totalUserMessages: userMsgs.length,
     last7Days,
     topWords,
+    byChannel,
+    peakHours,
     needsAttention: byStatus.human,
     openQuestions,
+    awaitingReplies,
   };
 }

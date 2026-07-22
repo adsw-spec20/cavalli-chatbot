@@ -10,6 +10,7 @@ import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import type {
   Conversation,
   ConversationFilter,
+  ConversationSummary,
   Customer,
   LearnedQA,
   Repository,
@@ -78,6 +79,14 @@ export class PostgresRepository implements Repository {
       key text PRIMARY KEY,
       value text NOT NULL
     )`;
+    // הוספת עמודות חדשות לטבלאות קיימות (בטוח להריץ שוב ושוב)
+    await this.sql`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS bot_paused boolean`;
+    await this.sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS tags text`;
+    await this.sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS memory text`;
+    await this.sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS memory_updated_at bigint`;
+    await this.sql`ALTER TABLE learned_qa ADD COLUMN IF NOT EXISTS updated_at bigint`;
+    // אינדקס לשאילתת הסיכום של האינבוקס (הודעה אחרונה לפי שיחה)
+    await this.sql`CREATE INDEX IF NOT EXISTS idx_messages_conv_ts ON messages (conversation_id, ts DESC)`;
   }
 
   private toLearnedQA(r: Record<string, unknown>): LearnedQA {
@@ -89,6 +98,7 @@ export class PostgresRepository implements Repository {
       conversationId: (r.conversation_id as string) ?? undefined,
       createdAt: Number(r.created_at),
       answeredAt: r.answered_at ? Number(r.answered_at) : undefined,
+      updatedAt: r.updated_at ? Number(r.updated_at) : undefined,
     };
   }
 
@@ -110,11 +120,24 @@ export class PostgresRepository implements Repository {
       channelUserId: r.channel_user_id as string,
       name: (r.name as string) ?? undefined,
       vip: (r.vip as boolean) ?? undefined,
+      tags: this.parseTags(r.tags),
       optInMarketing: (r.opt_in_marketing as boolean) ?? undefined,
       firstSeen: Number(r.first_seen),
       lastSeen: Number(r.last_seen),
       notes: (r.notes as string) ?? undefined,
+      memory: (r.memory as string) ?? undefined,
+      memoryUpdatedAt: r.memory_updated_at ? Number(r.memory_updated_at) : undefined,
     };
+  }
+
+  private parseTags(v: unknown): string[] | undefined {
+    if (!v) return undefined;
+    try {
+      const arr = JSON.parse(v as string);
+      return Array.isArray(arr) && arr.length ? arr : undefined;
+    } catch {
+      return undefined;
+    }
   }
   private toConversation(r: Record<string, unknown>): Conversation {
     return {
@@ -128,6 +151,7 @@ export class PostgresRepository implements Repository {
       escalationReason: (r.escalation_reason as string) ?? undefined,
       escalationSummary: (r.escalation_summary as string) ?? undefined,
       disclosedAi: (r.disclosed_ai as boolean) ?? undefined,
+      botPaused: (r.bot_paused as boolean) ?? undefined,
       csat: (r.csat as number) ?? undefined,
       meta: this.parseMeta(r.meta),
     };
@@ -150,15 +174,17 @@ export class PostgresRepository implements Repository {
   ): Promise<Customer> {
     await this.init();
     const now = Date.now();
+    const tags = input.tags ? JSON.stringify(input.tags) : null;
     const rows = await this.sql`
-      INSERT INTO customers (id, channel, channel_user_id, name, vip, opt_in_marketing, first_seen, last_seen, notes)
+      INSERT INTO customers (id, channel, channel_user_id, name, vip, tags, opt_in_marketing, first_seen, last_seen, notes)
       VALUES (${input.id}, ${input.channel}, ${input.channelUserId}, ${input.name ?? null},
-              ${input.vip ?? null}, ${input.optInMarketing ?? null}, ${input.firstSeen ?? now}, ${now}, ${input.notes ?? null})
+              ${input.vip ?? null}, ${tags}, ${input.optInMarketing ?? null}, ${input.firstSeen ?? now}, ${now}, ${input.notes ?? null})
       ON CONFLICT (id) DO UPDATE SET
         channel = EXCLUDED.channel,
         channel_user_id = EXCLUDED.channel_user_id,
         name = COALESCE(EXCLUDED.name, customers.name),
         vip = COALESCE(EXCLUDED.vip, customers.vip),
+        tags = COALESCE(EXCLUDED.tags, customers.tags),
         opt_in_marketing = COALESCE(EXCLUDED.opt_in_marketing, customers.opt_in_marketing),
         last_seen = EXCLUDED.last_seen,
         notes = COALESCE(EXCLUDED.notes, customers.notes)
@@ -172,6 +198,28 @@ export class PostgresRepository implements Repository {
     return rows[0] ? this.toCustomer(rows[0]) : null;
   }
 
+  async updateCustomer(
+    id: string,
+    patch: Partial<Customer>
+  ): Promise<Customer | null> {
+    await this.init();
+    const existing = await this.getCustomer(id);
+    if (!existing) return null;
+    const m = { ...existing, ...patch };
+    const rows = await this.sql`
+      UPDATE customers SET
+        name = ${m.name ?? null},
+        vip = ${m.vip ?? null},
+        tags = ${m.tags && m.tags.length ? JSON.stringify(m.tags) : null},
+        opt_in_marketing = ${m.optInMarketing ?? null},
+        notes = ${m.notes ?? null},
+        memory = ${m.memory ?? null},
+        memory_updated_at = ${m.memoryUpdatedAt ?? null}
+      WHERE id = ${id}
+      RETURNING *`;
+    return rows[0] ? this.toCustomer(rows[0]) : null;
+  }
+
   // ---------- conversations ----------
   async createConversation(
     data: Omit<Conversation, "createdAt" | "updatedAt">
@@ -179,10 +227,10 @@ export class PostgresRepository implements Repository {
     await this.init();
     const now = Date.now();
     const rows = await this.sql`
-      INSERT INTO conversations (id, channel, customer_id, status, created_at, updated_at, escalated, escalation_reason, escalation_summary, disclosed_ai, csat, meta)
+      INSERT INTO conversations (id, channel, customer_id, status, created_at, updated_at, escalated, escalation_reason, escalation_summary, disclosed_ai, bot_paused, csat, meta)
       VALUES (${data.id}, ${data.channel}, ${data.customerId}, ${data.status}, ${now}, ${now},
               ${data.escalated ?? null}, ${data.escalationReason ?? null}, ${data.escalationSummary ?? null},
-              ${data.disclosedAi ?? null}, ${data.csat ?? null}, ${data.meta ? JSON.stringify(data.meta) : null})
+              ${data.disclosedAi ?? null}, ${data.botPaused ?? null}, ${data.csat ?? null}, ${data.meta ? JSON.stringify(data.meta) : null})
       RETURNING *`;
     return this.toConversation(rows[0]);
   }
@@ -209,6 +257,7 @@ export class PostgresRepository implements Repository {
         escalation_reason = ${m.escalationReason ?? null},
         escalation_summary = ${m.escalationSummary ?? null},
         disclosed_ai = ${m.disclosedAi ?? null},
+        bot_paused = ${m.botPaused ?? null},
         csat = ${m.csat ?? null},
         meta = ${m.meta ? JSON.stringify(m.meta) : null}
       WHERE id = ${id}
@@ -228,6 +277,67 @@ export class PostgresRepository implements Repository {
       .filter((c) =>
         filter.escalated !== undefined ? !!c.escalated === filter.escalated : true
       );
+  }
+
+  async getConversationSummaries(): Promise<ConversationSummary[]> {
+    await this.init();
+    try {
+      // שאילתה אחת במקום משיכת כל ההודעות: הודעה אחרונה + ספירה + זמן לקוח אחרון
+      // דרך subqueries ממופתחות (idx_messages_conv_ts), ופרטי הלקוח ב-JOIN.
+      const rows = await this.sql`
+        SELECT c.*,
+               cu.name AS cust_name, cu.vip AS cust_vip, cu.tags AS cust_tags,
+               lm.content AS last_content, lm.role AS last_role,
+               (SELECT MAX(ts) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user') AS last_user_ts,
+               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+        FROM conversations c
+        LEFT JOIN customers cu ON cu.id = c.customer_id
+        LEFT JOIN LATERAL (
+          SELECT content, role FROM messages m
+          WHERE m.conversation_id = c.id AND m.role <> 'system'
+          ORDER BY m.ts DESC LIMIT 1
+        ) lm ON true
+        ORDER BY c.updated_at DESC`;
+      return rows.map((r) => ({
+        conversation: this.toConversation(r),
+        customerName: (r.cust_name as string) ?? undefined,
+        customerVip: (r.cust_vip as boolean) ?? undefined,
+        customerTags: this.parseTags(r.cust_tags),
+        lastMessage: r.last_content ? (r.last_content as string).slice(0, 80) : undefined,
+        lastMessageRole: (r.last_role as StoredMessage["role"]) ?? undefined,
+        lastUserTs: r.last_user_ts ? Number(r.last_user_ts) : undefined,
+        messageCount: Number(r.message_count ?? 0),
+      }));
+    } catch (err) {
+      // רשת ביטחון: אם השאילתה המהירה נכשלת, האינבוקס ממשיך לעבוד בדרך האיטית
+      console.error("[postgres] summary query failed, falling back:", err);
+      return this.summariesFallback();
+    }
+  }
+
+  /** חישוב סיכומים בדרך הישנה (איטית אך בדוקה) - למקרה כשל בשאילתה המהירה. */
+  private async summariesFallback(): Promise<ConversationSummary[]> {
+    const convs = await this.listConversations();
+    const msgs = await this.getAllMessages();
+    const custIds = [...new Set(convs.map((c) => c.customerId))];
+    const customers = await Promise.all(custIds.map((id) => this.getCustomer(id)));
+    const custById = new Map(customers.filter(Boolean).map((c) => [c!.id, c!]));
+    return convs.map((conversation) => {
+      const mine = msgs.filter((m) => m.conversationId === conversation.id);
+      const lastNonSystem = [...mine].reverse().find((m) => m.role !== "system");
+      const lastUser = [...mine].reverse().find((m) => m.role === "user");
+      const cust = custById.get(conversation.customerId);
+      return {
+        conversation,
+        customerName: cust?.name,
+        customerVip: cust?.vip,
+        customerTags: cust?.tags,
+        lastMessage: lastNonSystem?.content.slice(0, 80),
+        lastMessageRole: lastNonSystem?.role,
+        lastUserTs: lastUser?.ts,
+        messageCount: mine.length,
+      };
+    });
   }
 
   // ---------- messages ----------
@@ -281,6 +391,35 @@ export class PostgresRepository implements Repository {
       UPDATE learned_qa SET answer = ${answer}, status = ${"answered"}, answered_at = ${Date.now()}
       WHERE id = ${id} RETURNING *`;
     return rows[0] ? this.toLearnedQA(rows[0]) : null;
+  }
+
+  async updateLearnedQA(
+    id: string,
+    patch: { question?: string; answer?: string }
+  ): Promise<LearnedQA | null> {
+    await this.init();
+    const rows = await this.sql`SELECT * FROM learned_qa WHERE id = ${id}`;
+    if (!rows[0]) return null;
+    const existing = this.toLearnedQA(rows[0]);
+    const question =
+      typeof patch.question === "string" && patch.question.trim()
+        ? patch.question.trim()
+        : existing.question;
+    const answer =
+      typeof patch.answer === "string" && patch.answer.trim()
+        ? patch.answer.trim()
+        : existing.answer;
+    // מענה ראשון לשאלה פתוחה דרך עריכה נחשב כ"נענתה"
+    const becomesAnswered = existing.status === "open" && !!answer;
+    const updated = await this.sql`
+      UPDATE learned_qa SET
+        question = ${question},
+        answer = ${answer},
+        status = ${becomesAnswered ? "answered" : existing.status},
+        answered_at = ${becomesAnswered ? Date.now() : existing.answeredAt ?? null},
+        updated_at = ${Date.now()}
+      WHERE id = ${id} RETURNING *`;
+    return updated[0] ? this.toLearnedQA(updated[0]) : null;
   }
 
   async deleteLearnedQA(id: string): Promise<void> {
