@@ -11,6 +11,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { getRepo } from "./db";
+import { recordLlmUsage } from "./usage";
 import type { StoredMessage } from "./db/types";
 
 // מודל זול לתמצות; אפשר לעקוף דרך MEMORY_MODEL.
@@ -42,8 +43,9 @@ export function memoryContextBlock(memory?: string): string | undefined {
     "# מה שאנחנו כבר יודעים על הלקוח (משיחות קודמות)\n" +
     `${m}\n` +
     "השתמש במידע הזה **בעדינות ובטבעיות** כדי לתת יחס אישי והמשכיות - " +
-    "למשל לפנות בשמו או להתחשב בהעדפות. **אל תכריז** 'אני זוכר ש...' ואל תצטט " +
+    "למשל להתחשב בהעדפות שלו. **אל תכריז** 'אני זוכר ש...' ואל תצטט " +
     "את הכרטיס; פשוט תן לזה לבוא לידי ביטוי בשיחה כמו מארח שמכיר את האורח. " +
+    "**לעולם אל תפנה ללקוח בשמו** - גם אם שם מופיע כאן או בשיחה. " +
     "אם המידע לא רלוונטי לשאלה הנוכחית, התעלם ממנו."
   );
 }
@@ -103,6 +105,9 @@ export async function maybeUpdateCustomerMemory(conversationId: string): Promise
         "אם אין שום דבר שווה-זכירה, החזר מחרוזת ריקה.",
       messages: [{ role: "user", content: userContent }],
     });
+
+    // רישום העלות של תמצות הזיכרון (Haiku) - נספר במד העלות אבל לא כ"תשובה"
+    await recordLlmUsage(MEMORY_MODEL, res.usage, false);
 
     const block = res.content.find((b) => b.type === "text");
     let memory = block && block.type === "text" ? block.text.trim() : "";

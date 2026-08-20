@@ -107,7 +107,8 @@ export function parseMetaMessaging(
           out.push({
             channel,
             senderId: ev.sender.id,
-            text: ev.message.text,
+            // תבניות מודעה פגומות שולחות לפעמים קידומת "null " לפני הטקסט - מסננים
+            text: ev.message.text.replace(/^\s*null\s+/i, ""),
             messageId: ev.message.mid,
             timestamp: ev.timestamp ?? Date.now(),
           });
@@ -143,21 +144,37 @@ function createAdapter(
 
   return {
     channel,
-    async sendText(recipientId: string, text: string): Promise<void> {
+    async sendText(recipientId: string, text: string, opts?: { humanAgent?: boolean }): Promise<void> {
       const token = process.env[tokenEnv];
       if (!token) throw new Error(`חסר ${tokenEnv} ב-.env.local`);
-      const res = await fetch(endpoint(token), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          recipient: { id: recipientId },
-          messaging_type: "RESPONSE",
-          message: { text },
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(`${channel} send failed (${res.status}): ${await res.text()}`);
+      const attempt = (body: Record<string, unknown>) =>
+        fetch(endpoint(token), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipient: { id: recipientId }, message: { text }, ...body }),
+        });
+
+      const res = await attempt({ messaging_type: "RESPONSE" });
+      if (res.ok) return;
+      const errText = await res.text();
+
+      // חלון 24 השעות של מטא נסגר (code 10 / subcode 2534022).
+      // תשובת נציג אנושי: מנסים שוב עם תג HUMAN_AGENT שמרחיב את החלון ל-7 ימים
+      // (עובד רק אחרי שמטא מאשרת את פיצ'ר Human Agent לאפליקציה).
+      const windowClosed = errText.includes("2534022") || /"code"\s*:\s*10\b/.test(errText);
+      if (windowClosed && opts?.humanAgent) {
+        const retry = await attempt({ messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" });
+        if (retry.ok) return;
+        throw new Error(
+          "מטא חוסמת שליחה מעבר ל-24 שעות מההודעה האחרונה של הלקוח. " +
+            "ברגע שבקשת Human Agent שהגשנו תאושר, נציגים יוכלו לענות עד 7 ימים אחורה. " +
+            "בינתיים: אם יש טלפון של הלקוח - עדיף להתקשר."
+        );
       }
+      if (windowClosed) {
+        throw new Error("מטא חוסמת שליחה מעבר ל-24 שעות מההודעה האחרונה של הלקוח.");
+      }
+      throw new Error(`${channel} send failed (${res.status}): ${errText}`);
     },
     async sendTyping(recipientId: string): Promise<void> {
       const token = process.env[tokenEnv];
@@ -197,9 +214,20 @@ function createAdapter(
         const res = await fetch(
           `https://graph.facebook.com/${GRAPH_API_VERSION}/${userId}?fields=${nameFields}&access_token=${token}`
         );
-        if (!res.ok) return undefined;
-        const data = (await res.json()) as { name?: string; username?: string };
-        return data.name || data.username || undefined;
+        if (!res.ok) {
+          console.error(`[${channel}] שליפת שם פרופיל נכשלה (${res.status}):`, await res.text());
+          return undefined;
+        }
+        const data = (await res.json()) as {
+          name?: string;
+          username?: string;
+          first_name?: string;
+          last_name?: string;
+        };
+        // מסנג'ר מחזיר first_name/last_name (השדה name לא נתמך ל-PSID);
+        // אינסטגרם מחזיר name/username.
+        const fullName = [data.first_name, data.last_name].filter(Boolean).join(" ");
+        return data.name || fullName || data.username || undefined;
       } catch {
         return undefined;
       }
@@ -207,6 +235,11 @@ function createAdapter(
   };
 }
 
-// מסנג'ר: לצומת ה-PSID יש "name". אינסטגרם: ל-IGSID יש "name" ו-"username".
-export const messengerAdapter = createAdapter("messenger", "MESSENGER_PAGE_ACCESS_TOKEN", "name");
+// מסנג'ר: ל-PSID אין שדה "name" - חובה לבקש first_name+last_name (זו הייתה
+// הסיבה שכל לקוחות הפייסבוק הופיעו כ"לקוח"). אינסטגרם: "name" ו-"username".
+export const messengerAdapter = createAdapter(
+  "messenger",
+  "MESSENGER_PAGE_ACCESS_TOKEN",
+  "first_name,last_name"
+);
 export const instagramAdapter = createAdapter("instagram", "INSTAGRAM_PAGE_ACCESS_TOKEN", "name,username");

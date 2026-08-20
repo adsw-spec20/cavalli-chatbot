@@ -15,6 +15,10 @@ import {
 } from "./business-config-store";
 import { loadMedia, saveMedia, type MediaItem } from "./media-store";
 import { generateReply } from "./claude";
+import { recordLlmUsage } from "./usage";
+import { topicBreakdown } from "./insights";
+import { polishAnswer } from "./knowledge-filter";
+import { countPendingReservations } from "./reservations";
 import type { BusinessConfig } from "./business-config";
 import type { ChannelAdapter, ConversationMessage } from "./channels/types";
 import type { Conversation, Customer, LearnedQA, StoredMessage } from "./db";
@@ -44,6 +48,9 @@ export interface ConversationListItem {
   messageCount: number;
   /** האם ההודעה האחרונה מהלקוח (כלומר ממתינה למענה) */
   awaiting: boolean;
+  /** תפקיד כותב ההודעה האחרונה (user/assistant/agent) - מאפשר לזהות שיחה אצל
+      נציג שאף נציג עוד לא ענה בה, גם כשההודעה האחרונה היא הודעת ההעברה של הבוט */
+  lastRole?: string;
 }
 
 export async function listConversations(): Promise<ConversationListItem[]> {
@@ -68,6 +75,7 @@ export async function listConversations(): Promise<ConversationListItem[]> {
       lastUserTs: s.lastUserTs,
       messageCount: s.messageCount,
       awaiting: s.lastMessageRole === "user",
+      lastRole: s.lastMessageRole,
     };
   });
 }
@@ -128,6 +136,12 @@ export async function closeConversation(id: string, agentName?: string) {
   return getRepo().updateConversation(id, { status: "closed" });
 }
 
+/** מחיקת שיחה לצמיתות (למשל ניקוי שיחות בדיקה). כולל ההודעות והלקוח אם התרוקן. */
+export async function deleteConversation(id: string): Promise<{ ok: true }> {
+  await getRepo().deleteConversation(id);
+  return { ok: true };
+}
+
 /** מיפוי ערוץ -> אדפטר שליחה. ל-playground אין אדפטר (הדפדפן מושך בעצמו). */
 const CHANNEL_ADAPTERS: Record<string, ChannelAdapter | undefined> = {
   whatsapp: whatsappAdapter,
@@ -153,7 +167,7 @@ export async function agentReply(id: string, text: string, agentName?: string) {
   const adapter = CHANNEL_ADAPTERS[conversation.channel];
   if (adapter) {
     const customer = await repo.getCustomer(conversation.customerId);
-    if (customer) await adapter.sendText(customer.channelUserId, text);
+    if (customer) await adapter.sendText(customer.channelUserId, text, { humanAgent: true });
   }
 
   return repo.addMessage({
@@ -206,6 +220,47 @@ export async function getChannelHealth(): Promise<ChannelHealth[]> {
 }
 
 // ----- הצעת תשובה לנציג (טיוטה מהבוט) -----
+/**
+ * ליטוש ניסוח לתשובת נציג: לוקח את מה שהנציג כתב בשפה חופשית ומסגנן אותו
+ * מקצועי וחם - בלי להמציא תשובה ובלי לשנות עובדות. בכשל מחזיר את המקור.
+ */
+export async function polishDraft(conversationId: string, draft: string): Promise<string> {
+  const text = draft.trim();
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey || text.length < 2) return text;
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const model = process.env.CHATBOT_MODEL ?? "claude-sonnet-4-6";
+  const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 15_000 });
+  // ההודעה האחרונה של הלקוח - הקשר שעוזר להתאים פנייה ומגדר, לא לשנות תוכן
+  const msgs = await getRepo().getMessages(conversationId);
+  const lastUser = [...msgs].reverse().find((m) => m.role === "user")?.content ?? "";
+  try {
+    const res = await client.messages.create({
+      model,
+      max_tokens: 350,
+      system:
+        "אתה עורך לשוני של תשובות נציגי שירות בבית קפה איטלקי (קפה קוואלי). תקבל טיוטה שכתב נציג, " +
+        "ותנסח אותה מחדש בעברית טבעית, מקצועית וחמה - כמו מארח אדיב. " +
+        "כללי ברזל: שמור בדיוק על כל העובדות, המספרים, השעות, המחירים וההחלטות שבטיוטה - אסור להוסיף מידע, " +
+        "הבטחות או הצעות שלא כתב הנציג, ואסור להשמיט דבר מהותי. שמור על אורך דומה (מותר קצת לקצר, לא להאריך). " +
+        "בלי קו מפריד ארוך (—), מותר מקף רגיל. אם הטיוטה באנגלית - ענה באנגלית. " +
+        "החזר אך ורק את הנוסח המשופר, בלי הקדמות ובלי הסברים.",
+      messages: [
+        {
+          role: "user",
+          content: `הודעת הלקוח האחרונה (להקשר בלבד):\n${lastUser.slice(0, 300)}\n\nהטיוטה של הנציג:\n${text}`,
+        },
+      ],
+    });
+    await recordLlmUsage(model, res.usage ?? {});
+    const out = res.content?.[0]?.type === "text" ? res.content[0].text.trim() : "";
+    // מעקה: תוצאה ריקה/חשודה באורכה - עדיף המקור של הנציג
+    return out.length >= 2 && out.length <= text.length * 3 + 200 ? out : text;
+  } catch {
+    return text;
+  }
+}
+
 export async function suggestReply(conversationId: string): Promise<string> {
   const msgs = await getRepo().getMessages(conversationId);
   // בניית היסטוריה ממוזגת (רצף תפקידים זהים = הודעה אחת), כפי שה-API דורש
@@ -271,7 +326,11 @@ export async function listKnowledge(
   return getRepo().listLearnedQA(status);
 }
 export async function answerKnowledge(id: string, answer: string) {
-  return getRepo().answerLearnedQA(id, answer);
+  // הצוות עונה בשפה חופשית - מנסחים מקצועית לפני השמירה (העובדות נשמרות אחד לאחד).
+  // עריכה ידנית (updateKnowledge) לא עוברת ניסוח - מכבדים טקסט שנכתב בכוונה.
+  const item = await getKnowledgeItem(id);
+  const polished = await polishAnswer(item?.question ?? "", answer);
+  return getRepo().answerLearnedQA(id, polished);
 }
 /** עריכת פריט ידע קיים (שאלה ו/או תשובה). הבוט משתמש בגרסה החדשה מהתור הבא. */
 export async function updateKnowledge(
@@ -283,7 +342,8 @@ export async function updateKnowledge(
 /** הוספת ידע יזומה מהפאנל (שאלה + תשובה מוכנות, בלי לחכות שלקוח ישאל). */
 export async function createKnowledge(question: string, answer: string) {
   const qa = await getRepo().addOpenQuestion({ question: question.trim() });
-  return getRepo().answerLearnedQA(qa.id, answer.trim());
+  const polished = await polishAnswer(question.trim(), answer.trim());
+  return getRepo().answerLearnedQA(qa.id, polished);
 }
 export async function getKnowledgeItem(id: string) {
   const all = await getRepo().listLearnedQA();
@@ -303,6 +363,10 @@ export interface Stats {
   topWords: { word: string; count: number }[];
   byChannel: { channel: string; count: number }[];
   peakHours: { hour: number; count: number }[]; // עומס לפי שעה ביום (שעון ישראל)
+  /** על מה שואלים - פילוח נושאים דטרמיניסטי */
+  byTopic: { topic: string; count: number }[];
+  /** בקשות הזמנת מקום שממתינות לטיפול */
+  pendingReservations: number;
   needsAttention: number; // שיחות שמחכות לטיפול אנושי
   openQuestions: number; // שאלות שממתינות לתשובת הצוות
   /** שיחות פתוחות שההודעה האחרונה בהן היא של הלקוח (ממתינות למענה כלשהו) */
@@ -321,7 +385,11 @@ export async function computeStats(): Promise<Stats> {
     (s) => s.lastMessageRole === "user" && s.conversation.status !== "closed"
   ).length;
 
+  // פילוח נושאים: על מה הלקוחות שואלים (סיווג דטרמיניסטי, ראה insights.ts)
+  const byTopic = topicBreakdown(userMsgs.map((m) => m.content)).slice(0, 8);
+
   const openQuestions = (await repo.listLearnedQA("open")).length;
+  const pendingReservations = await countPendingReservations();
   const total = convs.length;
   const escalated = convs.filter((c) => c.escalated).length;
   const byStatus = {
@@ -388,6 +456,8 @@ export async function computeStats(): Promise<Stats> {
     topWords,
     byChannel,
     peakHours,
+    byTopic,
+    pendingReservations,
     needsAttention: byStatus.human,
     openQuestions,
     awaitingReplies,

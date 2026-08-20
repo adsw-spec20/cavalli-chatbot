@@ -35,7 +35,14 @@ export interface IncomingMessage {
 export interface ChannelAdapter {
   channel: Channel;
   /** שולח טקסט חזרה למשתמש בערוץ */
-  sendText(recipientId: string, text: string): Promise<void>;
+  sendText(
+    recipientId: string,
+    text: string,
+    opts?: {
+      /** תשובת נציג אנושי: במסנג'ר/אינסטגרם מאפשר ניסיון חוזר עם תג HUMAN_AGENT (חלון 7 ימים) */
+      humanAgent?: boolean;
+    }
+  ): Promise<void>;
   /** מציג "מקליד..." (אם הערוץ תומך) */
   sendTyping?(recipientId: string): Promise<void>;
   /** שולף את שם הפרופיל של המשתמש (אם הערוץ תומך, למשל דרך Graph API) */

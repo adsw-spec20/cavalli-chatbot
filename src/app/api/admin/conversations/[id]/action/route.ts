@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   agentReply,
   closeConversation,
+  deleteConversation,
   releaseConversation,
   takeoverConversation,
   setConversationBotPaused,
 } from "@/lib/admin-service";
-import { isAdminAuthorized } from "@/lib/admin-auth";
+import { isAdminAuthorized, isMasterAuthorized } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!isAdminAuthorized(req)) {
+  if (!(await isAdminAuthorized(req))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const { id } = await params;
@@ -33,6 +34,12 @@ export async function POST(
         return NextResponse.json(await setConversationBotPaused(id, true));
       case "resumeBot":
         return NextResponse.json(await setConversationBotPaused(id, false));
+      case "delete":
+        // מחיקה לצמיתות - מנהל ראשי בלבד
+        if (!isMasterAuthorized(req)) {
+          return NextResponse.json({ error: "master only" }, { status: 403 });
+        }
+        return NextResponse.json(await deleteConversation(id));
       case "reply":
         if (!body.text) {
           return NextResponse.json({ error: "text required" }, { status: 400 });

@@ -1,6 +1,7 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 import { safeTokenEqual } from "@/lib/admin-auth";
+import { verifyTeamToken } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -16,15 +17,19 @@ export async function POST(req: Request): Promise<NextResponse> {
       body,
       request: req,
       onBeforeGenerateToken: async (_pathname, clientPayload) => {
-        // הרשאה: הפאנל שולח את ה-ADMIN_TOKEN כ-clientPayload.
+        // הרשאה: הפאנל שולח את הטוקן שלו (מנהל או צוות) כ-clientPayload.
         // כמו בשאר הפאנל: בלי טוקן מוגדר - חסום בפרודקשן (fail closed).
+        const given = clientPayload ?? "";
         const expected = process.env.ADMIN_TOKEN;
         if (!expected) {
           if (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV) {
             throw new Error("unauthorized");
           }
-        } else if (!safeTokenEqual(expected, clientPayload ?? "")) {
-          throw new Error("unauthorized");
+        } else if (!safeTokenEqual(expected, given)) {
+          // לא טוקן המנהל - אולי טוקן צוות תקף
+          if (!given.startsWith("tm.") || !(await verifyTeamToken(given))) {
+            throw new Error("unauthorized");
+          }
         }
         return {
           allowedContentTypes: [

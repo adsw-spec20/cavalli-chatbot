@@ -7,12 +7,12 @@ import type { MediaItem } from "@/lib/media-store";
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  if (!isAdminAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!(await isAdminAuthorized(req))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   return NextResponse.json(await getMediaLibrary());
 }
 
 export async function PUT(req: NextRequest) {
-  if (!isAdminAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!(await isAdminAuthorized(req))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const body = (await req.json()) as MediaItem[];
   if (!Array.isArray(body)) return NextResponse.json({ error: "invalid" }, { status: 400 });
   const clean = body

@@ -85,6 +85,9 @@ export class PostgresRepository implements Repository {
     await this.sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS memory text`;
     await this.sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS memory_updated_at bigint`;
     await this.sql`ALTER TABLE learned_qa ADD COLUMN IF NOT EXISTS updated_at bigint`;
+    await this.sql`ALTER TABLE learned_qa ADD COLUMN IF NOT EXISTS count integer`;
+    await this.sql`ALTER TABLE learned_qa ADD COLUMN IF NOT EXISTS askers text`;
+    await this.sql`ALTER TABLE learned_qa ADD COLUMN IF NOT EXISTS topic text`;
     // אינדקס לשאילתת הסיכום של האינבוקס (הודעה אחרונה לפי שיחה)
     await this.sql`CREATE INDEX IF NOT EXISTS idx_messages_conv_ts ON messages (conversation_id, ts DESC)`;
   }
@@ -99,7 +102,20 @@ export class PostgresRepository implements Repository {
       createdAt: Number(r.created_at),
       answeredAt: r.answered_at ? Number(r.answered_at) : undefined,
       updatedAt: r.updated_at ? Number(r.updated_at) : undefined,
+      count: r.count ? Number(r.count) : undefined,
+      askers: this.parseJsonArr(r.askers),
+      topic: (r.topic as string) ?? undefined,
     };
+  }
+
+  private parseJsonArr<T>(v: unknown): T[] | undefined {
+    if (!v) return undefined;
+    try {
+      const arr = JSON.parse(v as string);
+      return Array.isArray(arr) ? arr : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   // ---------- mappers ----------
@@ -279,6 +295,17 @@ export class PostgresRepository implements Repository {
       );
   }
 
+  async deleteConversation(id: string): Promise<void> {
+    await this.init();
+    const rows = await this.sql`SELECT customer_id FROM conversations WHERE id = ${id}`;
+    if (!rows[0]) return;
+    const customerId = rows[0].customer_id as string;
+    await this.sql`DELETE FROM messages WHERE conversation_id = ${id}`;
+    await this.sql`DELETE FROM conversations WHERE id = ${id}`;
+    const remaining = await this.sql`SELECT 1 FROM conversations WHERE customer_id = ${customerId} LIMIT 1`;
+    if (!remaining[0]) await this.sql`DELETE FROM customers WHERE id = ${customerId}`;
+  }
+
   async getConversationSummaries(): Promise<ConversationSummary[]> {
     await this.init();
     try {
@@ -367,12 +394,15 @@ export class PostgresRepository implements Repository {
   async addOpenQuestion(data: {
     question: string;
     conversationId?: string;
+    askerName?: string;
+    topic?: string;
   }): Promise<LearnedQA> {
     await this.init();
     const id = crypto.randomUUID();
     const rows = await this.sql`
-      INSERT INTO learned_qa (id, question, answer, status, conversation_id, created_at, answered_at)
-      VALUES (${id}, ${data.question}, ${null}, ${"open"}, ${data.conversationId ?? null}, ${Date.now()}, ${null})
+      INSERT INTO learned_qa (id, question, answer, status, conversation_id, created_at, answered_at, count, askers, topic)
+      VALUES (${id}, ${data.question}, ${null}, ${"open"}, ${data.conversationId ?? null}, ${Date.now()}, ${null},
+              ${1}, ${JSON.stringify(data.conversationId ? [{ conversationId: data.conversationId, name: data.askerName, ts: Date.now() }] : [])}, ${data.topic ?? null})
       RETURNING *`;
     return this.toLearnedQA(rows[0]);
   }
@@ -420,6 +450,20 @@ export class PostgresRepository implements Repository {
         updated_at = ${Date.now()}
       WHERE id = ${id} RETURNING *`;
     return updated[0] ? this.toLearnedQA(updated[0]) : null;
+  }
+
+  async recordLearnedQAAsk(id: string, asker: import("./types").QAAsker): Promise<void> {
+    await this.init();
+    const rows = await this.sql`SELECT count, askers FROM learned_qa WHERE id = ${id}`;
+    if (!rows[0]) return;
+    const count = (rows[0].count ? Number(rows[0].count) : 1) + 1;
+    const askers = [...(this.parseJsonArr<import("./types").QAAsker>(rows[0].askers) ?? []), asker].slice(-20);
+    await this.sql`UPDATE learned_qa SET count = ${count}, askers = ${JSON.stringify(askers)} WHERE id = ${id}`;
+  }
+
+  async setLearnedQAAskers(id: string, askers: import("./types").QAAsker[]): Promise<void> {
+    await this.init();
+    await this.sql`UPDATE learned_qa SET askers = ${JSON.stringify(askers)} WHERE id = ${id}`;
   }
 
   async deleteLearnedQA(id: string): Promise<void> {

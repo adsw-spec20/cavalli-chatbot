@@ -24,7 +24,7 @@ function Kpi({
   const inner = (
     <>
       <div className="text-xs text-[var(--muted)]">{label}</div>
-      <div className={`text-3xl font-bold mt-1 ${highlight ? "text-red-400" : accent ? "text-[var(--accent)]" : ""}`}>{value}</div>
+      <div className={`text-3xl font-bold mt-1 font-display tracking-tight ${highlight ? "text-red-400" : accent ? "text-[var(--accent)]" : ""}`} style={{ fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div className="text-[11px] text-[var(--muted)] mt-1">{sub}</div>}
     </>
   );
@@ -46,10 +46,12 @@ export default function Dashboard({
   token,
   onOpenInbox,
   onOpenKnowledge,
+  onOpenReservations,
 }: {
   token: string;
   onOpenInbox: (intent: InboxFilterIntent) => void;
   onOpenKnowledge: () => void;
+  onOpenReservations?: () => void;
 }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [err, setErr] = useState("");
@@ -77,8 +79,17 @@ export default function Dashboard({
   const maxWord = Math.max(1, ...stats.topWords.map((w) => w.count));
 
   return (
-    <div className="space-y-4 max-w-5xl">
+    <div className="space-y-4 max-w-[1700px]">
       {/* KPI - כל כרטיס שדורש פעולה לחיץ ומוביל לרשימה המסוננת */}
+      {(stats.pendingReservations ?? 0) > 0 && (
+        <button
+          onClick={onOpenReservations}
+          className="w-full text-right bg-amber-500/10 border border-amber-500/40 rounded-2xl p-3 flex items-center justify-between hover:border-amber-400 transition"
+        >
+          <span className="text-sm font-semibold">🍽️ {stats.pendingReservations} בקשות הזמנה ממתינות לאישור</span>
+          <span className="text-xs text-amber-300">לטיפול ←</span>
+        </button>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi
           label="ממתינות למענה"
@@ -103,7 +114,7 @@ export default function Dashboard({
         <Kpi label="הבוט פתר לבד" value={`${stats.deflectionRate}%`} sub={`מתוך ${stats.totalConversations} שיחות`} accent />
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className="grid lg:grid-cols-2 xl:grid-cols-3 gap-4">
         {/* 7 ימים */}
         <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4">
           <div className="text-sm font-semibold mb-3">שיחות ב-7 הימים האחרונים</div>
@@ -138,8 +149,30 @@ export default function Dashboard({
           </div>
         </div>
 
+        {/* פילוח נושאים - על מה שואלים */}
+        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 lg:col-span-2 xl:col-span-1">
+          <div className="text-sm font-semibold mb-3">על מה שואלים (לפי נושא)</div>
+          {(!stats.byTopic || stats.byTopic.length === 0) && (
+            <div className="text-xs text-[var(--muted)]">אין נתונים עדיין</div>
+          )}
+          <div className="space-y-2">
+            {(stats.byTopic ?? []).map((t) => {
+              const maxTopic = Math.max(1, ...(stats.byTopic ?? []).map((x) => x.count));
+              return (
+                <div key={t.topic} className="flex items-center gap-2">
+                  <span className="text-xs w-32 shrink-0">{t.topic}</span>
+                  <div className="flex-1 bg-[var(--panel2)] rounded-full h-2.5 overflow-hidden">
+                    <div className="h-full bg-[var(--accent)]" style={{ width: `${(t.count / maxTopic) * 100}%` }} />
+                  </div>
+                  <span className="text-xs text-[var(--muted)] w-8 text-left">{t.count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* שעות עומס */}
-        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 lg:col-span-2">
+        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 lg:col-span-2 xl:col-span-3">
           <div className="text-sm font-semibold mb-3">שעות עומס (לפי שעון ישראל)</div>
           <div className="flex items-end gap-[3px] h-28">
             {stats.peakHours.map((h) => (
@@ -155,8 +188,8 @@ export default function Dashboard({
         </div>
 
         {/* מילים נפוצות */}
-        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 lg:col-span-2">
-          <div className="text-sm font-semibold mb-3">על מה הכי שואלים</div>
+        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 lg:col-span-2 xl:col-span-3">
+          <div className="text-sm font-semibold mb-3">מילים נפוצות</div>
           {stats.topWords.length === 0 && <div className="text-xs text-[var(--muted)]">אין נתונים עדיין</div>}
           <div className="flex flex-wrap gap-2">
             {stats.topWords.map((w) => (

@@ -87,6 +87,8 @@ function writeStorage(store: "session" | "local", key: string, value: string) {
 type Filter = "all" | "awaiting" | "escalated" | "human" | "closed";
 export interface InboxFilterIntent {
   status?: Filter;
+  /** פתיחה ישירה של שיחה ספציפית (קפיצה מ"ידע"/"הזמנות") */
+  conversationId?: string;
 }
 
 const READ_KEY = "inbox_read_v1";
@@ -133,7 +135,9 @@ export default function Inbox({
   useEffect(() => {
     setSearch(readStorage("session", "inbox_q", ""));
     setChannelFilter(readStorage("session", "inbox_ch", "all"));
-    setStatusFilter((readStorage("session", "inbox_st", "all") as Filter) || "all");
+    // סינוני "ממתינות"/"הסלמות" אוחדו לתוך "אצל נציג" - ערכים ישנים ממופים אליו
+    const st = (readStorage("session", "inbox_st", "all") as Filter) || "all";
+    setStatusFilter(st === "awaiting" || st === "escalated" ? "human" : st);
     storageHydrated.current = true;
   }, []);
   const [reply, setReply] = useState("");
@@ -145,6 +149,12 @@ export default function Inbox({
   const [showCard, setShowCard] = useState(false);
   const [readMap, setReadMap] = useState<Record<string, number>>(loadReadMap);
   const [newBelow, setNewBelow] = useState(false);
+  // "פעימת דקה" לרענון תוויות זמן יחסי בתוך הרשימה הממוזכרת (relTime/waitLabel)
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setNowTick((x) => x + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -167,8 +177,18 @@ export default function Inbox({
   // כוונת סינון שמגיעה מהדשבורד ("ממתינות למענה" וכו')
   useEffect(() => {
     if (!intent) return;
-    if (intent.status) setStatusFilter(intent.status);
-    setSelectedId(null);
+    // כוונות מהדשבורד עם הסינונים הישנים (ממתינות/הסלמות) ממופות לדלי המאוחד
+    if (intent.status)
+      setStatusFilter(intent.status === "awaiting" || intent.status === "escalated" ? "human" : intent.status);
+    // קפיצה לשיחה ספציפית: מנקים סינונים כדי שהשיחה תופיע ברשימה
+    if (intent.conversationId) {
+      setStatusFilter("all");
+      setChannelFilter("all");
+      setSearch("");
+      setSelectedId(intent.conversationId);
+    } else {
+      setSelectedId(null);
+    }
     onIntentConsumed();
   }, [intent, onIntentConsumed, setSelectedId]);
 
@@ -180,10 +200,18 @@ export default function Inbox({
     });
   }, []);
 
+  const lastDetailJson = useRef("");
   const loadDetail = useCallback(
     async (id: string) => {
       try {
-        setDetail(await api<Detail>(token, `/conversations/${id}`));
+        const d = await api<Detail>(token, `/conversations/${id}`);
+        // ביצועים: הריענון של כל 4 שניות מרנדר מחדש את כל השיחה גם כשכלום לא
+        // השתנה - במובייל זה גורם להקלדה מקוטעת. מדלגים כשאין שינוי אמיתי.
+        const json = JSON.stringify(d);
+        if (json !== lastDetailJson.current) {
+          lastDetailJson.current = json;
+          setDetail(d);
+        }
       } catch {
         /* ignore - הבאנר הגלובלי מטפל בניתוק */
       }
@@ -197,6 +225,10 @@ export default function Inbox({
       setDetail(null);
       return;
     }
+    // מעבר לשיחה אחרת: מנקים את הקודמת מיד (שלא תוצג שנייה של שיחה לא נכונה)
+    // ומאפסים את מטמון הדילוג - אחרת חזרה לאותה שיחה עלולה להיתקע על השלד.
+    setDetail((d) => (d && d.conversation.id !== selectedId ? null : d));
+    lastDetailJson.current = "";
     loadDetail(selectedId);
     const t = setInterval(() => loadDetail(selectedId), 4000);
     return () => clearInterval(t);
@@ -249,9 +281,40 @@ export default function Inbox({
     if (selectedId && detail?.conversation.id === selectedId) markRead(selectedId);
   }, [selectedId, detail, markRead]);
 
-  function openConversation(id: string) {
-    listScrollPos.current = listRef.current?.scrollTop ?? 0;
-    setSelectedId(id);
+  const openConversation = useCallback(
+    (id: string) => {
+      listScrollPos.current = listRef.current?.scrollTop ?? 0;
+      setSelectedId(id);
+    },
+    [setSelectedId]
+  );
+
+  // שליחה יזומה של הוראות חניה (לקוח שהתקשר וביקש מהמארחת "שלחי לי בוואטסאפ")
+  const [parkingOpen, setParkingOpen] = useState(false);
+  const [parkingPhone, setParkingPhone] = useState("");
+  const [parkingBusy, setParkingBusy] = useState(false);
+  const [parkingMsg, setParkingMsg] = useState("");
+  async function sendParking() {
+    if (!parkingPhone.trim() || parkingBusy) return;
+    setParkingBusy(true);
+    setParkingMsg("");
+    try {
+      await api(token, "/send-parking", {
+        method: "POST",
+        body: JSON.stringify({ phone: parkingPhone, agentName }),
+      });
+      setParkingMsg("✅ נשלח! ההודעה בדרך ללקוח");
+      setParkingPhone("");
+      onMutate();
+      setTimeout(() => {
+        setParkingMsg("");
+        setParkingOpen(false);
+      }, 4000);
+    } catch (e) {
+      setParkingMsg(`⚠ ${e instanceof Error ? e.message : "השליחה נכשלה"}`);
+    } finally {
+      setParkingBusy(false);
+    }
   }
   function backToList() {
     setSelectedId(null);
@@ -266,9 +329,30 @@ export default function Inbox({
     return {
       awaiting: open.filter((c) => c.awaiting).length,
       escalated: open.filter((c) => c.escalated).length,
-      human: conversations.filter((c) => c.status === "human").length,
+      // "אצל נציג" = הדלי המאוחד של כל מה שדורש בן אדם: נלקחה ע"י נציג,
+      // הוסלמה, או שהלקוח כתב ואף אחד לא ענה
+      human: open.filter((c) => c.status === "human" || c.escalated || c.awaiting).length,
     };
   }, [conversations]);
+
+  // בר התראה לשיחות אצל נציג שעוד לא נענו: נספרת גם שיחה שההודעה האחרונה בה
+  // היא הודעת ההעברה של הבוט ("נציג יחזור אליך") ואף נציג עוד לא כתב - הלקוח
+  // הובטח לו מענה אנושי והוא ממתין. ✕ מעלים את הבר, והוא חוזר אוטומטית רק
+  // כשמגיעה הודעת לקוח חדשה יותר מרגע ההעלמה (טיפול מתמשך לא מציק).
+  const humanAwaiting = useMemo(
+    () => conversations.filter((c) => c.status === "human" && c.lastRole !== "agent"),
+    [conversations]
+  );
+  const [humanBarDismissedAt, setHumanBarDismissedAt] = useState(Number.MAX_SAFE_INTEGER);
+  useEffect(() => {
+    setHumanBarDismissedAt(Number(readStorage("session", "human_bar_dismissed", "0")) || 0);
+  }, []);
+  const newestHumanWait = humanAwaiting.reduce((m, c) => Math.max(m, c.lastUserTs ?? c.updatedAt), 0);
+  const showHumanBar = humanAwaiting.length > 0 && newestHumanWait > humanBarDismissedAt;
+  function dismissHumanBar() {
+    setHumanBarDismissedAt(newestHumanWait);
+    writeStorage("session", "human_bar_dismissed", String(newestHumanWait));
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -280,7 +364,8 @@ export default function Inbox({
         if (c.status === "closed") return false;
         if (statusFilter === "awaiting" && !c.awaiting) return false;
         if (statusFilter === "escalated" && !c.escalated) return false;
-        if (statusFilter === "human" && c.status !== "human") return false;
+        // "אצל נציג" (הדלי המאוחד): אצל נציג / הוסלמה / ממתינה למענה
+        if (statusFilter === "human" && !(c.status === "human" || c.escalated || c.awaiting)) return false;
       }
       if (channelFilter !== "all" && c.channel !== channelFilter) return false;
       if (q) {
@@ -290,6 +375,121 @@ export default function Inbox({
       return true;
     });
   }, [conversations, search, channelFilter, statusFilter]);
+
+  // ביצועים (מובייל): שורות הרשימה ממוזכרות - הקלדה בתיבת המענה לא מרנדרת מחדש
+  // מאות שורות בכל תו. nowTick מרענן את תוויות הזמן היחסי פעם בדקה.
+  const listRows = useMemo(
+    () =>
+      filtered.map((c) => {
+        // "ממתין": הלקוח כתב אחרון, או שיחה אצל נציג שאף נציג עוד לא ענה בה
+        // (גם כשההודעה האחרונה היא הודעת ההעברה של הבוט)
+        const needsReply = c.awaiting || (c.status === "human" && c.lastRole !== "agent");
+        const sev = needsReply && c.status !== "closed" ? waitSeverity(c.lastUserTs) : "none";
+        const unread = c.updatedAt > (readMap[c.id] ?? 0);
+        return (
+          <button
+            key={c.id}
+            onClick={() => openConversation(c.id)}
+            className={`conv-row w-full text-right p-3 border-b border-[var(--border)] hover:bg-[var(--panel2)] flex gap-2.5 ${selectedId === c.id ? "bg-[var(--panel2)]" : ""}`}
+          >
+            <div className="relative shrink-0">
+              <Avatar name={c.customerName} channel={c.channel} />
+              {unread && (
+                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--accent)] border-2 border-[var(--panel)]" title="יש חדש" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className={`text-sm truncate flex items-center gap-1 ${unread ? "font-bold" : "font-semibold"}`}>
+                  {c.vip && <span title="VIP">⭐</span>}
+                  {c.customerName || "לקוח"}
+                </span>
+                <span className="text-[10px] text-[var(--muted)] shrink-0">{relTime(c.updatedAt)}</span>
+              </div>
+              <div className={`text-xs truncate mt-0.5 ${unread ? "text-[var(--text)]" : "text-[var(--muted)]"}`} dir="auto">
+                {c.lastMessage || "(אין הודעות)"}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${CHANNELS[c.channel]?.chip}`}>
+                  {CHANNELS[c.channel]?.label}
+                </span>
+                {c.status === "closed" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-500/15 text-neutral-400">סגורה</span>}
+                {c.urgent && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-300 font-semibold">🔴 דחוף</span>}
+                {c.escalated && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300">הסלמה</span>}
+                {c.status === "human" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-500/15 text-sky-300">נציג מטפל</span>}
+                {c.botPaused && c.status !== "human" && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300">בוט מושהה</span>
+                )}
+                {sev !== "none" && (
+                  <span className={`text-[10px] ${SEV_CLS[sev]}`}>● ממתין {waitLabel(c.lastUserTs)}</span>
+                )}
+              </div>
+            </div>
+          </button>
+        );
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtered, readMap, selectedId, openConversation, nowTick]
+  );
+
+  // ביצועים (מובייל): גם בועות ההודעות ממוזכרות - תלויות רק בתוכן השיחה,
+  // כך שהקלדה בתיבת המענה לא מרנדרת מחדש את כל ההיסטוריה בכל תו.
+  const messageRows = useMemo(
+    () =>
+      detail?.messages.map((m, i) => {
+        const prev = detail.messages[i - 1];
+        const daySep = !prev || dayLabel(prev.ts) !== dayLabel(m.ts) ? (
+          <div key={`day-${m.id}`} className="text-center py-1">
+            <span className="text-[10px] text-[var(--muted)] bg-[var(--panel2)] rounded-full px-3 py-1">{dayLabel(m.ts)}</span>
+          </div>
+        ) : null;
+
+        if (m.role === "system") {
+          if (!m.meta?.activity) return daySep;
+          return (
+            <div key={m.id}>
+              {daySep}
+              <div className="text-center">
+                <span className="text-[10px] text-[var(--muted)] bg-[var(--panel2)] rounded-full px-2.5 py-0.5">
+                  {m.content} · {new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+            </div>
+          );
+        }
+        const mine = m.role !== "user";
+        return (
+          <div key={m.id}>
+            {daySep}
+            <div className={`flex ${mine ? "justify-start" : "justify-end"}`}>
+              <div className="max-w-[85%] md:max-w-[70%]">
+                <div
+                  dir="auto"
+                  className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words leading-relaxed ${
+                    m.role === "user"
+                      ? "bg-[var(--panel2)] text-[var(--text)]"
+                      : m.role === "agent"
+                      ? "bg-amber-600 text-white"
+                      : "bg-[var(--accent)] text-[var(--accent-fg)]"
+                  }`}
+                >
+                  {renderContent(m.content)}
+                </div>
+                <div className={`text-[10px] text-[var(--muted)] mt-0.5 ${mine ? "text-left" : "text-right"}`}>
+                  {m.role === "agent"
+                    ? `נציג${m.meta?.agentName ? ` · ${String(m.meta?.agentName)}` : ""} ✓`
+                    : m.role === "assistant"
+                    ? "בוט"
+                    : ""}{" "}
+                  {new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }),
+    [detail]
+  );
 
   async function act(action: string, extra: Record<string, unknown> = {}) {
     if (!selectedId) return;
@@ -344,12 +544,17 @@ export default function Inbox({
     }
   }
 
-  async function suggest() {
-    if (!detail) return;
+  /** ליטוש ניסוח: לוקח את מה שהנציג כתב ומסגנן מקצועי - לא ממציא תשובה */
+  async function polishText() {
+    const text = reply.trim();
+    if (!detail || !text) return;
     setSuggesting(true);
     setErr("");
     try {
-      const r = await api<{ suggestion: string }>(token, `/conversations/${detail.conversation.id}/suggest`, { method: "POST" });
+      const r = await api<{ suggestion: string }>(token, `/conversations/${detail.conversation.id}/suggest`, {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      });
       if (r.suggestion) updateReply(r.suggestion);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "שגיאה");
@@ -370,6 +575,27 @@ export default function Inbox({
       <aside
         className={`${selectedId ? "hidden md:flex" : "flex"} flex-col bg-[var(--panel)] md:border border-[var(--border)] md:rounded-2xl overflow-hidden min-h-0`}
       >
+        {/* בר התראה: לקוח כתב בשיחה שנציג לקח - הבוט שותק שם, ואם אף אחד לא שם לב
+            הלקוח נשאר בלי מענה. ✕ מעלים עד שתגיע הודעה חדשה יותר (טיפול מתמשך). */}
+        {showHumanBar && (
+          <div className="shrink-0 m-2 mb-0 flex items-center gap-2 bg-sky-500/15 border border-sky-500/35 rounded-xl px-3 py-2 text-xs">
+            <span className="flex-1 font-semibold">
+              👤 {humanAwaiting.length === 1 ? "שיחה אחת אצל נציג ממתינה לתשובה" : `${humanAwaiting.length} שיחות אצל נציג ממתינות לתשובה`}
+            </span>
+            <button
+              onClick={() => {
+                setStatusFilter("human");
+                setSelectedId(null);
+              }}
+              className="shrink-0 font-bold text-[var(--accent)] underline"
+            >
+              הצג
+            </button>
+            <button onClick={dismissHumanBar} aria-label="הסתר את ההתראה" className="shrink-0 w-6 h-6 grid place-items-center rounded-md text-[var(--muted)] hover:text-[var(--text)]">
+              ✕
+            </button>
+          </div>
+        )}
         <div className="p-3 border-b border-[var(--border)] space-y-2 shrink-0">
           <input
             type="search"
@@ -379,12 +605,12 @@ export default function Inbox({
             aria-label="חיפוש שיחות"
             className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
           />
+          {/* סינון אחד לכל מה שדורש בן אדם ("אצל נציג") - הסלמה/המתנה מוצגות
+              כתוויות על השורה עצמה, לא כסינונים נפרדים (איחוד לבקשת המשתמש 10.8) */}
           <div className="flex gap-1 flex-wrap text-xs" role="tablist" aria-label="סינון לפי מצב">
             {(
               [
                 ["all", "הכל"],
-                ["awaiting", counts.awaiting ? `ממתינות · ${counts.awaiting}` : "ממתינות"],
-                ["escalated", counts.escalated ? `הסלמות · ${counts.escalated}` : "הסלמות"],
                 ["human", counts.human ? `אצל נציג · ${counts.human}` : "אצל נציג"],
                 ["closed", "סגורות"],
               ] as [Filter, string][]
@@ -398,7 +624,43 @@ export default function Inbox({
                 {l}
               </button>
             ))}
+            <button
+              onClick={() => setParkingOpen((o) => !o)}
+              aria-expanded={parkingOpen}
+              title="שליחת הוראות הגעה וחניה בוואטסאפ ללקוח שהתקשר"
+              className={`rounded-lg px-2.5 py-1.5 mr-auto ${parkingOpen ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)]"}`}
+            >
+              📍 שלח חניה
+            </button>
           </div>
+          {parkingOpen && (
+            <div className="space-y-1.5">
+              <div className="flex gap-2">
+                <input
+                  value={parkingPhone}
+                  onChange={(e) => setParkingPhone(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") sendParking();
+                  }}
+                  placeholder="מספר הלקוח, למשל 0501234567"
+                  dir="ltr"
+                  inputMode="tel"
+                  className="flex-1 bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+                />
+                <button
+                  onClick={sendParking}
+                  disabled={parkingBusy || !parkingPhone.trim()}
+                  className="bg-[var(--accent)] text-[var(--accent-fg)] text-sm font-semibold rounded-xl px-4 disabled:opacity-40"
+                >
+                  {parkingBusy ? "שולח…" : "שלח"}
+                </button>
+              </div>
+              {parkingMsg && <div className="text-[11px]">{parkingMsg}</div>}
+              <div className="text-[10px] text-[var(--muted)]">
+                הלקוח יקבל בוואטסאפ את הכתובת, ניווט ב-Waze וסרטון הדרך לחניה - והשיחה תתועד כאן בפאנל.
+              </div>
+            </div>
+          )}
           <div className="flex gap-1 flex-wrap text-xs">
             <button
               onClick={() => setChannelFilter("all")}
@@ -438,52 +700,7 @@ export default function Inbox({
               {conversations.length === 0 ? "עדיין אין שיחות. ברגע שלקוח יכתוב - זה יופיע כאן." : "אין שיחות בסינון הזה"}
             </div>
           )}
-          {loaded &&
-            filtered.map((c) => {
-              const sev = c.awaiting && c.status !== "closed" ? waitSeverity(c.lastUserTs) : "none";
-              const unread = c.updatedAt > (readMap[c.id] ?? 0);
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => openConversation(c.id)}
-                  className={`w-full text-right p-3 border-b border-[var(--border)] hover:bg-[var(--panel2)] transition flex gap-2.5 ${selectedId === c.id ? "bg-[var(--panel2)]" : ""}`}
-                >
-                  <div className="relative shrink-0">
-                    <Avatar name={c.customerName} channel={c.channel} />
-                    {unread && (
-                      <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--accent)] border-2 border-[var(--panel)]" title="יש חדש" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`text-sm truncate flex items-center gap-1 ${unread ? "font-bold" : "font-semibold"}`}>
-                        {c.vip && <span title="VIP">⭐</span>}
-                        {c.customerName || "לקוח"}
-                      </span>
-                      <span className="text-[10px] text-[var(--muted)] shrink-0">{relTime(c.updatedAt)}</span>
-                    </div>
-                    <div className={`text-xs truncate mt-0.5 ${unread ? "text-[var(--text)]" : "text-[var(--muted)]"}`} dir="auto">
-                      {c.lastMessage || "(אין הודעות)"}
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${CHANNELS[c.channel]?.chip}`}>
-                        {CHANNELS[c.channel]?.label}
-                      </span>
-                      {c.status === "closed" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-500/15 text-neutral-400">סגורה</span>}
-                      {c.urgent && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-300 font-semibold">🔴 דחוף</span>}
-                      {c.escalated && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300">הסלמה</span>}
-                      {c.status === "human" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-500/15 text-sky-300">נציג מטפל</span>}
-                      {c.botPaused && c.status !== "human" && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300">בוט מושהה</span>
-                      )}
-                      {sev !== "none" && (
-                        <span className={`text-[10px] ${SEV_CLS[sev]}`}>● ממתין {waitLabel(c.lastUserTs)}</span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
+          {loaded && listRows}
         </div>
       </aside>
 
@@ -496,14 +713,39 @@ export default function Inbox({
             בחר שיחה מהרשימה כדי לצפות, להגיב ולנהל
           </div>
         )}
-        {!conv && selectedId && (
-          <div className="flex-1 grid place-items-center text-[var(--muted)] text-sm p-8">
-            <div className="text-center space-y-3">
-              <div>טוען שיחה…</div>
-              <button onClick={backToList} className="md:hidden text-xs underline">חזרה לרשימה</button>
-            </div>
-          </div>
-        )}
+        {!conv &&
+          selectedId &&
+          (() => {
+            // מסך השיחה נפתח מיידית עם מה שכבר ידוע מהרשימה (שם, ערוץ) ושלד הודעות -
+            // כך הלחיצה מרגישה מיידית גם כשההודעות עוד בדרך מהשרת (חשוב במובייל).
+            const p = conversations.find((c) => c.id === selectedId);
+            return (
+              <>
+                <header className="pt-[env(safe-area-inset-top)] border-b border-[var(--border)] shrink-0">
+                  <div className="p-2 md:p-3 flex items-center gap-2">
+                    <button
+                      onClick={backToList}
+                      className="md:hidden shrink-0 w-11 h-11 grid place-items-center rounded-xl text-[var(--text)] hover:bg-[var(--panel2)] text-xl"
+                      aria-label="חזרה לרשימת השיחות"
+                    >
+                      →
+                    </button>
+                    <Avatar name={p?.customerName} channel={p?.channel ?? ""} size={34} />
+                    <div className="min-w-0">
+                      <div className="font-bold text-sm truncate">{p?.customerName || "לקוח"}</div>
+                      <div className="text-[10px] text-[var(--muted)]">טוען את השיחה…</div>
+                    </div>
+                  </div>
+                </header>
+                <div className="flex-1 p-3 space-y-3 animate-pulse" aria-label="טוען שיחה">
+                  <div className="h-12 w-3/5 bg-[var(--panel2)] rounded-2xl ml-auto" />
+                  <div className="h-16 w-3/4 bg-[var(--panel2)] rounded-2xl" />
+                  <div className="h-10 w-2/5 bg-[var(--panel2)] rounded-2xl ml-auto" />
+                  <div className="h-12 w-2/3 bg-[var(--panel2)] rounded-2xl" />
+                </div>
+              </>
+            );
+          })()}
         {conv && (
           <>
             {/* כותרת - קומפקטית, עם חזרה ברורה במובייל */}
@@ -514,7 +756,7 @@ export default function Inbox({
                   className="md:hidden shrink-0 w-11 h-11 grid place-items-center rounded-xl text-[var(--text)] hover:bg-[var(--panel2)] text-xl"
                   aria-label="חזרה לרשימת השיחות"
                 >
-                  ←
+                  →
                 </button>
                 <button onClick={() => setShowCard((s) => !s)} className="flex items-center gap-2 min-w-0 flex-1 text-right" aria-expanded={showCard} aria-label="פרטי הלקוח">
                   <Avatar name={detail?.customer?.name} channel={conv.channel} size={34} />
@@ -599,58 +841,7 @@ export default function Inbox({
                 }}
                 className="h-full overflow-y-auto overscroll-contain p-3 space-y-2"
               >
-                {detail?.messages.map((m, i) => {
-                  const prev = detail.messages[i - 1];
-                  const daySep = !prev || dayLabel(prev.ts) !== dayLabel(m.ts) ? (
-                    <div key={`day-${m.id}`} className="text-center py-1">
-                      <span className="text-[10px] text-[var(--muted)] bg-[var(--panel2)] rounded-full px-3 py-1">{dayLabel(m.ts)}</span>
-                    </div>
-                  ) : null;
-
-                  if (m.role === "system") {
-                    if (!m.meta?.activity) return daySep;
-                    return (
-                      <div key={m.id}>
-                        {daySep}
-                        <div className="text-center">
-                          <span className="text-[10px] text-[var(--muted)] bg-[var(--panel2)] rounded-full px-2.5 py-0.5">
-                            {m.content} · {new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  }
-                  const mine = m.role !== "user";
-                  return (
-                    <div key={m.id}>
-                      {daySep}
-                      <div className={`flex ${mine ? "justify-start" : "justify-end"}`}>
-                        <div className="max-w-[85%] md:max-w-[70%]">
-                          <div
-                            dir="auto"
-                            className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words leading-relaxed ${
-                              m.role === "user"
-                                ? "bg-[var(--panel2)] text-[var(--text)]"
-                                : m.role === "agent"
-                                ? "bg-amber-600 text-white"
-                                : "bg-[var(--accent)] text-[var(--accent-fg)]"
-                            }`}
-                          >
-                            {renderContent(m.content)}
-                          </div>
-                          <div className={`text-[10px] text-[var(--muted)] mt-0.5 ${mine ? "text-left" : "text-right"}`}>
-                            {m.role === "agent"
-                              ? `נציג${m.meta?.agentName ? ` · ${String(m.meta?.agentName)}` : ""} ✓`
-                              : m.role === "assistant"
-                              ? "בוט"
-                              : ""}{" "}
-                            {new Date(m.ts).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {messageRows}
               </div>
               {newBelow && (
                 <button
@@ -703,12 +894,12 @@ export default function Inbox({
                   )}
                   <div className="flex gap-2 items-end">
                     <button
-                      onClick={suggest}
-                      disabled={suggesting || busy}
-                      title="הבוט יכין טיוטת תשובה שתוכל לערוך ולשלוח"
+                      onClick={polishText}
+                      disabled={suggesting || busy || !reply.trim()}
+                      title="משפר את הניסוח של מה שכתבת - בלי לשנות את התוכן"
                       className="shrink-0 text-xs border border-[var(--border)] text-[var(--accent)] rounded-xl px-2.5 min-h-11 hover:bg-[var(--panel2)] disabled:opacity-50"
                     >
-                      {suggesting ? "…" : "✨ הצע"}
+                      {suggesting ? "…" : "✨ נסח"}
                     </button>
                     <textarea
                       ref={textareaRef}

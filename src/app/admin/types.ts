@@ -20,6 +20,8 @@ export interface ConvItem {
   lastUserTs?: number;
   messageCount: number;
   awaiting: boolean;
+  /** תפקיד כותב ההודעה האחרונה (user/assistant/agent) */
+  lastRole?: string;
 }
 
 export interface MediaItem {
@@ -77,9 +79,40 @@ export interface Stats {
   topWords: { word: string; count: number }[];
   byChannel: { channel: string; count: number }[];
   peakHours: { hour: number; count: number }[];
+  /** על מה שואלים - פילוח נושאים */
+  byTopic: { topic: string; count: number }[];
+  pendingReservations: number;
   needsAttention: number;
   openQuestions: number;
   awaitingReplies: number;
+}
+
+/** תשובת GET /settings - כולל מי מחובר */
+export interface PanelSettings {
+  botEnabled: boolean;
+  role: "master" | "agent";
+  name?: string;
+  alertEmail?: string;
+  /** מספרי וואטסאפ להתראות צוות (מנהל בלבד) */
+  alertPhones?: string;
+  emailConfigured?: boolean;
+  /** אזעקת מערכת פעילה (כשל מודל/קרדיטים) - באנר אדום לכל הצוות */
+  alarm?: { ts: number; reason: string };
+}
+
+/** איש צוות (כפי שמוחזר מ-/team - בלי קודים) */
+export interface TeamMemberInfo {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastLoginAt?: number;
+}
+
+export interface QAAsker {
+  conversationId: string;
+  name?: string;
+  ts: number;
+  answerSent?: boolean;
 }
 
 export interface LearnedQA {
@@ -90,11 +123,54 @@ export interface LearnedQA {
   createdAt: number;
   answeredAt?: number;
   updatedAt?: number;
+  count?: number;
+  askers?: QAAsker[];
+  topic?: string;
+}
+
+export type ReservationStatus = "pending" | "approved" | "declined";
+
+export interface Reservation {
+  id: string;
+  conversationId: string;
+  customerId: string;
+  channel: string;
+  customerName?: string;
+  people: number;
+  dateText: string;
+  dateISO?: string;
+  time: string;
+  name: string;
+  phone: string;
+  notes?: string;
+  status: ReservationStatus;
+  createdAt: number;
+  handledAt?: number;
+  handledBy?: string;
 }
 
 export interface QuickReply {
   title: string;
   text: string;
+}
+
+/** מד עלות (מוגן בטוקן המנהל) */
+export interface CostSummary {
+  today: {
+    replies: number;
+    freeReplies?: number;
+    inputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    outputTokens: number;
+    audioSeconds: number;
+    cost: number;
+  };
+  monthCost: number;
+  monthReplies: number;
+  projectedMonthCost: number;
+  avgCostPerReply: number;
+  days: { date: string; cost: number; replies: number; free?: number }[];
 }
 
 export const CHANNELS: Record<

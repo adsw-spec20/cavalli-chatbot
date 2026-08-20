@@ -77,6 +77,15 @@ export interface ConversationFilter {
  * שאלה שהבוט לא ידע לענות עליה (status=open), והתשובה שבעל העסק נתן (answered).
  * שאלות שנענו מוזרקות לידע של הבוט כדי שיידע לענות בפעם הבאה.
  */
+/** מי שאל שאלה (לקפיצה לשיחה ול"שלח את התשובה ללקוח") */
+export interface QAAsker {
+  conversationId: string;
+  name?: string;
+  ts: number;
+  /** האם התשובה כבר נשלחה ללקוח הזה מהפאנל */
+  answerSent?: boolean;
+}
+
 export interface LearnedQA {
   id: string;
   question: string;
@@ -87,6 +96,12 @@ export interface LearnedQA {
   answeredAt?: number;
   /** עדכון אחרון של שאלה/תשובה מהפאנל (לעריכה ולמניעת דריסה מקבילה) */
   updatedAt?: number;
+  /** כמה פעמים נשאלה (כפילויות סמנטיות מאוחדות לשורה אחת) */
+  count?: number;
+  /** כל מי ששאל את השאלה */
+  askers?: QAAsker[];
+  /** נושא (סיווג אוטומטי - ראה insights.ts) */
+  topic?: string;
 }
 
 /**
@@ -127,6 +142,8 @@ export interface Repository {
   listConversations(filter?: ConversationFilter): Promise<Conversation[]>;
   /** רשימת שיחות + נתוני תצוגה לאינבוקס בשאילתה יעילה אחת */
   getConversationSummaries(): Promise<ConversationSummary[]>;
+  /** מחיקה לצמיתות של שיחה והודעותיה; לקוח שנשאר בלי שיחות נמחק גם הוא */
+  deleteConversation(id: string): Promise<void>;
 
   // ----- הודעות -----
   addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage>;
@@ -137,7 +154,13 @@ export interface Repository {
   addOpenQuestion(data: {
     question: string;
     conversationId?: string;
+    askerName?: string;
+    topic?: string;
   }): Promise<LearnedQA>;
+  /** רישום שאילה חוזרת של שאלה קיימת (מגדיל מונה ומוסיף שואל) */
+  recordLearnedQAAsk(id: string, asker: QAAsker): Promise<void>;
+  /** עדכון רשימת השואלים (למשל סימון שהתשובה נשלחה ללקוח) */
+  setLearnedQAAskers(id: string, askers: QAAsker[]): Promise<void>;
   listLearnedQA(status?: "open" | "answered"): Promise<LearnedQA[]>;
   answerLearnedQA(id: string, answer: string): Promise<LearnedQA | null>;
   /** עריכת שאלה/תשובה קיימת (הבוט משתמש בגרסה המעודכנת מיידית) */

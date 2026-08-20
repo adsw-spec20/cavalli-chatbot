@@ -1,7 +1,35 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type LearnedQA } from "./types";
+import { api, type LearnedQA, type QAAsker } from "./types";
+import { SectionCard } from "./ui";
+
+/** שורת "מי שאל" - שם + תאריך, לחיץ לפתיחת השיחה */
+function AskersRow({
+  q,
+  onOpen,
+}: {
+  q: LearnedQA;
+  onOpen?: (conversationId: string) => void;
+}) {
+  const askers = q.askers ?? [];
+  if (askers.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+      <span className="text-[10px] text-[var(--muted)]">נשאלה ע"י:</span>
+      {askers.map((a, i) => (
+        <button
+          key={i}
+          onClick={() => onOpen?.(a.conversationId)}
+          title="פתיחת השיחה"
+          className="text-[10px] bg-[var(--panel)] border border-[var(--border)] rounded-full px-2 py-0.5 hover:border-[var(--accent)] hover:text-[var(--accent)]"
+        >
+          💬 {a.name || "לקוח"} · {fmtDate(a.ts)}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function fmtDate(ts?: number): string {
   if (!ts) return "";
@@ -12,11 +40,34 @@ export default function Knowledge({
   token,
   onMutate,
   onTest,
+  onOpenConversation,
+  agentName,
 }: {
   token: string;
   onMutate?: () => void;
   onTest?: (question: string) => void;
+  onOpenConversation?: (conversationId: string) => void;
+  agentName?: string;
 }) {
+  const [sending, setSending] = useState<string | null>(null);
+  const [sentTo, setSentTo] = useState<Set<string>>(new Set());
+
+  /** "שלח ללקוח ששאל": שולח את התשובה השמורה ישירות לשיחה של השואל */
+  async function sendToAsker(qaId: string, asker: QAAsker) {
+    const key = qaId + ":" + asker.conversationId;
+    setSending(key);
+    try {
+      await api(token, `/knowledge/${qaId}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "sendToAsker", conversationId: asker.conversationId, agentName }),
+      });
+      setSentTo((s) => new Set(s).add(key));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "השליחה נכשלה");
+    } finally {
+      setSending(null);
+    }
+  }
   const [open, setOpen] = useState<LearnedQA[]>([]);
   const [answered, setAnswered] = useState<LearnedQA[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -167,30 +218,28 @@ export default function Knowledge({
   }
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="max-w-[1700px] grid gap-6 xl:grid-cols-2 items-start">
       {/* ===== שאלות פתוחות ===== */}
-      <div>
-        <div className="flex items-center gap-2 mb-2">
-          <h2 className="font-semibold">שאלות שהבוט לא ידע לענות</h2>
-          <span className="text-xs bg-amber-500/15 text-amber-300 rounded-full px-2 py-0.5">{open.length}</span>
-        </div>
-        <p className="text-xs text-[var(--muted)] mb-3">
-          ענה כאן, והבוט ילמד לענות על השאלה הזו לבד מהפעם הבאה. אפשר גם לתקן את ניסוח השאלה לפני השמירה.
-        </p>
+      <SectionCard
+        title="שאלות שהבוט לא ידע לענות"
+        badge={open.length}
+        badgeCls="bg-amber-500/15 text-amber-300"
+        sub="ענה כאן בשפה חופשית - המערכת תנסח את התשובה מקצועית, והבוט ילמד לענות עליה לבד מהפעם הבאה."
+      >
         {!loaded && <div className="text-sm text-[var(--muted)] p-4">טוען…</div>}
         {loaded && open.length === 0 && (
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-6 text-center text-sm text-[var(--muted)]">
+          <div className="p-5 text-center text-sm text-[var(--muted)]">
             🎉 אין שאלות פתוחות. הבוט עונה על הכל בינתיים.
           </div>
         )}
         <div className="space-y-2.5">
           {open.map((q) => (
-            <div key={q.id} className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-3.5">
+            <div key={q.id} className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-3.5">
               {editing === q.id ? (
                 <input
                   value={editQ}
                   onChange={(e) => setEditQ(e.target.value)}
-                  className="w-full font-medium text-sm mb-2 bg-[var(--panel2)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 outline-none focus:border-[var(--accent)]"
+                  className="w-full font-medium text-sm mb-2 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 outline-none focus:border-[var(--accent)]"
                   aria-label="עריכת ניסוח השאלה"
                 />
               ) : (
@@ -201,13 +250,26 @@ export default function Knowledge({
                   </button>
                 </div>
               )}
-              <div className="text-[10px] text-[var(--muted)] mb-2">נשאלה {fmtDate(q.createdAt)}</div>
+              <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                {(q.count ?? 1) > 1 && (
+                  <span className="text-[10px] bg-amber-500/15 text-amber-300 rounded-full px-2 py-0.5 font-semibold">
+                    נשאלה {q.count} פעמים
+                  </span>
+                )}
+                {q.topic && (
+                  <span className="text-[10px] bg-[var(--accent)]/10 text-[var(--accent)] rounded-full px-2 py-0.5">
+                    {q.topic}
+                  </span>
+                )}
+                <span className="text-[10px] text-[var(--muted)]">נשאלה {fmtDate(q.createdAt)}</span>
+              </div>
+              <AskersRow q={q} onOpen={onOpenConversation} />
               <textarea
                 value={drafts[q.id] ?? ""}
                 onChange={(e) => setDrafts((d) => ({ ...d, [q.id]: e.target.value }))}
                 rows={2}
-                placeholder="התשובה שהבוט ייתן מעכשיו…"
-                className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+                placeholder="ענה בשפה חופשית - המערכת תנסח מקצועית לפני השמירה…"
+                className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
               />
               {editing === q.id && editErr && <div className="text-xs text-red-400 mt-1">⚠ {editErr}</div>}
               <div className="flex gap-2 mt-2 flex-wrap items-center">
@@ -244,37 +306,37 @@ export default function Knowledge({
             </div>
           ))}
         </div>
-      </div>
+      </SectionCard>
 
       {/* ===== מה שהבוט למד ===== */}
-      <div>
-        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-          <h2 className="font-semibold">
-            מה שהבוט כבר למד <span className="text-xs text-[var(--muted)]">({answered.length})</span>
-          </h2>
+      <SectionCard
+        title="מה שהבוט כבר למד"
+        badge={answered.length}
+        sub="הידע הפעיל של הבוט - אפשר לערוך, לבדוק ולשלוח תשובה למי ששאל."
+        actions={
           <button
             onClick={() => { setAdding((a) => !a); setAddErr(""); }}
             className="text-xs bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-lg px-3 py-1.5"
           >
             {adding ? "סגור" : "+ הוסף ידע"}
           </button>
-        </div>
-
+        }
+      >
         {adding && (
-          <div className="bg-[var(--panel)] border border-[var(--accent)]/40 rounded-2xl p-3.5 mb-3 space-y-2">
+          <div className="bg-[var(--panel2)] border border-[var(--accent)]/40 rounded-xl p-3.5 mb-3 space-y-2">
             <div className="text-xs text-[var(--muted)]">לימוד יזום: שאלה שלקוחות עשויים לשאול + התשובה שהבוט ייתן.</div>
             <input
               value={newQ}
               onChange={(e) => setNewQ(e.target.value)}
               placeholder="השאלה (למשל: יש עוגות ללא גלוטן?)"
-              className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+              className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
             />
             <textarea
               value={newA}
               onChange={(e) => setNewA(e.target.value)}
               rows={2}
               placeholder="התשובה…"
-              className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+              className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
             />
             {addErr && <div className="text-xs text-red-400">⚠ {addErr}</div>}
             <button
@@ -299,7 +361,7 @@ export default function Knowledge({
         )}
 
         {loaded && filteredAnswered.length === 0 && (
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 text-center text-xs text-[var(--muted)]">
+          <div className="p-4 text-center text-xs text-[var(--muted)]">
             {answered.length === 0 ? "עוד לא נלמד ידע. כשתענה על שאלה פתוחה - היא תופיע כאן." : "אין תוצאות לחיפוש"}
           </div>
         )}
@@ -312,14 +374,14 @@ export default function Knowledge({
                   <input
                     value={editQ}
                     onChange={(e) => setEditQ(e.target.value)}
-                    className="w-full font-medium bg-[var(--panel2)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-[var(--accent)]"
+                    className="w-full font-medium bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-[var(--accent)]"
                     aria-label="עריכת השאלה"
                   />
                   <textarea
                     value={editA}
                     onChange={(e) => setEditA(e.target.value)}
                     rows={3}
-                    className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-[var(--accent)]"
+                    className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-[var(--accent)]"
                     aria-label="עריכת התשובה"
                   />
                   {editErr && <div className="text-xs text-red-400">⚠ {editErr}</div>}
@@ -362,6 +424,29 @@ export default function Knowledge({
                       </button>
                     </div>
                   </div>
+                  {(q.askers ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-[var(--border)] pt-2">
+                      <span className="text-[10px] text-[var(--muted)]">שלח את התשובה למי ששאל:</span>
+                      {(q.askers ?? []).map((a, i) => {
+                        const key = q.id + ":" + a.conversationId;
+                        const done = a.answerSent || sentTo.has(key);
+                        return (
+                          <button
+                            key={i}
+                            disabled={done || sending === key}
+                            onClick={() => sendToAsker(q.id, a)}
+                            className={`text-[10px] rounded-full px-2 py-0.5 border ${
+                              done
+                                ? "text-emerald-400 border-emerald-500/30 cursor-default"
+                                : "text-[var(--accent)] border-[var(--accent)]/40 hover:bg-[var(--accent)]/10"
+                            }`}
+                          >
+                            {done ? `✓ נשלח ל${a.name || "לקוח"}` : sending === key ? "שולח…" : `📤 ${a.name || "לקוח"}`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   {justSaved === q.id && (
                     <div className="mt-2 text-xs bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 rounded-lg px-2.5 py-1.5 flex items-center gap-2 flex-wrap">
                       נשמר ✓ הבוט כבר משתמש בתשובה המעודכנת.
@@ -377,7 +462,7 @@ export default function Knowledge({
             </div>
           ))}
         </div>
-      </div>
+      </SectionCard>
     </div>
   );
 }

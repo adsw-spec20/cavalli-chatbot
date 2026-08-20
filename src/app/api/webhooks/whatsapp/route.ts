@@ -19,7 +19,7 @@ import { maybeUpdateCustomerMemory } from "@/lib/customer-memory";
 import { verifyMetaSignature } from "@/lib/meta-signature";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 90;
 
 /** אימות ה-webhook — מטא שולח GET עם hub.challenge שצריך להחזיר */
 export async function GET(req: NextRequest) {
@@ -86,9 +86,14 @@ export async function POST(req: NextRequest) {
           }
           if (result.media && whatsappAdapter.sendMedia) {
             for (const m of result.media) {
-              await whatsappAdapter
-                .sendMedia(msg.senderId, m.url, m.type)
-                .catch((e) => console.error("[whatsapp] media send failed:", e));
+              await whatsappAdapter.sendMedia(msg.senderId, m.url, m.type).catch(async (e) => {
+                console.error("[whatsapp] media send failed:", e);
+                // רשת ביטחון: וואטסאפ דוחה קבצים מסוימים (פורמט/גודל) - במקום שהלקוח
+                // יישאר בלי כלום אחרי "מצרף סרטון", שולחים לו את הקישור כטקסט.
+                await whatsappAdapter
+                  .sendText(msg.senderId, `${m.type === "video" ? "🎥" : "📷"} ${m.url}`)
+                  .catch(() => {});
+              });
             }
           }
           // עדכון זיכרון הלקוח ברקע (אחרי שהתשובה כבר נשלחה)

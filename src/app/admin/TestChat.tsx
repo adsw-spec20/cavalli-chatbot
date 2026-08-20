@@ -71,7 +71,7 @@ export default function TestChat({
   }
 
   return (
-    <div className="max-w-xl mx-auto">
+    <div className="max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-2">
         <div>
           <h2 className="font-semibold">בדיקת בוט</h2>

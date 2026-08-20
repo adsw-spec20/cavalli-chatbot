@@ -9,7 +9,7 @@ import { handleIncomingMessage } from "@/lib/conversation-service";
 import { maybeUpdateCustomerMemory } from "@/lib/customer-memory";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 90;
 
 // הגנת עלות בסיסית ל-endpoint הציבורי: מגבלת קצב לפי IP (best-effort,
 // פר-instance) בנוסף למגבלה הפר-שיחתית שבתוך המוח. עוצרת הרצת בוטים שמסובבים
@@ -18,6 +18,8 @@ const IP_WINDOW_MS = 60_000;
 const IP_MAX_PER_WINDOW = 20;
 const ipHits = new Map<string, number[]>();
 function ipAllowed(ip: string): boolean {
+  // בפיתוח לא מגבילים - אחרת סוויטת הבדיקות (30 בקשות ברצף) נחסמת
+  if (process.env.NODE_ENV !== "production") return true;
   const now = Date.now();
   const hits = (ipHits.get(ip) ?? []).filter((t) => now - t < IP_WINDOW_MS);
   hits.push(now);

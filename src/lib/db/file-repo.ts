@@ -146,6 +146,19 @@ export class FileRepository implements Repository {
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
+  async deleteConversation(id: string): Promise<void> {
+    const store = await this.load();
+    const conv = store.conversations[id];
+    if (!conv) return;
+    delete store.conversations[id];
+    store.messages = store.messages.filter((m) => m.conversationId !== id);
+    const customerHasMore = Object.values(store.conversations).some(
+      (c) => c.customerId === conv.customerId
+    );
+    if (!customerHasMore) delete store.customers[conv.customerId];
+    await this.persist();
+  }
+
   async getConversationSummaries(): Promise<ConversationSummary[]> {
     const store = await this.load();
     const byConv = new Map<string, StoredMessage[]>();
@@ -199,6 +212,8 @@ export class FileRepository implements Repository {
   async addOpenQuestion(data: {
     question: string;
     conversationId?: string;
+    askerName?: string;
+    topic?: string;
   }): Promise<LearnedQA> {
     const store = await this.load();
     const qa: LearnedQA = {
@@ -208,6 +223,11 @@ export class FileRepository implements Repository {
       status: "open",
       conversationId: data.conversationId,
       createdAt: Date.now(),
+      count: 1,
+      askers: data.conversationId
+        ? [{ conversationId: data.conversationId, name: data.askerName, ts: Date.now() }]
+        : [],
+      topic: data.topic,
     };
     store.learnedQA.push(qa);
     await this.persist();
@@ -251,6 +271,23 @@ export class FileRepository implements Repository {
     qa.updatedAt = Date.now();
     await this.persist();
     return qa;
+  }
+
+  async recordLearnedQAAsk(id: string, asker: import("./types").QAAsker): Promise<void> {
+    const store = await this.load();
+    const qa = store.learnedQA.find((q) => q.id === id);
+    if (!qa) return;
+    qa.count = (qa.count ?? 1) + 1;
+    qa.askers = [...(qa.askers ?? []), asker].slice(-20);
+    await this.persist();
+  }
+
+  async setLearnedQAAskers(id: string, askers: import("./types").QAAsker[]): Promise<void> {
+    const store = await this.load();
+    const qa = store.learnedQA.find((q) => q.id === id);
+    if (!qa) return;
+    qa.askers = askers;
+    await this.persist();
   }
 
   async deleteLearnedQA(id: string): Promise<void> {

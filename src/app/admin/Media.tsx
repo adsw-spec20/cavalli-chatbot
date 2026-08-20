@@ -67,21 +67,17 @@ export default function Media({ token }: { token: string }) {
   }
 
   return (
-    <div className="max-w-3xl space-y-4">
-      <div>
-        <div className="flex items-center gap-2">
-          <h2 className="font-semibold">ספריית מדיה</h2>
-          {msg && <span className="text-xs text-emerald-400">{msg}</span>}
-        </div>
-        <p className="text-xs text-[var(--muted)] mt-1">
-          תמונות/סרטונים שהבוט ישלח ללקוחות כשרלוונטי. לכל פריט תן שם ומילות מפתח (כדי שהבוט יבין מתי
-          לשלוח), והדבק כתובת URL ציבורית של הקובץ. לדוגמה: סרטון של הדרך לחניה, תמונות גינת הילדים, תמונת מנה.
+    <div className="max-w-[1700px] space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="text-xs text-[var(--muted)]">
+          לכל פריט תן שם ומילות מפתח (כדי שהבוט יבין מתי לשלוח), והעלה קובץ מהמכשיר. לדוגמה: סרטון הדרך לחניה, תמונות גינת הילדים, תמונת מנה.
         </p>
+        {msg && <span className="text-xs text-emerald-400">{msg}</span>}
       </div>
 
-      <div className="space-y-3">
+      <div className="grid xl:grid-cols-2 gap-3 items-start">
         {items.length === 0 && (
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-6 text-center text-sm text-[var(--muted)]">
+          <div className="xl:col-span-2 bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-6 text-center text-sm text-[var(--muted)]">
             עדיין אין מדיה. הוסף פריט ראשון 👇
           </div>
         )}

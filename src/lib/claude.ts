@@ -16,7 +16,8 @@ import type { ConversationMessage } from "./channels/types";
 // העלות האמיתית נמוכה הודות ל-prompt caching. אפשר לעקוף דרך CHATBOT_MODEL
 // (למשל "claude-haiku-4-5-20251001" לזול יותר, אם מוכנים לגליצ'ים זעירים בעברית).
 const MODEL = process.env.CHATBOT_MODEL ?? "claude-sonnet-4-6";
-const MAX_TOKENS = 1024;
+// מספיק גם לתשובה ארוכה (רשימת מנות/שעות) בלי להיקטע באמצע משפט
+const MAX_TOKENS = 2048;
 
 /**
  * התאריך והשעה הנוכחיים בישראל (אזור זמן Asia/Jerusalem, כולל שעון קיץ אוטומטי).
@@ -46,9 +47,10 @@ function getClient(): Anthropic {
         "חסר ANTHROPIC_API_KEY. הוסף אותו לקובץ .env.local (ראה .env.example)."
       );
     }
-    // maxRetries: ה-SDK מנסה שוב אוטומטית על שגיאות חולפות (429/5xx/רשת),
-    // עם backoff. timeout: לא להיתקע יותר מדי (יש לנו 30s ב-webhook).
-    client = new Anthropic({ apiKey, maxRetries: 2, timeout: 20_000 });
+    // ⚠️ הזמנים חייבים להיות תואמים ל-maxDuration של ה-routes (90 שניות).
+    // timeout*(maxRetries+1) חייב להישאר מתחת ל-maxDuration, אחרת בקשה איטית
+    // (למשל "תן לי את כל התפריט") נקטעת ומנסה שוב עד שהפלטפורמה הורגת אותה -> 504.
+    client = new Anthropic({ apiKey, maxRetries: 1, timeout: 35_000 });
   }
   return client;
 }
@@ -65,6 +67,12 @@ export interface GenerateOptions {
   learnedFaqs?: LearnedFaq[];
   /** כרטיס הזיכרון של הלקוח (משיחות קודמות) - מוזרק כהקשר לא-ממוטמן */
   customerMemory?: string;
+  /** הערוץ שבו מתנהלת השיחה (whatsapp/messenger/instagram/playground) -
+      שהבוט יידע שהוא-עצמו עונה שם ולא "יפנה" לקוחות לערוץ שהם כבר בו */
+  channel?: string;
+  /** הזמנות פעילות (ממתינות/מאושרות עתידיות) של הלקוח - שהבוט יזכור התחייבויות
+      גם אחרי ימים, גם בשיחה חדשה, וגם כשההיסטוריה נחתכה */
+  activeReservations?: string;
 }
 
 export interface GenerateResult {
@@ -76,6 +84,25 @@ export interface GenerateResult {
   gapQuestions?: string[];
   /** מזהי מדיה שהמודל בחר לשלוח (ייפתרו לכתובות ויישלחו בערוץ) */
   mediaIds?: string[];
+  /** בקשת הזמנת מקום שהמודל אסף (תיפתח ככרטיס בפאנל) */
+  reservation?: {
+    people: number;
+    date_text: string;
+    date?: string;
+    time: string;
+    name: string;
+    phone: string;
+    notes?: string;
+  };
+  /** שימוש בטוקנים בפועל (למד העלות) */
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number | null;
+    cache_creation_input_tokens?: number | null;
+  };
+  /** המודל ששימש בפועל (למחירון) */
+  model?: string;
 }
 
 // כלי שמאפשר למודל להחליט מתי להעביר לנציג אנושי, עם סיכום לטובת הנציג.
@@ -122,6 +149,35 @@ const SEND_MEDIA_TOOL: Anthropic.Tool = {
   },
 };
 
+// כלי בקשת הזמנת מקום: המודל אוסף את כל הפרטים בשיחה ואז קורא לכלי.
+const RESERVATION_TOOL: Anthropic.Tool = {
+  name: "request_reservation",
+  description:
+    "פתח בקשת הזמנת מקום עבור הלקוח. קרא לכלי הזה רק אחרי שאספת את כל הפרטים: כמה אנשים, לאיזה יום, לאיזו שעה, על שם מי, ומספר טלפון - ואחרי שהלקוח אישר את הסיכום. הבקשה עוברת לצוות לאישור; אתה לא מבטיח מקום.",
+  input_schema: {
+    type: "object",
+    properties: {
+      people: { type: "number", description: "מספר הסועדים" },
+      date_text: {
+        type: "string",
+        description: "היום המבוקש במילים של הלקוח, למשל 'מחר' או 'יום שישי'",
+      },
+      date: {
+        type: "string",
+        description: "אותו יום בפורמט YYYY-MM-DD לפי התאריך הנוכחי שסופק לך (אם אינך בטוח - השמט)",
+      },
+      time: { type: "string", description: "שעה בפורמט HH:MM" },
+      name: { type: "string", description: "שם מלא להזמנה" },
+      phone: { type: "string", description: "מספר טלפון של הלקוח" },
+      notes: {
+        type: "string",
+        description: "בקשות מיוחדות אם יש (יום הולדת, ישיבה בחוץ, עגלת תינוק...)",
+      },
+    },
+    required: ["people", "date_text", "time", "name", "phone"],
+  },
+};
+
 // כלי דיווח שקט: המודל מסמן כל שאלה עסקית שלא ענה עליה במלואה, במקביל לתשובה.
 const REPORT_GAP_TOOL: Anthropic.Tool = {
   name: "report_knowledge_gap",
@@ -157,7 +213,11 @@ export async function generateReply(
     {
       type: "text",
       text: systemPrompt,
-      cache_control: { type: "ephemeral" },
+      // מטמון לשעה (ולא 5 דקות): ה-System Prompt זהה לכל הלקוחות, וכל שימוש
+      // מאריך את חייו - כך משלמים כתיבה יקרה בערך פעם ביום במקום בכל הודעה.
+      // ⚠️ ההיסטוריה (נקודת המטמון השנייה, למטה) נשארת ב-5 דקות בכוונה:
+      // היא נכתבת מחדש בכל תור ורלוונטית לשיחה אחת, אז מטמון שעתי היה מייקר.
+      cache_control: { type: "ephemeral", ttl: "1h" },
     },
   ];
   if (options.learnedFaqs && options.learnedFaqs.length) {
@@ -178,6 +238,22 @@ export async function generateReply(
     type: "text",
     text: `המועד הנוכחי בישראל (שעון מקומי): ${israelDateTime()}.`,
   });
+  if (options.activeReservations) {
+    systemBlocks.push({
+      type: "text",
+      text: `ללקוח הזה יש הזמנות פעילות אצלנו: ${options.activeReservations}. אם הוא מזכיר את ההזמנה, שואל עליה או מבקש שינוי - התייחס אליה ישירות ובדיוק (אל תשאל "איזו הזמנה?").`,
+    });
+  }
+  if (options.channel) {
+    const chName =
+      { whatsapp: "וואטסאפ", messenger: "מסנג'ר (פייסבוק)", instagram: "אינסטגרם", playground: "צ'אט הבדיקה של הפאנל" }[
+        options.channel
+      ] ?? options.channel;
+    systemBlocks.push({
+      type: "text",
+      text: `השיחה הזאת מתנהלת ב${chName} - אתה עונה מהחשבון של המסעדה בערוץ הזה עצמו. לעולם אל תפנה את הלקוח "לפנות אלינו" בערוץ שהוא כבר נמצא בו.`,
+    });
+  }
   if (options.firstTurn) {
     systemBlocks.push({
       type: "text",
@@ -190,24 +266,19 @@ export async function generateReply(
     content: m.content,
   }));
 
-  // שמירת היסטוריית השיחה במטמון: מסמנים את ההודעה האחרונה כנקודת מטמון, כך
-  // שבתור הבא כל ההיסטוריה שעד כאן נקראת מהמטמון בזול במקום להישלח שוב במלואה.
-  const lastMsg = reqMessages[reqMessages.length - 1];
-  if (lastMsg) {
-    lastMsg.content = [
-      {
-        type: "text",
-        text: lastMsg.content as string,
-        cache_control: { type: "ephemeral" },
-      },
-    ];
-  }
+  // ⚠️ אין כאן נקודת מטמון שנייה - בכוונה.
+  // מטמון עובד לפי התאמת "קידומת": כל שינוי בבתים שלפני הנקודה פוסל אותה.
+  // בלוק השעה הנוכחית (שמשתנה בכל בקשה) יושב לפני ההודעות, ולכן נקודת מטמון
+  // על ההודעה האחרונה לעולם לא הייתה נמצאת - ובמקום לחסוך, היא גרמה לכתיבה
+  // מחדש של כל ה-prompt בכל בקשה (מדדנו: ~5,000 טוקני כתיבה להודעה).
+  // ההיסטוריה קצרה ממילא, אז שליחתה כקלט רגיל זולה בהרבה.
+  // נקודת המטמון היחידה היא ה-System Prompt (למעלה) - יציב וזהה לכל הלקוחות.
 
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: MAX_TOKENS,
     system: systemBlocks,
-    tools: [ESCALATE_TOOL, REPORT_GAP_TOOL, SEND_MEDIA_TOOL],
+    tools: [ESCALATE_TOOL, REPORT_GAP_TOOL, SEND_MEDIA_TOOL, RESERVATION_TOOL],
     messages: reqMessages,
   });
 
@@ -227,14 +298,28 @@ export async function generateReply(
     .map((b) => ((b as Anthropic.ToolUseBlock).input as { mediaId: string }).mediaId)
     .filter((x): x is string => !!x);
 
+  const reservationUse = response.content.find(
+    (b) => b.type === "tool_use" && b.name === "request_reservation"
+  );
+  const reservation =
+    reservationUse && reservationUse.type === "tool_use"
+      ? (reservationUse.input as GenerateResult["reservation"])
+      : undefined;
+
   const escalateUse = response.content.find(
     (b) => b.type === "tool_use" && b.name === "escalate_to_human"
   );
+  // נתוני השימוש בפועל - מוחזרים לכל מסלול כדי שמד העלות יהיה מדויק
+  const usage = response.usage;
+
   if (escalateUse && escalateUse.type === "tool_use") {
     return {
       text,
       escalate: escalateUse.input as { reason: string; summary: string; urgent?: boolean },
       mediaIds: mediaIds.length ? mediaIds : undefined,
+      reservation,
+      usage,
+      model: MODEL,
     };
   }
 
@@ -260,5 +345,8 @@ export async function generateReply(
     text,
     gapQuestions: gapQuestions.length ? gapQuestions : undefined,
     mediaIds: mediaIds.length ? mediaIds : undefined,
+    reservation,
+    usage,
+    model: MODEL,
   };
 }

@@ -139,16 +139,22 @@ export function renderMenuCategories(categories: MenuCategory[]): string {
   return categories
     .map((cat) => {
       const note = cat.note ? ` (${cat.note})` : "";
+      // פורמט דחוס בכוונה: אותו מידע בדיוק (שם, מחיר, תיאור, תגיות, אזל),
+      // בלי תווי עיצוב מיותרים. התפריט נשלח בכל בקשה, אז כל תו חוסך עלות.
       const items = cat.items
         .map((item) => {
           const desc = item.description ? ` - ${item.description}` : "";
           const tags =
-            item.tags && item.tags.length ? ` [${item.tags.join(", ")}]` : "";
-          const soldOut = item.available === false ? " (אזל כרגע - לא זמין)" : "";
-          return `    • ${item.name}${desc}: ${item.price}${tags}${soldOut}`;
+            item.tags && item.tags.length ? ` [${item.tags.join(",")}]` : "";
+          const allergens =
+            item.allergens && item.allergens.length
+              ? ` [אלרגנים: ${item.allergens.join(",")}]`
+              : "";
+          const soldOut = item.available === false ? " (אזל - לא זמין)" : "";
+          return `${item.name} ${item.price}${desc}${tags}${allergens}${soldOut}`;
         })
         .join("\n");
-      return `  ## ${cat.name}${note}\n${items}`;
+      return `## ${cat.name}${note}\n${items}`;
     })
     .join("\n");
 }

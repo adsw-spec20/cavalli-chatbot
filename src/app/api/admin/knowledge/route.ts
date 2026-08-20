@@ -5,7 +5,7 @@ import { isAdminAuthorized } from "@/lib/admin-auth";
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  if (!isAdminAuthorized(req)) {
+  if (!(await isAdminAuthorized(req))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const status = req.nextUrl.searchParams.get("status") as
@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
 
 /** הוספת ידע יזומה: שאלה + תשובה מוכנות מהצוות. */
 export async function POST(req: NextRequest) {
-  if (!isAdminAuthorized(req)) {
+  if (!(await isAdminAuthorized(req))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const body = await req.json();

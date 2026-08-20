@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  agentReply,
   answerKnowledge,
   deleteKnowledge,
   getKnowledgeItem,
   updateKnowledge,
 } from "@/lib/admin-service";
 import { isAdminAuthorized } from "@/lib/admin-auth";
+import { getRepo } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -18,7 +20,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!isAdminAuthorized(req)) {
+  if (!(await isAdminAuthorized(req))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const { id } = await params;
@@ -48,7 +50,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!isAdminAuthorized(req)) {
+  if (!(await isAdminAuthorized(req))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const { id } = await params;
@@ -58,6 +60,29 @@ export async function POST(
     await deleteKnowledge(id);
     return NextResponse.json({ ok: true });
   }
+
+  // "שלח ללקוח ששאל": שולח את התשובה שנשמרה ישירות לשיחה של השואל
+  if (body.action === "sendToAsker" && typeof body.conversationId === "string") {
+    const qa = await getKnowledgeItem(id);
+    if (!qa) return NextResponse.json({ error: "not found" }, { status: 404 });
+    if (!qa.answer) {
+      return NextResponse.json({ error: "אין תשובה שמורה לשאלה הזו" }, { status: 400 });
+    }
+    const text = `היי 🙂 בהמשך לשאלה ששאלת אותנו - ${qa.answer}`;
+    try {
+      await agentReply(body.conversationId, text, body.agentName || "הצוות");
+    } catch (err) {
+      console.error("[knowledge] שליחת תשובה לשואל נכשלה:", err);
+      return NextResponse.json({ error: "השליחה נכשלה" }, { status: 502 });
+    }
+    // סימון שהתשובה נשלחה לשואל הזה (כדי שהכפתור יהפוך ל"נשלח ✓")
+    const askers = (qa.askers ?? []).map((a) =>
+      a.conversationId === body.conversationId ? { ...a, answerSent: true } : a
+    );
+    await getRepo().setLearnedQAAskers(id, askers).catch(() => undefined);
+    return NextResponse.json({ ok: true });
+  }
+
   if (typeof body.answer === "string" && body.answer.trim()) {
     const result = await answerKnowledge(id, body.answer.trim());
     return NextResponse.json(result);

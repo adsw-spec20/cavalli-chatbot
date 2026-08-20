@@ -25,13 +25,71 @@ function Section({ title, children, defaultOpen }: { title: string; children: Re
   return (
     <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-hidden">
       <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-3 text-right">
-        <span className="font-semibold text-sm">{title}</span>
+        <span className="font-semibold text-sm font-display">{title}</span>
         <span className="text-[var(--muted)]">{open ? "−" : "+"}</span>
       </button>
       {open && <div className="px-4 pb-4 space-y-3 border-t border-[var(--border)] pt-3">{children}</div>}
     </div>
   );
 }
+
+/** בחירת צ'יפים ממאגר קבוע (תגיות תזונה / אלרגנים) - לחיצה מוסיפה/מסירה */
+function ChipPicker({
+  label,
+  presets,
+  selected,
+  onChange,
+  danger,
+}: {
+  label: string;
+  presets: string[];
+  selected: string[];
+  onChange: (v: string[] | undefined) => void;
+  danger?: boolean;
+}) {
+  const toggle = (p: string) => {
+    const next = selected.includes(p) ? selected.filter((x) => x !== p) : [...selected, p];
+    onChange(next.length ? next : undefined);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="text-[10px] text-[var(--muted)] ml-1">{label}:</span>
+      {presets.map((p) => {
+        const on = selected.includes(p);
+        return (
+          <button
+            key={p}
+            onClick={() => toggle(p)}
+            className={`text-[10px] rounded-full px-2 py-0.5 border transition ${
+              on
+                ? danger
+                  ? "bg-red-500/15 text-red-400 border-red-500/40"
+                  : "bg-[var(--accent)]/15 text-[var(--accent)] border-[var(--accent)]/40"
+                : "text-[var(--muted)] border-[var(--border)] hover:text-[var(--text)]"
+            }`}
+          >
+            {on ? "✓ " : ""}{p}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const HE_WEEKDAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+/** שם היום בשבוע לתאריך שנבחר (עוזר לוודא שבחרו את היום הנכון) */
+function weekdayHe(dateISO: string): string | null {
+  const [y, m, d] = dateISO.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return HE_WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
+/** תאריך היום בישראל (להשוואות "עבר/עתידי" בצד הלקוח) */
+function todayILStr(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
+}
+
+const DIET_TAGS = ["צמחוני", "טבעוני", "ללא גלוטן", "חריף", "פופולרי", "לילדים"];
+const ALLERGENS = ["גלוטן", "חלב", "ביצים", "אגוזים", "בוטנים", "שומשום", "דגים", "סויה"];
 
 function StringList({ items, onChange, placeholder }: { items: string[]; onChange: (v: string[]) => void; placeholder: string }) {
   return (
@@ -112,11 +170,10 @@ export default function BusinessEditor({ token }: { token: string }) {
   }
 
   return (
-    <div className="max-w-3xl space-y-3">
-      <p className="text-xs text-[var(--muted)]">
-        כל מה שתערוך כאן הבוט יידע מיד - שעות, מחירים, מנות, תשובות. אין צורך לגעת בקוד. אל תשכח לשמור בסוף.
-      </p>
-
+    <div className="max-w-[1700px] space-y-3">
+      {/* בדסקטופ: שתי עמודות עצמאיות (ימין: פרטים ושעות, שמאל: תפריט וידע) - ניצול מלא של הרוחב */}
+      <div className="grid xl:grid-cols-2 gap-3 items-start">
+      <div className="space-y-3">
       <Section title="פרטים כלליים" defaultOpen>
         <Field label="שם העסק" value={cfg.name} onChange={(v) => up({ name: v })} />
         <Field label="תיאור" value={cfg.description} onChange={(v) => up({ description: v })} area />
@@ -134,6 +191,8 @@ export default function BusinessEditor({ token }: { token: string }) {
           <Field label="קישור להזמנת מקום" value={cfg.contact.reservationUrl} onChange={(v) => upContact({ reservationUrl: v })} />
           <Field label="אינסטגרם" value={cfg.contact.instagram} onChange={(v) => upContact({ instagram: v })} />
           <Field label="פייסבוק" value={cfg.contact.facebook} onChange={(v) => upContact({ facebook: v })} />
+          <Field label="טיקטוק" value={cfg.contact.tiktok} onChange={(v) => upContact({ tiktok: v })} />
+          <Field label="וואטסאפ לפנייה מהירה (wa.me)" value={cfg.contact.whatsapp} onChange={(v) => upContact({ whatsapp: v })} />
         </div>
       </Section>
 
@@ -158,7 +217,7 @@ export default function BusinessEditor({ token }: { token: string }) {
                   checked={h.hours === null}
                   onChange={(e) => {
                     const next = [...cfg.hours];
-                    next[i] = { ...h, hours: e.target.checked ? null : "07:00-18:00" };
+                    next[i] = { ...h, hours: e.target.checked ? null : "08:00-18:00" };
                     up({ hours: next });
                   }}
                 />
@@ -169,6 +228,74 @@ export default function BusinessEditor({ token }: { token: string }) {
         </div>
       </Section>
 
+      <Section title="🗓️ תאריכים מיוחדים (חג / צום / אירוע)" defaultOpen={(cfg.hoursOverrides ?? []).length > 0}>
+        <p className="text-xs text-[var(--muted)]">
+          סוגרים מוקדם בערב חג? פותחים מאוחר אחרי צום? הגדירו את זה כאן <b>מראש</b> - הבוט יידע לענות נכון
+          גם ללקוח ששואל ימים לפני (&quot;אתם פתוחים בחג?&quot;). ההגדרה גוברת על השעות הקבועות לאותו יום בלבד,
+          ותאריכים שעברו נמחקים אוטומטית.
+        </p>
+        <div className="space-y-2">
+          {(cfg.hoursOverrides ?? []).map((o, i) => {
+            const upO = (patch: Partial<{ date: string; hours: string | null; note?: string }>) => {
+              const arr = [...(cfg.hoursOverrides ?? [])];
+              arr[i] = { ...o, ...patch };
+              up({ hoursOverrides: arr });
+            };
+            const wd = weekdayHe(o.date);
+            const past = !!o.date && o.date < todayILStr();
+            const closed = o.hours === null;
+            return (
+              <div key={i} className={`border rounded-xl p-2.5 space-y-1.5 ${past ? "border-[var(--border)] opacity-60" : "border-[var(--accent)]/25"}`}>
+                <div className="flex gap-1.5 items-center flex-wrap">
+                  <input type="date" value={o.date} onChange={(ev) => upO({ date: ev.target.value })} className={`${inputCls} w-40`} />
+                  {wd && <span className="text-xs text-[var(--muted)] shrink-0">יום {wd}</span>}
+                  {past && <span className="text-[10px] bg-[var(--panel2)] text-[var(--muted)] rounded-full px-2 py-0.5">עבר - יימחק אוטומטית</span>}
+                  <button
+                    onClick={() => up({ hoursOverrides: (cfg.hoursOverrides ?? []).filter((_, j) => j !== i) })}
+                    className="text-[var(--muted)] hover:text-red-400 px-1 mr-auto"
+                    aria-label="מחק תאריך מיוחד"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="flex gap-1.5 items-center flex-wrap">
+                  <label className="flex items-center gap-1 text-xs shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={closed}
+                      onChange={(ev) => upO({ hours: ev.target.checked ? null : "10:00-23:00" })}
+                    />
+                    סגור כל היום
+                  </label>
+                  {!closed && (
+                    <input
+                      value={o.hours ?? ""}
+                      placeholder="שעות באותו יום, למשל 10:00-15:00"
+                      onChange={(ev) => upO({ hours: ev.target.value })}
+                      className={`${inputCls} w-56`}
+                    />
+                  )}
+                  <input
+                    value={o.note ?? ""}
+                    placeholder="סיבה (למשל: ערב חג) - הבוט יציין אותה"
+                    onChange={(ev) => upO({ note: ev.target.value || undefined })}
+                    className={`${inputCls} flex-1 min-w-40 text-xs`}
+                  />
+                </div>
+              </div>
+            );
+          })}
+          <button
+            onClick={() => up({ hoursOverrides: [...(cfg.hoursOverrides ?? []), { date: "", hours: null }] })}
+            className="text-sm text-[var(--accent)] hover:underline"
+          >
+            + הוסף תאריך מיוחד
+          </button>
+        </div>
+      </Section>
+      </div>
+
+      <div className="space-y-3">
       <Section title="תפריט">
         <div className="space-y-4">
           {cfg.menu.map((cat, ci) => (
@@ -200,36 +327,55 @@ export default function BusinessEditor({ token }: { token: string }) {
                 }}
                 className={`${inputCls} text-xs`}
               />
-              <div className="space-y-1.5">
+              <div className="grid gap-2 lg:grid-cols-2 items-start">
                 {cat.items.map((it, ii) => (
-                  <div key={ii} className="flex gap-1.5 items-start bg-[var(--panel2)] rounded-lg p-1.5">
-                    <div className="flex-1 space-y-1">
-                      <div className="flex gap-1.5">
-                        <input
-                          value={it.name}
-                          placeholder="שם מנה"
-                          onChange={(e) => {
-                            const menu = [...cfg.menu];
-                            const items = [...cat.items];
-                            items[ii] = { ...it, name: e.target.value };
-                            menu[ci] = { ...cat, items };
-                            up({ menu });
-                          }}
-                          className={`${inputCls} flex-1`}
-                        />
-                        <input
-                          value={it.price}
-                          placeholder="מחיר"
-                          onChange={(e) => {
-                            const menu = [...cfg.menu];
-                            const items = [...cat.items];
-                            items[ii] = { ...it, price: e.target.value };
-                            menu[ci] = { ...cat, items };
-                            up({ menu });
-                          }}
-                          className={`${inputCls} w-40`}
-                        />
-                      </div>
+                  <div
+                    key={ii}
+                    className={`bg-[var(--panel2)] border border-[var(--border)] rounded-xl p-2.5 space-y-1.5 ${it.available === false ? "opacity-75" : ""}`}
+                  >
+                    <div className="flex gap-1.5 items-center">
+                      <input
+                        value={it.name}
+                        placeholder="שם המנה"
+                        aria-label="שם המנה"
+                        onChange={(e) => {
+                          const menu = [...cfg.menu];
+                          const items = [...cat.items];
+                          items[ii] = { ...it, name: e.target.value };
+                          menu[ci] = { ...cat, items };
+                          up({ menu });
+                        }}
+                        className={`${inputCls} flex-1 min-w-0 font-medium`}
+                      />
+                      <input
+                        value={it.price}
+                        placeholder="₪"
+                        aria-label="מחיר"
+                        inputMode="decimal"
+                        onChange={(e) => {
+                          const menu = [...cfg.menu];
+                          const items = [...cat.items];
+                          items[ii] = { ...it, price: e.target.value };
+                          menu[ci] = { ...cat, items };
+                          up({ menu });
+                        }}
+                        className={`${inputCls} !w-20 shrink-0 text-center`}
+                        style={{ fontVariantNumeric: "tabular-nums" }}
+                      />
+                      <button
+                        onClick={() => {
+                          const menu = [...cfg.menu];
+                          menu[ci] = { ...cat, items: cat.items.filter((_, j) => j !== ii) };
+                          up({ menu });
+                        }}
+                        aria-label="מחיקת המנה"
+                        title="מחיקת המנה"
+                        className="shrink-0 w-8 h-8 grid place-items-center rounded-lg text-[var(--muted)] hover:text-red-400 hover:bg-red-500/10 text-lg leading-none"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div className="space-y-1">
                       <input
                         value={it.description ?? ""}
                         placeholder="תיאור (אופציונלי)"
@@ -242,7 +388,38 @@ export default function BusinessEditor({ token }: { token: string }) {
                         }}
                         className={`${inputCls} text-xs`}
                       />
-                      <label className="flex items-center gap-1 text-[11px] text-[var(--muted)]">
+                      <ChipPicker
+                        label="תגיות"
+                        presets={DIET_TAGS}
+                        selected={it.tags ?? []}
+                        onChange={(tags) => {
+                          const menu = [...cfg.menu];
+                          const items = [...cat.items];
+                          items[ii] = { ...it, tags };
+                          menu[ci] = { ...cat, items };
+                          up({ menu });
+                        }}
+                      />
+                      <ChipPicker
+                        label="אלרגנים"
+                        danger
+                        presets={ALLERGENS}
+                        selected={it.allergens ?? []}
+                        onChange={(allergens) => {
+                          const menu = [...cfg.menu];
+                          const items = [...cat.items];
+                          items[ii] = { ...it, allergens };
+                          menu[ci] = { ...cat, items };
+                          up({ menu });
+                        }}
+                      />
+                      <label
+                        className={`inline-flex items-center gap-1.5 text-[11px] rounded-full px-2.5 py-1 cursor-pointer border ${
+                          it.available === false
+                            ? "bg-amber-500/15 text-amber-300 border-amber-500/40 font-semibold"
+                            : "text-[var(--muted)] border-[var(--border)] hover:text-[var(--text)]"
+                        }`}
+                      >
                         <input
                           type="checkbox"
                           checked={it.available === false}
@@ -254,19 +431,9 @@ export default function BusinessEditor({ token }: { token: string }) {
                             up({ menu });
                           }}
                         />
-                        אזל כרגע (לא זמין)
+                        {it.available === false ? "אזל - הבוט יגיד שלא זמין" : "אזל כרגע?"}
                       </label>
                     </div>
-                    <button
-                      onClick={() => {
-                        const menu = [...cfg.menu];
-                        menu[ci] = { ...cat, items: cat.items.filter((_, j) => j !== ii) };
-                        up({ menu });
-                      }}
-                      className="text-[var(--muted)] hover:text-red-400 px-1"
-                    >
-                      ×
-                    </button>
                   </div>
                 ))}
                 <button
@@ -275,7 +442,7 @@ export default function BusinessEditor({ token }: { token: string }) {
                     menu[ci] = { ...cat, items: [...cat.items, { name: "", price: "" }] };
                     up({ menu });
                   }}
-                  className="text-xs text-[var(--accent)] hover:underline"
+                  className="min-h-11 border-2 border-dashed border-[var(--border)] rounded-xl text-sm text-[var(--accent)] font-semibold hover:border-[var(--accent)] hover:bg-[var(--panel2)] transition"
                 >
                   + הוסף מנה
                 </button>
@@ -391,30 +558,6 @@ export default function BusinessEditor({ token }: { token: string }) {
         </div>
       </Section>
 
-      <Section title="שעות חריגות (חגים / לילות מיוחדים)">
-        <p className="text-xs text-[var(--muted)]">דריסה נקודתית של השעות לתאריך מסוים. גוברת על השעות הקבועות באותו יום.</p>
-        <div className="space-y-2">
-          {(cfg.hoursOverrides ?? []).map((o, i) => {
-            const upO = (patch: Partial<{ date: string; hours: string | null; note?: string }>) => {
-              const arr = [...(cfg.hoursOverrides ?? [])];
-              arr[i] = { ...o, ...patch };
-              up({ hoursOverrides: arr });
-            };
-            return (
-              <div key={i} className="flex gap-1.5 items-center">
-                <input type="date" value={o.date} onChange={(ev) => upO({ date: ev.target.value })} className={`${inputCls} w-36`} />
-                <input value={o.hours ?? ""} placeholder="סגור" onChange={(ev) => upO({ hours: ev.target.value || null })} className={`${inputCls} w-32`} />
-                <input value={o.note ?? ""} placeholder="הערה (אופציונלי)" onChange={(ev) => upO({ note: ev.target.value || undefined })} className={`${inputCls} text-xs`} />
-                <button onClick={() => up({ hoursOverrides: (cfg.hoursOverrides ?? []).filter((_, j) => j !== i) })} className="text-[var(--muted)] hover:text-red-400 px-1">×</button>
-              </div>
-            );
-          })}
-          <button onClick={() => up({ hoursOverrides: [...(cfg.hoursOverrides ?? []), { date: "", hours: "" }] })} className="text-sm text-[var(--accent)] hover:underline">
-            + הוסף תאריך
-          </button>
-        </div>
-      </Section>
-
       <Section title="חניה">
         {cfg.parking && (
           <>
@@ -424,6 +567,8 @@ export default function BusinessEditor({ token }: { token: string }) {
           </>
         )}
       </Section>
+      </div>
+      </div>
 
       {/* סרגל שמירה דביק בתוך אזור הגלילה - לא מכסה את הניווט */}
       <div className="sticky bottom-0 -mx-3 md:mx-0 bg-[var(--panel)] border-t border-[var(--border)] p-3 flex items-center gap-3 justify-end z-20 rounded-t-xl">
