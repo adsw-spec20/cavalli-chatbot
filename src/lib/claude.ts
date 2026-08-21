@@ -9,6 +9,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { loadBusinessConfig } from "./business-config-store";
 import { loadMedia } from "./media-store";
 import { buildSystemPrompt } from "./system-prompt";
+import { isGateConfigured } from "./palgate";
 import { memoryContextBlock } from "./customer-memory";
 import type { ConversationMessage } from "./channels/types";
 
@@ -84,6 +85,8 @@ export interface GenerateResult {
   gapQuestions?: string[];
   /** מזהי מדיה שהמודל בחר לשלוח (ייפתרו לכתובות ויישלחו בערוץ) */
   mediaIds?: string[];
+  /** המודל ביקש לפתוח את שער החניה (הביצוע והאכיפה בשכבת השירות) */
+  openGateRequested?: boolean;
   /** בקשת הזמנת מקום שהמודל אסף (תיפתח ככרטיס בפאנל) */
   reservation?: {
     people: number;
@@ -175,6 +178,18 @@ const RESERVATION_TOOL: Anthropic.Tool = {
       },
     },
     required: ["people", "date_text", "time", "name", "phone"],
+  },
+};
+
+// כלי פתיחת שער החניה: המודל קורא לו כשהלקוח מבקש לפתוח את השער.
+// הפתיחה בפועל (כולל בדיקת שעות פעילות ומגבלות) נעשית בקוד, בשכבת השירות.
+const OPEN_GATE_TOOL: Anthropic.Tool = {
+  name: "open_parking_gate",
+  description:
+    "פתח את שער החניה של המסעדה עבור הלקוח. קרא לכלי הזה בכל פעם שהלקוח מבקש במפורש לפתוח את השער (הוא נמצא עכשיו בכניסה לחניה). אל תקרא לו על שאלות כלליות על חניה (איפה חונים, כמה עולה) - לאלה יש מידע רגיל. חשוב: אל תחליט בעצמך אם אנחנו פתוחים או סגורים - המערכת בודקת את שעות הפעילות אוטומטית ותפתח רק אם מותר. פשוט קרא לכלי כשמבקשים, וכתוב אישור קצר וטבעי; אם המערכת לא תוכל לפתוח (מחוץ לשעות) היא תודיע לך.",
+  input_schema: {
+    type: "object",
+    properties: {},
   },
 };
 
@@ -278,7 +293,10 @@ export async function generateReply(
     model: MODEL,
     max_tokens: MAX_TOKENS,
     system: systemBlocks,
-    tools: [ESCALATE_TOOL, REPORT_GAP_TOOL, SEND_MEDIA_TOOL, RESERVATION_TOOL],
+    // כלי השער נכלל רק כשחיבור PalGate מוגדר (משתני סביבה) - אחרת המודל לא מכיר אותו
+    tools: isGateConfigured()
+      ? [ESCALATE_TOOL, REPORT_GAP_TOOL, SEND_MEDIA_TOOL, RESERVATION_TOOL, OPEN_GATE_TOOL]
+      : [ESCALATE_TOOL, REPORT_GAP_TOOL, SEND_MEDIA_TOOL, RESERVATION_TOOL],
     messages: reqMessages,
   });
 
@@ -297,6 +315,10 @@ export async function generateReply(
     .filter((b) => b.type === "tool_use" && b.name === "send_media")
     .map((b) => ((b as Anthropic.ToolUseBlock).input as { mediaId: string }).mediaId)
     .filter((x): x is string => !!x);
+
+  const openGateRequested = response.content.some(
+    (b) => b.type === "tool_use" && b.name === "open_parking_gate"
+  );
 
   const reservationUse = response.content.find(
     (b) => b.type === "tool_use" && b.name === "request_reservation"
@@ -317,6 +339,7 @@ export async function generateReply(
       text,
       escalate: escalateUse.input as { reason: string; summary: string; urgent?: boolean },
       mediaIds: mediaIds.length ? mediaIds : undefined,
+      openGateRequested: openGateRequested || undefined,
       reservation,
       usage,
       model: MODEL,
@@ -345,6 +368,7 @@ export async function generateReply(
     text,
     gapQuestions: gapQuestions.length ? gapQuestions : undefined,
     mediaIds: mediaIds.length ? mediaIds : undefined,
+    openGateRequested: openGateRequested || undefined,
     reservation,
     usage,
     model: MODEL,

@@ -10,6 +10,7 @@ import type { BusinessConfig } from "./business-config";
 import type { MediaItem } from "./media-store";
 import { renderMenuCategories } from "./knowledge-retrieval";
 import { israelDateISO, relativeDateLabel } from "./business-hours";
+import { isGateConfigured } from "./palgate";
 
 export function buildSystemPrompt(config: BusinessConfig, media: MediaItem[] = []): string {
   const today = israelDateISO();
@@ -75,6 +76,18 @@ export function buildSystemPrompt(config: BusinessConfig, media: MediaItem[] = [
     parkingText = `\n# חניה\n  ${p.summary}\n  הוראות הגעה: ${p.directions}${priceLine}${hiddenNote}${imagesLine}\n`;
   } else if (config.parking && !config.parking.available) {
     parkingText = `\n# חניה\n  ${config.parking.summary}\n`;
+  }
+
+  // ----- פתיחת שער החניה מרחוק (מוצג רק כשחיבור PalGate מוגדר) -----
+  // הסעיף יציב בין בקשות (תלוי במשתני סביבה בלבד) ולכן לא פוגע במטמון הפרומפט.
+  if (isGateConfigured()) {
+    parkingText +=
+      `\n# פתיחת שער החניה\n` +
+      `  אתה יכול לפתוח את שער החניה מרחוק דרך הכלי \`open_parking_gate\`. כללים:\n` +
+      `  - השתמש בכלי בכל פעם שהלקוח מבקש במפורש לפתוח את השער (הוא בכניסה לחניה עכשיו). ניסוחים כמו "תפתחו את השער", "אני בשער", "אפשר לפתוח? אני בחניה" - זו בקשה מפורשת.\n` +
+      `  - שאלות כלליות על חניה (איפה, כמה עולה, איך מגיעים) הן לא בקשת פתיחה - ענה עליהן כרגיל מהמידע שלמעלה.\n` +
+      `  - **אל תחליט בעצמך אם פתוח או סגור.** המערכת בודקת את שעות הפעילות אוטומטית ופותחת רק אם מותר. פשוט קרא לכלי כשמבקשים; אם אי אפשר לפתוח (מחוץ לשעות) המערכת תיצור בעצמה את התשובה המתאימה ללקוח.\n` +
+      `  - כשקראת לכלי, כתוב אישור קצר וטבעי ("פתחתי לך את השער - כניסה נעימה 🙂"). אל תבטיח פתיחה בלי לקרוא לכלי בפועל.\n`;
   }
 
   // ----- אירועים (הפעלה אוטומטית לפי תאריך: מציגים אירועים פעילים ידנית,

@@ -15,6 +15,7 @@ import { sendEscalationEmail, sendSystemAlarmWhatsApp } from "./alerts";
 import { processGapQuestion } from "./knowledge-filter";
 import { createReservation, loadReservations } from "./reservations";
 import { isOpenNow, israelDateISO, effectiveHoursToday } from "./business-hours";
+import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
 import type { BusinessConfig } from "./business-config";
 import type { Channel, ConversationMessage } from "./channels/types";
@@ -557,6 +558,9 @@ const RATE_PER_HOUR = 50;
 // כל כמה זמן מותר לשלוח הודעת "קיבלתי הרבה הודעות" לאותה שיחה (כדי לא לספמם בחזרה)
 const RATE_NOTICE_COOLDOWN_MS = 90_000;
 const rateNoticeAt = new Map<string, number>();
+
+// ----- שער החניה: מגבלת פתיחות ללקוח (מונע שימוש לרעה; לקוח אמיתי לא צריך יותר) -----
+const GATE_MAX_PER_HOUR = 4;
 
 // ----- תקרת שימוש יומית גלובלית: רשת ביטחון קשיחה מפני עלות בורחת -----
 // גבוה בהרבה מנפח אמיתי של בית קפה, כך שנוגעים בזה רק בתקיפה/תקלה.
@@ -1162,6 +1166,97 @@ export async function handleIncomingMessage(
   }
   if (isFirstTurn) {
     await repo.updateConversation(conversation.id, { disclosedAi: true });
+  }
+
+  // ----- פתיחת שער החניה: המודל ביקש, הקוד אוכף (שעות, מגבלה) ומבצע -----
+  if (result.openGateRequested && isGateConfigured()) {
+    const gLang = langFromHistory(history);
+    const phone = cfgEarly.contact.phone;
+    // מתג הקמה זמני: PALGATE_IGNORE_HOURS=1 עוקף את בדיקת שעות הפעילות
+    // (לבדיקה פיזית מול השער בסופ"ש). לכבות אחרי שמאמתים שהכל עובד.
+    if (!gateHoursBypassed() && !isOpenNow(cfgEarly)) {
+      // רשת הביטחון בקוד: מחוץ לשעות הפעילות - השער לא נפתח.
+      const today = effectiveHoursToday(cfgEarly);
+      reply =
+        gLang === "en"
+          ? `Opening the parking gate is only possible during opening hours 🙏${today ? ` Today we're open ${today}.` : " We're closed today."}`
+          : `פתיחת שער החניה אפשרית רק בשעות הפעילות 🙏${today ? ` היום אנחנו פתוחים ${today}.` : " היום אנחנו סגורים."}`;
+      console.log(`[GATE] נחסם: מחוץ לשעות הפעילות. conv=${conversation.id}`);
+    } else {
+      // מגבלת פתיחות: סופרים פתיחות שכבר בוצעו בשיחה הזו בשעה האחרונה
+      const opensLastHour = stored.filter(
+        (m) => m.meta?.gateOpened === true && m.ts > Date.now() - 3_600_000
+      ).length;
+      if (opensLastHour >= GATE_MAX_PER_HOUR) {
+        reply =
+          gLang === "en"
+            ? `I've already opened the gate several times in the last hour, so I'm pausing for safety 🙏 Our team can help${phone ? ` at ${phone}` : ""}.`
+            : `פתחתי כבר את השער כמה פעמים בשעה האחרונה, אז אני עוצר ליתר ביטחון 🙏 הצוות ישמח לעזור${phone ? ` בטלפון ${phone}` : ""}.`;
+        console.log(`[GATE] נחסם: חריגה ממגבלת פתיחות (${opensLastHour}/שעה). conv=${conversation.id}`);
+        await repo.addMessage({
+          conversationId: conversation.id,
+          role: "system",
+          content: `🅿️ בקשת פתיחת שער נחסמה - חריגה ממגבלת הפתיחות (${opensLastHour} בשעה האחרונה)`,
+          ts: Date.now(),
+          meta: { activity: true, gateBlocked: true },
+        });
+      } else {
+        try {
+          await openParkingGate();
+          // תיעוד כן: אם נפתח במסגרת עקיפת השעות (הקמה), מציינים זאת ברישום
+          const bypassNote = gateHoursBypassed() && !isOpenNow(cfgEarly) ? " (עקיפת שעות זמנית - מצב הקמה)" : "";
+          console.log(`[GATE] השער נפתח${bypassNote}. conv=${conversation.id} customer=${customerId}`);
+          await repo.addMessage({
+            conversationId: conversation.id,
+            role: "system",
+            content: `🅿️ שער החניה נפתח לבקשת הלקוח${bypassNote}`,
+            ts: Date.now(),
+            meta: { activity: true, gateOpened: true },
+          });
+          // מוודאים שהלקוח מקבל אישור ברור, גם אם המודל ניסח תשובה כללית מדי
+          if (!/שער|gate/i.test(reply)) {
+            reply = gLang === "en" ? "The gate is open - come on in 🙂" : "פתחתי לך את השער - אפשר להיכנס 🙂";
+          }
+        } catch (err) {
+          // הלקוח עומד עכשיו מול שער סגור - זו תקלה דחופה: מסלימים לצוות מיד
+          console.error("[GATE] פתיחת השער נכשלה:", err);
+          reply =
+            gLang === "en"
+              ? `I couldn't open the gate just now 🙏 I've alerted our team - they'll help right away.${phone ? ` You can also call ${phone}.` : ""}`
+              : `לא הצלחתי לפתוח את השער כרגע 🙏 עדכנתי את הצוות שיעזרו מיד.${phone ? ` אפשר גם להתקשר ל-${phone}.` : ""}`;
+          const gateSummary = "לקוח מחכה בכניסה לחניה והשער לא נפתח אוטומטית - צריך לפתוח לו ידנית";
+          await repo.updateConversation(conversation.id, {
+            status: "human",
+            escalated: true,
+            escalationReason: "תקלה בפתיחת שער החניה",
+            escalationSummary: gateSummary,
+            meta: { urgent: true },
+          });
+          await repo.addMessage({
+            conversationId: conversation.id,
+            role: "system",
+            content: `🅿️ פתיחת שער החניה נכשלה - הוסלם לנציג\nשגיאה: ${err instanceof Error ? err.message.slice(0, 180) : String(err).slice(0, 180)}`,
+            ts: Date.now(),
+            meta: { escalation: true, gateError: true, summary: gateSummary },
+          });
+          sendEscalationEmail({
+            customerName: customer.name,
+            channel: input.channel,
+            reason: "תקלה בפתיחת שער החניה",
+            summary: gateSummary,
+            urgent: true,
+          }).catch(() => {});
+          await repo.addMessage({
+            conversationId: conversation.id,
+            role: "assistant",
+            content: reply,
+            ts: Date.now(),
+            meta: { escalation: true },
+          });
+          return { conversationId: conversation.id, reply, status: "human" };
+        }
+      }
+    }
   }
 
   // ----- בקשת הזמנת מקום: יצירת כרטיס בפאנל + תיעוד ביומן השיחה -----
