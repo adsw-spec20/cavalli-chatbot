@@ -562,6 +562,25 @@ const rateNoticeAt = new Map<string, number>();
 // ----- שער החניה: מגבלת פתיחות ללקוח (מונע שימוש לרעה; לקוח אמיתי לא צריך יותר) -----
 const GATE_MAX_PER_HOUR = 4;
 
+// אישורי פתיחת שער - מגוון ניסוחים נייטרליים (בלי להניח אם הלקוח נכנס או יוצא),
+// מוגרלים כדי שלא יהיה תמיד אותו משפט.
+const GATE_OPEN_CONFIRMATIONS_HE = [
+  "פתחתי לך את השער 🙂",
+  "השער פתוח 🙂",
+  "הנה, פתחתי לך את השער ✅",
+  "בוצע - פתחתי לך את השער 🙂",
+  "פתחתי לך אותו עכשיו 🙂",
+  "השער פתוח, שיהיה לך יום טוב 🙂",
+  "פתחתי, סע בזהירות 🙂",
+];
+const GATE_OPEN_CONFIRMATIONS_EN = [
+  "The gate is open 🙂",
+  "Done - I've opened the gate for you 🙂",
+  "There you go, the gate is open ✅",
+  "I've opened the gate for you 🙂",
+  "Opened - have a great day 🙂",
+];
+
 // ----- תקרת שימוש יומית גלובלית: רשת ביטחון קשיחה מפני עלות בורחת -----
 // גבוה בהרבה מנפח אמיתי של בית קפה, כך שנוגעים בזה רק בתקיפה/תקלה.
 // כשעוברים אותה הבוט שותק וההודעות ממתינות לצוות בפאנל (כמו כפתור הכיבוי).
@@ -683,12 +702,11 @@ async function runGateOpen(opts: {
       ts: Date.now(),
       meta: { activity: true, gateOpened: true },
     });
-    // אישור ברור ללקוח (אם למודל כבר יש ניסוח שמזכיר שער - שומרים אותו)
-    const reply = /שער|gate/i.test(modelReply)
-      ? modelReply
-      : gLang === "en"
-        ? "The gate is open - come on in 🙂"
-        : "פתחתי לך את השער - אפשר להיכנס 🙂";
+    // אישור ברור ומגוון ללקוח, נייטרלי (בלי "להיכנס"/"לצאת" - לא יודעים לאיזה כיוון).
+    // אם למודל (בנתיב הגיבוי) כבר יש ניסוח שמזכיר שער - שומרים אותו.
+    const heConfirm = GATE_OPEN_CONFIRMATIONS_HE[Math.floor(Math.random() * GATE_OPEN_CONFIRMATIONS_HE.length)];
+    const enConfirm = GATE_OPEN_CONFIRMATIONS_EN[Math.floor(Math.random() * GATE_OPEN_CONFIRMATIONS_EN.length)];
+    const reply = /שער|gate/i.test(modelReply) ? modelReply : gLang === "en" ? enConfirm : heConfirm;
     return { reply, status: "bot" };
   } catch (err) {
     // הלקוח עומד עכשיו מול שער סגור - תקלה דחופה: מסלימים לצוות מיד
