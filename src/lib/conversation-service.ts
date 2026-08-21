@@ -602,6 +602,129 @@ function mergeConsecutive(
   return out;
 }
 
+/**
+ * מזהה בקשה מפורשת לפתוח את שער החניה (זיהוי דטרמיניסטי בקוד).
+ * למה בקוד ולא דרך המודל: פתיחת שער היא פעולה פיזית, והמודל לפעמים מסרב לבד
+ * כשהוא "חושב" שסגור (שישי בלילה) בלי לקרוא לכלי. הקוד אמין ב-100% ואוכף שעות בעצמו.
+ * שמרני: חייב אזכור "שער"/gate + פועל בקשת-פתיחה מפורש, והודעה קצרה. כל ספק -> מודל.
+ */
+function isGateOpenRequest(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 120) return false;
+  if (!/שער|gate/i.test(t)) return false;
+  // ה-lookbehind (?<![א-ת]) דורש שהפועל יהיה בתחילת מילה - כדי לא לתפוס
+  // "נפתח" (סביל, "השער לא נפתח") או "מתפתח" בטעות כבקשת פתיחה.
+  return /(?<![א-ת])(תפתח|פתחו? את|פתחו? לי|פתחו? לנו|לפתוח (את|לי|לנו))|אפשר לפתוח|תוכל[וי]? לפתוח|\bopen\b/i.test(t);
+}
+
+/**
+ * זרימת פתיחת השער: בדיקת שעות (עם מתג עקיפה זמני), מגבלת קצב, פתיחה בפועל, תיעוד,
+ * והסלמה בכשל. משמשת גם את הנתיב הדטרמיניסטי (בקשה מפורשת) וגם את נתיב המודל.
+ * מבצעת את תופעות הלוואי (הודעות מערכת/הסלמה) אך *לא* שומרת את הודעת ה-assistant
+ * הסופית - הקורא עושה זאת (וגם מטפל בגילוי ה-AI בתור ראשון).
+ */
+async function runGateOpen(opts: {
+  repo: ReturnType<typeof getRepo>;
+  conversationId: string;
+  cfg: BusinessConfig;
+  customerId: string;
+  customerName?: string;
+  channel: Channel;
+  gLang: "he" | "en";
+  priorMessages: Array<{ meta?: Record<string, unknown>; ts: number }>;
+  modelReply: string;
+}): Promise<{ reply: string; status: "bot" | "human" }> {
+  const { repo, conversationId, cfg, customerId, customerName, channel, gLang, priorMessages, modelReply } = opts;
+  const phone = cfg.contact.phone;
+
+  // מחוץ לשעות הפעילות (אלא אם מתג העקיפה דלוק) - השער לא נפתח.
+  if (!gateHoursBypassed() && !isOpenNow(cfg)) {
+    const today = effectiveHoursToday(cfg);
+    console.log(`[GATE] נחסם: מחוץ לשעות הפעילות. conv=${conversationId}`);
+    return {
+      reply:
+        gLang === "en"
+          ? `Opening the parking gate is only possible during opening hours 🙏${today ? ` Today we're open ${today}.` : " We're closed today."}`
+          : `פתיחת שער החניה אפשרית רק בשעות הפעילות 🙏${today ? ` היום אנחנו פתוחים ${today}.` : " היום אנחנו סגורים."}`,
+      status: "bot",
+    };
+  }
+
+  // מגבלת פתיחות לשעה (הגנה מפני שימוש לרעה; לקוח אמיתי לא צריך יותר)
+  const opensLastHour = priorMessages.filter(
+    (m) => m.meta?.gateOpened === true && m.ts > Date.now() - 3_600_000
+  ).length;
+  if (opensLastHour >= GATE_MAX_PER_HOUR) {
+    console.log(`[GATE] נחסם: חריגה ממגבלת פתיחות (${opensLastHour}/שעה). conv=${conversationId}`);
+    await repo.addMessage({
+      conversationId,
+      role: "system",
+      content: `🅿️ בקשת פתיחת שער נחסמה - חריגה ממגבלת הפתיחות (${opensLastHour} בשעה האחרונה)`,
+      ts: Date.now(),
+      meta: { activity: true, gateBlocked: true },
+    });
+    return {
+      reply:
+        gLang === "en"
+          ? `I've already opened the gate several times in the last hour, so I'm pausing for safety 🙏 Our team can help${phone ? ` at ${phone}` : ""}.`
+          : `פתחתי כבר את השער כמה פעמים בשעה האחרונה, אז אני עוצר ליתר ביטחון 🙏 הצוות ישמח לעזור${phone ? ` בטלפון ${phone}` : ""}.`,
+      status: "bot",
+    };
+  }
+
+  try {
+    await openParkingGate();
+    const bypassNote = gateHoursBypassed() && !isOpenNow(cfg) ? " (עקיפת שעות זמנית - מצב הקמה)" : "";
+    console.log(`[GATE] השער נפתח${bypassNote}. conv=${conversationId} customer=${customerId}`);
+    await repo.addMessage({
+      conversationId,
+      role: "system",
+      content: `🅿️ שער החניה נפתח לבקשת הלקוח${bypassNote}`,
+      ts: Date.now(),
+      meta: { activity: true, gateOpened: true },
+    });
+    // אישור ברור ללקוח (אם למודל כבר יש ניסוח שמזכיר שער - שומרים אותו)
+    const reply = /שער|gate/i.test(modelReply)
+      ? modelReply
+      : gLang === "en"
+        ? "The gate is open - come on in 🙂"
+        : "פתחתי לך את השער - אפשר להיכנס 🙂";
+    return { reply, status: "bot" };
+  } catch (err) {
+    // הלקוח עומד עכשיו מול שער סגור - תקלה דחופה: מסלימים לצוות מיד
+    console.error("[GATE] פתיחת השער נכשלה:", err);
+    const gateSummary = "לקוח מחכה בכניסה לחניה והשער לא נפתח אוטומטית - צריך לפתוח לו ידנית";
+    await repo.updateConversation(conversationId, {
+      status: "human",
+      escalated: true,
+      escalationReason: "תקלה בפתיחת שער החניה",
+      escalationSummary: gateSummary,
+      meta: { urgent: true },
+    });
+    await repo.addMessage({
+      conversationId,
+      role: "system",
+      content: `🅿️ פתיחת שער החניה נכשלה - הוסלם לנציג\nשגיאה: ${err instanceof Error ? err.message.slice(0, 180) : String(err).slice(0, 180)}`,
+      ts: Date.now(),
+      meta: { escalation: true, gateError: true, summary: gateSummary },
+    });
+    sendEscalationEmail({
+      customerName,
+      channel,
+      reason: "תקלה בפתיחת שער החניה",
+      summary: gateSummary,
+      urgent: true,
+    }).catch(() => {});
+    return {
+      reply:
+        gLang === "en"
+          ? `I couldn't open the gate just now 🙏 I've alerted our team - they'll help right away.${phone ? ` You can also call ${phone}.` : ""}`
+          : `לא הצלחתי לפתוח את השער כרגע 🙏 עדכנתי את הצוות שיעזרו מיד.${phone ? ` אפשר גם להתקשר ל-${phone}.` : ""}`,
+      status: "human",
+    };
+  }
+}
+
 export interface HandleInput {
   channel: Channel;
   /** מזהה ייחודי של המשתמש בתוך הערוץ (טלפון / PSID / clientId בדפדפן) */
@@ -874,6 +997,44 @@ export async function handleIncomingMessage(
   const lastUserTurn = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
   const quickKeys = matchQuickAnswers(lastUserTurn);
   const kbHit = quickKeys.length ? null : matchLearnedAnswer(lastUserTurn, freeQAs);
+
+  // ----- פתיחת שער החניה (זיהוי דטרמיניסטי, בלי מודל) -----
+  // בקשה מפורשת לפתוח את השער מטופלת ישירות בקוד - לא נשאלת מהמודל, כי הוא לפעמים
+  // מסרב לבד כשהוא "חושב" שסגור. הקוד אוכף שעות בעצמו (עם מתג העקיפה הזמני).
+  if (isGateConfigured() && isGateOpenRequest(lastUserTurn)) {
+    const gLang = langFromHistory(history);
+    const gate = await runGateOpen({
+      repo,
+      conversationId: conversation.id,
+      cfg: cfgEarly,
+      customerId,
+      customerName: customer.name,
+      channel: input.channel,
+      gLang,
+      priorMessages: stored,
+      modelReply: "",
+    });
+    let gateReply = gate.reply;
+    if (isFirstTurn) {
+      const hello =
+        gLang === "en"
+          ? `Hi! I'm the digital assistant of ${cfgEarly.name} 🙂 (you can always ask for a human agent).`
+          : `היי! אני העוזר הדיגיטלי של ${cfgEarly.name} 🙂 (ואפשר תמיד לבקש נציג אנושי).`;
+      gateReply = `${hello}\n\n${gateReply}`;
+      await repo.updateConversation(conversation.id, { disclosedAi: true });
+    }
+    await namePromise.catch(() => undefined);
+    await repo.addMessage({
+      conversationId: conversation.id,
+      role: "assistant",
+      content: gateReply,
+      ts: Date.now(),
+      meta: gate.status === "human" ? { escalation: true } : { gateReply: true },
+    });
+    await recordFreeReply();
+    return { conversationId: conversation.id, reply: gateReply, status: gate.status };
+  }
+
   {
     const cfg = cfgEarly;
     const cannedLang = langFromHistory(history);
@@ -1168,94 +1329,29 @@ export async function handleIncomingMessage(
     await repo.updateConversation(conversation.id, { disclosedAi: true });
   }
 
-  // ----- פתיחת שער החניה: המודל ביקש, הקוד אוכף (שעות, מגבלה) ומבצע -----
+  // ----- פתיחת שער החניה (נתיב המודל - גיבוי לזיהוי הדטרמיניסטי שלמעלה) -----
   if (result.openGateRequested && isGateConfigured()) {
-    const gLang = langFromHistory(history);
-    const phone = cfgEarly.contact.phone;
-    // מתג הקמה זמני: PALGATE_IGNORE_HOURS=1 עוקף את בדיקת שעות הפעילות
-    // (לבדיקה פיזית מול השער בסופ"ש). לכבות אחרי שמאמתים שהכל עובד.
-    if (!gateHoursBypassed() && !isOpenNow(cfgEarly)) {
-      // רשת הביטחון בקוד: מחוץ לשעות הפעילות - השער לא נפתח.
-      const today = effectiveHoursToday(cfgEarly);
-      reply =
-        gLang === "en"
-          ? `Opening the parking gate is only possible during opening hours 🙏${today ? ` Today we're open ${today}.` : " We're closed today."}`
-          : `פתיחת שער החניה אפשרית רק בשעות הפעילות 🙏${today ? ` היום אנחנו פתוחים ${today}.` : " היום אנחנו סגורים."}`;
-      console.log(`[GATE] נחסם: מחוץ לשעות הפעילות. conv=${conversation.id}`);
-    } else {
-      // מגבלת פתיחות: סופרים פתיחות שכבר בוצעו בשיחה הזו בשעה האחרונה
-      const opensLastHour = stored.filter(
-        (m) => m.meta?.gateOpened === true && m.ts > Date.now() - 3_600_000
-      ).length;
-      if (opensLastHour >= GATE_MAX_PER_HOUR) {
-        reply =
-          gLang === "en"
-            ? `I've already opened the gate several times in the last hour, so I'm pausing for safety 🙏 Our team can help${phone ? ` at ${phone}` : ""}.`
-            : `פתחתי כבר את השער כמה פעמים בשעה האחרונה, אז אני עוצר ליתר ביטחון 🙏 הצוות ישמח לעזור${phone ? ` בטלפון ${phone}` : ""}.`;
-        console.log(`[GATE] נחסם: חריגה ממגבלת פתיחות (${opensLastHour}/שעה). conv=${conversation.id}`);
-        await repo.addMessage({
-          conversationId: conversation.id,
-          role: "system",
-          content: `🅿️ בקשת פתיחת שער נחסמה - חריגה ממגבלת הפתיחות (${opensLastHour} בשעה האחרונה)`,
-          ts: Date.now(),
-          meta: { activity: true, gateBlocked: true },
-        });
-      } else {
-        try {
-          await openParkingGate();
-          // תיעוד כן: אם נפתח במסגרת עקיפת השעות (הקמה), מציינים זאת ברישום
-          const bypassNote = gateHoursBypassed() && !isOpenNow(cfgEarly) ? " (עקיפת שעות זמנית - מצב הקמה)" : "";
-          console.log(`[GATE] השער נפתח${bypassNote}. conv=${conversation.id} customer=${customerId}`);
-          await repo.addMessage({
-            conversationId: conversation.id,
-            role: "system",
-            content: `🅿️ שער החניה נפתח לבקשת הלקוח${bypassNote}`,
-            ts: Date.now(),
-            meta: { activity: true, gateOpened: true },
-          });
-          // מוודאים שהלקוח מקבל אישור ברור, גם אם המודל ניסח תשובה כללית מדי
-          if (!/שער|gate/i.test(reply)) {
-            reply = gLang === "en" ? "The gate is open - come on in 🙂" : "פתחתי לך את השער - אפשר להיכנס 🙂";
-          }
-        } catch (err) {
-          // הלקוח עומד עכשיו מול שער סגור - זו תקלה דחופה: מסלימים לצוות מיד
-          console.error("[GATE] פתיחת השער נכשלה:", err);
-          reply =
-            gLang === "en"
-              ? `I couldn't open the gate just now 🙏 I've alerted our team - they'll help right away.${phone ? ` You can also call ${phone}.` : ""}`
-              : `לא הצלחתי לפתוח את השער כרגע 🙏 עדכנתי את הצוות שיעזרו מיד.${phone ? ` אפשר גם להתקשר ל-${phone}.` : ""}`;
-          const gateSummary = "לקוח מחכה בכניסה לחניה והשער לא נפתח אוטומטית - צריך לפתוח לו ידנית";
-          await repo.updateConversation(conversation.id, {
-            status: "human",
-            escalated: true,
-            escalationReason: "תקלה בפתיחת שער החניה",
-            escalationSummary: gateSummary,
-            meta: { urgent: true },
-          });
-          await repo.addMessage({
-            conversationId: conversation.id,
-            role: "system",
-            content: `🅿️ פתיחת שער החניה נכשלה - הוסלם לנציג\nשגיאה: ${err instanceof Error ? err.message.slice(0, 180) : String(err).slice(0, 180)}`,
-            ts: Date.now(),
-            meta: { escalation: true, gateError: true, summary: gateSummary },
-          });
-          sendEscalationEmail({
-            customerName: customer.name,
-            channel: input.channel,
-            reason: "תקלה בפתיחת שער החניה",
-            summary: gateSummary,
-            urgent: true,
-          }).catch(() => {});
-          await repo.addMessage({
-            conversationId: conversation.id,
-            role: "assistant",
-            content: reply,
-            ts: Date.now(),
-            meta: { escalation: true },
-          });
-          return { conversationId: conversation.id, reply, status: "human" };
-        }
-      }
+    const gate = await runGateOpen({
+      repo,
+      conversationId: conversation.id,
+      cfg: cfgEarly,
+      customerId,
+      customerName: customer.name,
+      channel: input.channel,
+      gLang: langFromHistory(history),
+      priorMessages: stored,
+      modelReply: reply,
+    });
+    reply = gate.reply;
+    if (gate.status === "human") {
+      await repo.addMessage({
+        conversationId: conversation.id,
+        role: "assistant",
+        content: reply,
+        ts: Date.now(),
+        meta: { escalation: true },
+      });
+      return { conversationId: conversation.id, reply, status: "human" };
     }
   }
 
