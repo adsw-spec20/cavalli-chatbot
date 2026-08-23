@@ -20,7 +20,7 @@ import { topicBreakdown } from "./insights";
 import { polishAnswer } from "./knowledge-filter";
 import { countPendingReservations } from "./reservations";
 import type { BusinessConfig } from "./business-config";
-import type { ChannelAdapter, ConversationMessage } from "./channels/types";
+import { AGENT_MSG_PREFIX, type ChannelAdapter, type ConversationMessage } from "./channels/types";
 import type { Conversation, Customer, LearnedQA, StoredMessage } from "./db";
 
 const STOPWORDS = new Set([
@@ -285,14 +285,16 @@ export async function polishDraft(conversationId: string, draft: string): Promis
 
 export async function suggestReply(conversationId: string): Promise<string> {
   const msgs = await getRepo().getMessages(conversationId);
-  // בניית היסטוריה ממוזגת (רצף תפקידים זהים = הודעה אחת), כפי שה-API דורש
+  // בניית היסטוריה ממוזגת (רצף תפקידים זהים = הודעה אחת), כפי שה-API דורש.
+  // הודעות נציג מתויגות (כמו בזרימה הראשית) כדי שהמודל יבדיל בינן לבין דבריו.
   const merged: ConversationMessage[] = [];
   for (const m of msgs) {
     if (m.role !== "user" && m.role !== "assistant" && m.role !== "agent") continue;
     const role: "user" | "assistant" = m.role === "user" ? "user" : "assistant";
+    const content = m.role === "agent" ? AGENT_MSG_PREFIX + m.content : m.content;
     const last = merged[merged.length - 1];
-    if (last && last.role === role) last.content += "\n" + m.content;
-    else merged.push({ role, content: m.content });
+    if (last && last.role === role) last.content += "\n" + content;
+    else merged.push({ role, content });
   }
   while (merged.length && merged[0].role === "assistant") merged.shift();
   // המודל דורש שההיסטוריה תסתיים בהודעת לקוח - מסירים תשובות בוט/נציג מהסוף,

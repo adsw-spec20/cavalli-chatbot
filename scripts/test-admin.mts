@@ -174,6 +174,53 @@ await test("isMediaRelevant: התאמת מילות מפתח", () => {
   assert.equal(isMediaRelevant(item, "כמה עולה קפוצ'ינו?"), false);
 });
 
+console.log("\n== תאריכי הזמנות (פענוח דטרמיניסטי) ==");
+const { resolveReservationDate, reservationDateLabel } = await import("../src/lib/reservations");
+// יום רביעי 12.8.2026 בישראל - התרחיש האמיתי מהשיחה של איתי פרץ
+const WED = new Date("2026-08-12T09:00:00+03:00");
+
+await test("'מחר' ביום רביעי -> יום חמישי 13.8", () => {
+  assert.equal(resolveReservationDate("מחר", undefined, WED), "2026-08-13");
+  assert.equal(resolveReservationDate("מחר בערב", undefined, WED), "2026-08-13");
+});
+
+await test("'מחר' גובר על תאריך שגוי של המודל (הבאג מ-12.8)", () => {
+  // המודל שלח 14.8 (שישי!) על "מחר" - הקוד מתקן ל-13.8
+  assert.equal(resolveReservationDate("מחר", "2026-08-14", WED), "2026-08-13");
+});
+
+await test("'היום' / 'הערב' / 'מחרתיים'", () => {
+  assert.equal(resolveReservationDate("היום", undefined, WED), "2026-08-12");
+  assert.equal(resolveReservationDate("הערב", undefined, WED), "2026-08-12");
+  assert.equal(resolveReservationDate("מחרתיים", undefined, WED), "2026-08-14");
+});
+
+await test("יום בשבוע -> המופע הקרוב", () => {
+  assert.equal(resolveReservationDate("יום חמישי", undefined, WED), "2026-08-13");
+  assert.equal(resolveReservationDate("ביום שני", undefined, WED), "2026-08-17");
+  assert.equal(resolveReservationDate("לשלישי", undefined, WED), "2026-08-18");
+});
+
+await test("תאריך מפורש '13.8' / '13/8', כולל גלגול שנה", () => {
+  assert.equal(resolveReservationDate("יום חמישי 13.8", undefined, WED), "2026-08-13");
+  assert.equal(resolveReservationDate("13/8", undefined, WED), "2026-08-13");
+  // תאריך שכבר עבר השנה בלי שנה מפורשת -> השנה הבאה
+  assert.equal(resolveReservationDate("1.1", undefined, WED), "2027-01-01");
+});
+
+await test("'בעוד שבועיים' לא מנוחש - נופל להערכת מודל תקינה בלבד", () => {
+  assert.equal(resolveReservationDate("יום חמישי בעוד שבועיים", "2026-08-27", WED), "2026-08-27");
+  // הערכת מודל בעבר נפסלת
+  assert.equal(resolveReservationDate("יום חמישי בעוד שבועיים", "2026-08-01", WED), undefined);
+});
+
+await test("reservationDateLabel: תווית קנונית", () => {
+  assert.equal(reservationDateLabel("2026-08-13"), "יום חמישי 13.8");
+  assert.equal(reservationDateLabel("2026-08-14"), "יום שישי 14.8");
+  assert.equal(reservationDateLabel(undefined), undefined);
+  assert.equal(reservationDateLabel("garbage"), undefined);
+});
+
 console.log(`\n${passed} עברו, ${failed} נכשלו`);
 process.chdir(os.tmpdir()); // לצאת מהתיקייה לפני מחיקתה (Windows)
 try {

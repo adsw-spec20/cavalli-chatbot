@@ -13,12 +13,17 @@ import { loadBusinessConfig } from "./business-config-store";
 import { loadMedia, isMediaRelevant, type MediaItem } from "./media-store";
 import { sendEscalationEmail, sendSystemAlarmWhatsApp } from "./alerts";
 import { processGapQuestion } from "./knowledge-filter";
-import { createReservation, loadReservations } from "./reservations";
+import {
+  createReservation,
+  loadReservations,
+  resolveReservationDate,
+  reservationDateLabel,
+} from "./reservations";
 import { isOpenNow, israelDateISO, effectiveHoursToday } from "./business-hours";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
 import type { BusinessConfig } from "./business-config";
-import type { Channel, ConversationMessage } from "./channels/types";
+import { AGENT_MSG_PREFIX, type Channel, type ConversationMessage } from "./channels/types";
 
 // ביטויים שמעידים שהבוט לא ידע לענות (פער ידע) -> נרשום את שאלת הלקוח
 const GAP_PATTERNS = [
@@ -1044,13 +1049,15 @@ export async function handleIncomingMessage(
   // בניית היסטוריה (ממוזגת - רצף הודעות לקוח נחשב כתור אחד).
   // תשובת נציג אנושי (agent) נחשבת כצד ה-assistant של השיחה, כדי שהבוט יראה
   // ששאלה שהנציג כבר ענה עליה טופלה - ולא יחזור עליה ולא ימזג שאלות שכבר נענו.
+  // אבל היא מתויגת (AGENT_MSG_PREFIX) כדי שהמודל ידע להבדיל בין דבריו לדברי
+  // הצוות ולא יסתור אותם (כלל 20 בפרומפט).
   const history = mergeConsecutive(
     stored
       .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "agent")
       .slice(-HISTORY_LIMIT)
       .map((m) => ({
         role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
-        content: m.content,
+        content: m.role === "agent" ? AGENT_MSG_PREFIX + m.content : m.content,
       }))
   );
 
@@ -1445,6 +1452,9 @@ export async function handleIncomingMessage(
   if (result.reservation) {
     const r = result.reservation;
     try {
+      // תאריך דטרמיניסטי: הקוד גוזר בעצמו את התאריך מ"מחר"/"יום חמישי"/"13.8"
+      // ולא סומך על חישוב המודל (שטעה בפועל ונדד בין תאריכים באותה שיחה).
+      const resolvedISO = resolveReservationDate(r.date_text, r.date);
       const created = await createReservation({
         conversationId: conversation.id,
         customerId,
@@ -1452,7 +1462,7 @@ export async function handleIncomingMessage(
         customerName: customer.name,
         people: Number(r.people) || 0,
         dateText: r.date_text,
-        dateISO: r.date,
+        dateISO: resolvedISO,
         time: r.time,
         name: r.name,
         phone: r.phone,
@@ -1462,10 +1472,11 @@ export async function handleIncomingMessage(
       // (למשל אחרי "תודה") מוחזרת כ-dup ולא מייצרת רישום שני מטעה בפאנל.
       const isNew = Date.now() - created.createdAt < 10_000;
       if (isNew) {
+        const dLabel = reservationDateLabel(resolvedISO);
         await repo.addMessage({
           conversationId: conversation.id,
           role: "system",
-          content: `🍽️ נפתחה בקשת הזמנה: ${r.people} אנשים, ${r.date_text} ב-${r.time}, ע"ש ${r.name} (${r.phone})`,
+          content: `🍽️ נפתחה בקשת הזמנה: ${r.people} אנשים, ${r.date_text}${dLabel && !r.date_text.includes(dLabel) ? ` (${dLabel})` : ""} ב-${r.time}, ע"ש ${r.name} (${r.phone})`,
           ts: Date.now(),
           meta: { activity: true, reservation: true },
         });
@@ -1574,6 +1585,16 @@ export async function handleIncomingMessage(
           );
       console.log(`[MEDIA] הבטחת מדיה בלי מדיה - תוקן בתשובה, conv=${conversation.id}`);
     }
+  }
+
+  // רשת ביטחון נגד מרוץ (ממצא משיחת 12.8): אם בזמן שהמודל חשב נציג אנושי
+  // השתלט על השיחה או השהה את הבוט - הבוט שותק ולא "מדבר מעל" הנציג.
+  // בדיקת השתיקה בתחילת הזרימה קראה את מצב השיחה לפני קריאת המודל (שאורכת
+  // שניות), והחלון הזה הספיק לבוט לענות אחרי הודעת נציג.
+  const freshConv = await repo.getConversation(conversation.id);
+  if (freshConv && (freshConv.status === "human" || freshConv.botPaused)) {
+    console.log(`[SILENCE] נציג נכנס תוך כדי חשיבת המודל - הבוט שותק. conv=${conversation.id}`);
+    return { conversationId: conversation.id, reply: null, status: freshConv.status };
   }
 
   await repo.addMessage({
