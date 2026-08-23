@@ -290,6 +290,9 @@ export default function AdminPage() {
   const lastSyncOk = useRef(0);
   // רענון ידני (כפתור בכותרת): ספינר בזמן משיכה יזומה של הכל
   const [syncing, setSyncing] = useState(false);
+  // רענון ידני: מונה שמרכיב מחדש את תוכן הטאב (רענון אמיתי של המסך), ודגל "✓ עודכן"
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [justSynced, setJustSynced] = useState(false);
   // רענון עדין פעם בדקה רק בשביל תוויות הזמן היחסי ("לפני 3 ד'") - עכשיו
   // שהסקר מדלג על רינדור כשאין שינוי, בלי זה התוויות היו קופאות.
   const [, setRelTick] = useState(0);
@@ -461,27 +464,31 @@ export default function AdminPage() {
   }, [authed, token, tab]);
 
   // מוני הבועות האדומות על הלשוניות: שאלות פתוחות בידע + הזמנות ממתינות
-  // (מתרעננים כל 30 שניות וגם בכל מעבר טאב, כדי שירדו מיד אחרי טיפול)
-  useEffect(() => {
-    if (!authed) return;
-    const load = () => {
+  // (מתרעננים כל 30 שניות, בכל מעבר טאב, וגם ברענון הידני)
+  const loadBadges = useCallback(() => {
+    if (!token) return Promise.resolve();
+    return Promise.all([
       api<unknown[]>(token, "/knowledge?status=open")
         .then((items) => setOpenQuestions(Array.isArray(items) ? items.length : 0))
-        .catch(() => {});
+        .catch(() => {}),
       api<{ pending?: unknown[] }>(token, "/reservations")
         .then((d) => setPendingResv(d.pending?.length ?? 0))
-        .catch(() => {});
+        .catch(() => {}),
       api<Record<string, { answer?: string; skipped?: boolean }>>(token, "/questionnaire")
         .then((a) => {
           const done = Object.values(a).filter((x) => x.answer || x.skipped).length;
           setQuizComplete(done >= 234);
         })
-        .catch(() => {});
-    };
-    load();
-    const t = setInterval(load, 30_000);
+        .catch(() => {}),
+    ]).then(() => undefined);
+  }, [token]);
+
+  useEffect(() => {
+    if (!authed) return;
+    loadBadges();
+    const t = setInterval(loadBadges, 30_000);
     return () => clearInterval(t);
-  }, [authed, token, tab]);
+  }, [authed, loadBadges, tab]);
 
   /** משיכת מצב מערכת (אזעקה + בוט פעיל/כבוי) - משמש גם את הסקר וגם רענון יזום */
   const refreshSettings = useCallback(() => {
@@ -519,15 +526,27 @@ export default function AdminPage() {
     };
   }, [authed, loadConversations, refreshSettings]);
 
-  /** רענון ידני: מושך שיחות + מצב מערכת, עם ספינר (מינימום חצי שנייה - שיהיה משוב ברור) */
+  /**
+   * רענון ידני: מרענן באמת את הכל - שיחות, מצב מערכת, מוני לשוניות, וגם את תוכן
+   * המסך הנוכחי (הרכבה מחדש, כמו יציאה וחזרה לטאב - כל מסך מושך נתונים טריים).
+   * באינבוקס אין הרכבה מחדש (הרשימה חיה ממילא בסקר, והרכבה הייתה מוחקת טיוטת
+   * תשובה פתוחה), וכך גם כשיש שינויים שלא נשמרו במסך עריכה.
+   * משוב ברור: ספינר לפחות חצי שנייה ואז ✓ - כדי שיהיה ודאי שקרה משהו,
+   * גם כשהנתונים כבר היו מעודכנים ושום דבר לא השתנה על המסך.
+   */
   async function manualRefresh() {
     if (syncing) return;
     setSyncing(true);
+    setJustSynced(false);
     const started = Date.now();
-    await Promise.all([loadConversations(), refreshSettings()]);
+    if (tab !== "inbox" && !unsavedChanges.current) setRefreshTick((t) => t + 1);
+    await Promise.all([loadConversations(), refreshSettings(), loadBadges()]);
+    setRelTick((x) => x + 1); // רינדור אחד לקליפת הפאנל - תוויות זמן/באנרים מתעדכנים גם כשהרשימה לא השתנתה
     const wait = 500 - (Date.now() - started);
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     setSyncing(false);
+    setJustSynced(true);
+    window.setTimeout(() => setJustSynced(false), 1600);
   }
 
   async function clearAlarm() {
@@ -787,7 +806,11 @@ export default function AdminPage() {
             aria-label="רענון נתונים"
             title="רענון נתונים"
           >
-            <RefreshIcon spinning={syncing} className="w-4 h-4" />
+            {justSynced ? (
+              <span className="text-emerald-500 text-sm font-bold" aria-hidden>✓</span>
+            ) : (
+              <RefreshIcon spinning={syncing} className="w-4 h-4" />
+            )}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">{NavLinks}</div>
@@ -856,7 +879,11 @@ export default function AdminPage() {
               aria-label="רענון נתונים"
               title="רענון נתונים"
             >
-              <RefreshIcon spinning={syncing} />
+              {justSynced ? (
+                <span className="text-emerald-500 font-bold" aria-hidden>✓</span>
+              ) : (
+                <RefreshIcon spinning={syncing} />
+              )}
             </button>
             {attention > 0 && tab !== "inbox" && (
               <button onClick={() => go("inbox")} className="bg-red-500 text-white text-xs rounded-full min-w-5 h-5 px-1.5 grid place-items-center" aria-label={`${attention} שיחות ממתינות`}>
@@ -882,7 +909,9 @@ export default function AdminPage() {
             />
           )}
           {tab !== "inbox" && (
-            <div className="max-w-[1700px] mx-auto">
+            // key=refreshTick: רענון ידני מרכיב את המסך מחדש - כמו יציאה וחזרה
+            // לטאב - כך שכל מסך באמת מושך נתונים טריים, לא רק מסובב אייקון
+            <div key={refreshTick} className="max-w-[1700px] mx-auto">
               <header className="hidden md:block mb-5">
                 <h1 className={`text-[22px] font-bold ${fontDisplay.className}`}>{TAB_META[tab].title}</h1>
                 <p className="text-[13px] text-[var(--muted)] mt-0.5">{TAB_META[tab].subtitle}</p>
