@@ -855,23 +855,40 @@ export async function handleIncomingMessage(
     }),
     input.conversationId
       ? repo.getConversation(input.conversationId)
-      : repo
-          .listConversations()
-          .then(
-            (all) =>
-              all.find(
-                (c) => c.customerId === customerId && c.status !== "closed"
-              ) ?? null
-          ),
+      : repo.listConversations().then((all) => {
+          // חלון אחד לכל לקוח: קודם שיחה פתוחה, ואם אין - השיחה האחרונה שנסגרה
+          // (הרשימה ממוינת לפי עדכון אחרון), והיא תיפתח מחדש למטה.
+          const mine = all.filter((c) => c.customerId === customerId);
+          return mine.find((c) => c.status !== "closed") ?? mine[0] ?? null;
+        }),
   ]);
 
   let conversation = foundConversation;
-  if (!conversation || conversation.status === "closed") {
+  if (!conversation) {
     conversation = await repo.createConversation({
       id: input.conversationId ?? randomUUID(), // מכבד מזהה שנוצר אצל הלקוח (Playground)
       channel: input.channel,
       customerId,
       status: "bot",
+    });
+  } else if (conversation.status === "closed") {
+    // שיחה סגורה לא פותחת חלון חדש בפאנל - היא נפתחת מחדש באותו חלון, עם קו
+    // מפריד ביומן, כך שכל ההיסטוריה של הלקוח נשארת במקום אחד.
+    conversation =
+      (await repo.updateConversation(conversation.id, {
+        status: "bot",
+        escalated: false,
+        escalationReason: undefined,
+        escalationSummary: undefined,
+        botPaused: false,
+        meta: undefined, // מנקה דגלי פרק קודם (למשל "דחוף" מתקלת שער)
+      })) ?? conversation;
+    await repo.addMessage({
+      conversationId: conversation.id,
+      role: "system",
+      content: "🔄 הלקוח חזר - השיחה נפתחה מחדש",
+      ts: Date.now(),
+      meta: { activity: true, reopened: true },
     });
   }
 
@@ -1492,9 +1509,18 @@ export async function handleIncomingMessage(
     // הקשר רלוונטיות: כמה הודעות אחרונות (שני הצדדים) + התשובה הנוכחית.
     const contextText =
       history.slice(-5).map((m) => m.content).join(" ") + " " + reply;
-    // מדיה שכבר נשלחה בשיחה הזו (לפי meta.sentMedia ששמרנו על הודעות קודמות)
+    // מדיה שכבר נשלחה "בפרק הנוכחי" של השיחה: מאז הפתיחה-מחדש האחרונה, ולכל
+    // היותר 14 יום אחורה. השיחה היא כעת חלון מתמשך אחד לכל לקוח, ולקוח שחוזר
+    // אחרי חודש ושואל שוב על החניה צריך לקבל את הסרטון שוב - לא חסימת "כבר נשלח".
+    const lastReopenTs = stored.reduce(
+      (acc, m) => (m.role === "system" && m.meta?.reopened && m.ts > acc ? m.ts : acc),
+      0
+    );
+    const mediaDedupSince = Math.max(lastReopenTs, Date.now() - 14 * 86_400_000);
     const alreadySent = new Set<string>(
-      stored.flatMap((m) => (m.meta?.sentMedia as string[] | undefined) ?? [])
+      stored
+        .filter((m) => m.ts >= mediaDedupSince)
+        .flatMap((m) => (m.meta?.sentMedia as string[] | undefined) ?? [])
     );
     const chosen = (await loadMedia()).filter((m) => result.mediaIds!.includes(m.id));
     // הלקוח מתלונן שהמדיה לא הגיעה ("הסרטון לא נפתח", "תשלח שוב") - עוקפים את חסימת

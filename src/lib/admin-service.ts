@@ -88,10 +88,15 @@ export async function setBotEnabled(enabled: boolean): Promise<void> {
   await getRepo().setSetting("bot_enabled", enabled ? "true" : "false");
 }
 
+/** הודעה להצגה בפאנל: מועשרת בכתובות המדיה שנשלחה איתה (אם נשלחה) */
+export interface PanelMessage extends StoredMessage {
+  media?: { url: string; type: "image" | "video"; label?: string }[];
+}
+
 export interface ConversationDetail {
   conversation: Conversation;
   customer: Customer | null;
-  messages: StoredMessage[];
+  messages: PanelMessage[];
 }
 
 export async function getConversationDetail(
@@ -100,8 +105,25 @@ export async function getConversationDetail(
   const repo = getRepo();
   const conversation = await repo.getConversation(id);
   if (!conversation) return null;
-  const customer = await repo.getCustomer(conversation.customerId);
-  const messages = await repo.getMessages(id);
+  const [customer, messages] = await Promise.all([
+    repo.getCustomer(conversation.customerId),
+    repo.getMessages(id) as Promise<PanelMessage[]>,
+  ]);
+  // העשרה להצגה: הודעות שנשלחה איתן מדיה נושאות רק מזהים (meta.sentMedia) -
+  // פותרים אותם מול ספריית המדיה כדי שהצוות יראה את התמונה/סרטון כמו הלקוח.
+  if (messages.some((m) => Array.isArray(m.meta?.sentMedia))) {
+    const lib = new Map((await loadMedia()).map((m) => [m.id, m]));
+    for (const msg of messages) {
+      const ids = msg.meta?.sentMedia as string[] | undefined;
+      if (!ids?.length) continue;
+      const items = ids.flatMap((mid) => {
+        const item = lib.get(mid);
+        // פריט שנמחק בינתיים מהספרייה - אין מה להציג (הטקסט של ההודעה נשאר)
+        return item ? [{ url: item.url, type: item.type, label: item.label }] : [];
+      });
+      if (items.length) msg.media = items;
+    }
+  }
   return { conversation, customer, messages };
 }
 

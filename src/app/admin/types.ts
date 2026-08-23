@@ -54,6 +54,8 @@ export interface DetailMessage {
   content: string;
   ts: number;
   meta?: Record<string, unknown>;
+  /** מדיה שנשלחה עם ההודעה (מועשר בשרת מ-meta.sentMedia) - להצגה בפאנל */
+  media?: { url: string; type: "image" | "video"; label?: string }[];
 }
 export interface Detail {
   conversation: {

@@ -475,6 +475,23 @@ export default function Inbox({
                 >
                   {renderContent(m.content)}
                 </div>
+                {m.media?.map((md, j) =>
+                  md.type === "video" ? (
+                    <video
+                      key={j}
+                      src={md.url}
+                      controls
+                      preload="metadata"
+                      playsInline
+                      title={md.label}
+                      className="rounded-xl max-w-full max-h-64 mt-1 bg-black/30"
+                    />
+                  ) : (
+                    <a key={j} href={md.url} target="_blank" rel="noreferrer" title={md.label}>
+                      <img src={md.url} alt={md.label || "תמונה"} loading="lazy" className="rounded-xl max-w-full max-h-64 mt-1" />
+                    </a>
+                  )
+                )}
                 <div className={`text-[10px] text-[var(--muted)] mt-0.5 ${mine ? "text-left" : "text-right"}`}>
                   {m.role === "agent"
                     ? `נציג${m.meta?.agentName ? ` · ${String(m.meta?.agentName)}` : ""} ✓`

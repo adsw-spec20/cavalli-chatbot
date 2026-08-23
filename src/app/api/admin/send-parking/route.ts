@@ -54,10 +54,10 @@ export async function POST(req: NextRequest) {
     const repo = getRepo();
     const customerId = `whatsapp:${to}`;
     await repo.upsertCustomer({ id: customerId, channel: "whatsapp", channelUserId: to });
-    const existing = (await repo.listConversations()).find(
-      (c) => c.customerId === customerId && c.status !== "closed"
-    );
-    const conversation =
+    // חלון אחד לכל לקוח: שיחה פתוחה אם יש, אחרת פותחים מחדש את האחרונה שנסגרה
+    const mine = (await repo.listConversations()).filter((c) => c.customerId === customerId);
+    const existing = mine.find((c) => c.status !== "closed") ?? mine[0];
+    let conversation =
       existing ??
       (await repo.createConversation({
         id: crypto.randomUUID(),
@@ -65,6 +65,17 @@ export async function POST(req: NextRequest) {
         customerId,
         status: "bot",
       }));
+    if (conversation.status === "closed") {
+      conversation =
+        (await repo.updateConversation(conversation.id, { status: "bot" })) ?? conversation;
+      await repo.addMessage({
+        conversationId: conversation.id,
+        role: "system",
+        content: "🔄 השיחה נפתחה מחדש (שליחה יזומה מהפאנל)",
+        ts: Date.now(),
+        meta: { activity: true, reopened: true },
+      });
+    }
     await repo.addMessage({
       conversationId: conversation.id,
       role: "agent",

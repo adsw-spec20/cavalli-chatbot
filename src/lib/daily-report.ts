@@ -55,8 +55,14 @@ export async function buildDailyReport(dateISO: string): Promise<DailyReportData
   const agentReplies = inDay.filter((m) => m.role === "agent").length;
   const escalations = inDay.filter((m) => m.role === "system" && m.meta?.escalation).length;
 
-  // שיחות שהתחילו היום + פילוח ערוצים שלהן
-  const dayConvs = convs.filter((c) => c.createdAt >= start && c.createdAt < end);
+  // שיחות שהתחילו היום או נפתחו מחדש היום (חלון אחד לכל לקוח: לקוח חוזר לא
+  // יוצר שיחה חדשה אלא פותח את הקיימת מחדש - וזה עדיין נספר כ"שיחה" בדוח)
+  const reopenedIds = new Set(
+    inDay.filter((m) => m.role === "system" && m.meta?.reopened).map((m) => m.conversationId)
+  );
+  const dayConvs = convs.filter(
+    (c) => (c.createdAt >= start && c.createdAt < end) || reopenedIds.has(c.id)
+  );
   const chCounts = new Map<string, number>();
   for (const c of dayConvs) chCounts.set(c.channel, (chCounts.get(c.channel) ?? 0) + 1);
 
