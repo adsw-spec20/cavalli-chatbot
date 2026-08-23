@@ -11,7 +11,7 @@
  * - טוקן המנהל (ADMIN_TOKEN) נשאר "מפתח ראשי" עם הרשאות מלאות (עלויות, ניהול צוות).
  */
 
-import { createHash, timingSafeEqual } from "crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { getRepo } from "./db";
 
 /** השוואה בזמן קבוע (מקומי - כדי להימנע מייבוא מעגלי מ-admin-auth) */
@@ -50,8 +50,34 @@ const secret = () => process.env.ADMIN_TOKEN || "dev-secret";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
-export const hashCode = (memberId: string, code: string) =>
-  sha256(`${memberId}:${code}:${secret()}`);
+/**
+ * הצפנת סיסמה: scrypt עם מלח אקראי לכל משתמש + "פלפל" (ADMIN_TOKEN מהסביבה).
+ * פורמט אחסון: "s2$<מלח>$<hash>".
+ *
+ * למה scrypt ולא sha256 (הפורמט הישן): sha256 מהיר - תוקף שהשיג את ה-DB
+ * יכול לנסות מיליארדי ניחושים בשנייה. scrypt דורש הרבה זיכרון וזמן לכל
+ * ניסיון, מה שהופך פיצוח לבלתי מעשי. הפלפל מוסיף שכבה: גם דליפת DB מלאה
+ * לא מספיקה לפיצוח בלי משתנה הסביבה. סיסמאות ישנות משודרגות אוטומטית
+ * בכניסה מוצלחת הבאה.
+ */
+export const hashCode = (memberId: string, code: string): string => {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(code, `${salt}:${memberId}:${secret()}`, 32).toString("hex");
+  return `s2$${salt}$${hash}`;
+};
+
+/** אימות סיסמה מול hash שמור - תומך גם בפורמט הישן (sha256) לצורך מעבר חלק. */
+function verifyCode(member: TeamMember, code: string): { ok: boolean; legacy: boolean } {
+  if (member.codeHash.startsWith("s2$")) {
+    const [, salt, stored] = member.codeHash.split("$");
+    if (!salt || !stored) return { ok: false, legacy: false };
+    const computed = scryptSync(code, `${salt}:${member.id}:${secret()}`, 32).toString("hex");
+    return { ok: safeTokenEqual(stored, computed), legacy: false };
+  }
+  // פורמט ישן: sha256(id:code:secret)
+  const legacyHash = sha256(`${member.id}:${code}:${secret()}`);
+  return { ok: safeTokenEqual(member.codeHash, legacyHash), legacy: true };
+}
 
 const signToken = (memberId: string, codeHash: string) =>
   sha256(`${memberId}.${codeHash}.${secret()}`);
@@ -121,10 +147,9 @@ export async function teamLogin(
 
   const members = await loadTeam();
   const member = members.find((m) => m.name.trim().toLowerCase() === norm);
-  const ok =
-    !!member && safeTokenEqual(member.codeHash, hashCode(member.id, code.trim()));
+  const verdict = member ? verifyCode(member, code.trim()) : { ok: false, legacy: false };
 
-  if (!ok) {
+  if (!member || !verdict.ok) {
     // רישום כישלון (גם על שם שלא קיים - שלא ידלוף אילו שמות קיימים)
     const next = entry && Date.now() < entry.until ? entry.count + 1 : 1;
     fails[norm] = { count: next, until: Date.now() + LOCK_MS };
@@ -141,6 +166,10 @@ export async function teamLogin(
     delete fails[norm];
     await repo.setSetting(LOCK_KEY, JSON.stringify(fails)).catch(() => undefined);
   }
+  // שדרוג שקוף: hash ישן (sha256) מוחלף ב-scrypt בכניסה מוצלחת.
+  // תופעת לוואי מכוונת: טוקנים ישנים של האיש (מכשירים אחרים) נפסלים,
+  // כי הטוקן חתום על ה-hash - הם פשוט יתחברו שוב פעם אחת.
+  if (verdict.legacy) member.codeHash = hashCode(member.id, code.trim());
   member.lastLoginAt = Date.now();
   await saveTeam(members).catch(() => undefined);
   return {

@@ -7,9 +7,28 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { handleIncomingMessage } from "@/lib/conversation-service";
 import { maybeUpdateCustomerMemory } from "@/lib/customer-memory";
+import { SESSION_COOKIE, verifySessionValue } from "@/lib/session";
+import { verifyTeamToken } from "@/lib/team";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
+
+/**
+ * ה-endpoint הזה מדבר עם Claude - כלומר עולה כסף אמיתי. הוא נעול כבר
+ * ב-middleware (עוגיית התחברות), אבל בודקים גם כאן (הגנה בעומק), כולל
+ * ביטול גישה מיידי: איש צוות שהוסר נחסם גם אם העוגייה שלו עוד לא פגה.
+ */
+async function isSessionAuthorized(req: NextRequest): Promise<boolean> {
+  const secret = process.env.ADMIN_TOKEN;
+  if (!secret) {
+    // פיתוח מקומי בלי טוקן - פתוח; בפרודקשן - נעול (fail closed)
+    return process.env.NODE_ENV !== "production" && !process.env.VERCEL_ENV;
+  }
+  const session = await verifySessionValue(req.cookies.get(SESSION_COOKIE)?.value, secret);
+  if (!session) return false;
+  if (session.r === "master") return true;
+  return !!session.tm && (await verifyTeamToken(session.tm)) !== null;
+}
 
 // הגנת עלות בסיסית ל-endpoint הציבורי: מגבלת קצב לפי IP (best-effort,
 // פר-instance) בנוסף למגבלה הפר-שיחתית שבתוך המוח. עוצרת הרצת בוטים שמסובבים
@@ -32,6 +51,9 @@ const MAX_MESSAGE_LEN = 2000;
 
 export async function POST(req: NextRequest) {
   try {
+    if (!(await isSessionAuthorized(req))) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
     const ip =
       req.headers.get("x-real-ip") ??
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??

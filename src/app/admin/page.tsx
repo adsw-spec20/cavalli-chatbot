@@ -418,6 +418,29 @@ export default function AdminPage() {
     }
   }
 
+  /** כניסת מנהל: מאמת את הקוד בשרת (ומקבל עוגיית התחברות לשער האתר) */
+  async function submitMasterLogin() {
+    const code = tokenInput.trim();
+    if (!code || loggingIn) return;
+    setLoggingIn(true);
+    setAuthError("");
+    try {
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ master: code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "קוד גישה שגוי");
+      setAuthed(null);
+      setToken(code);
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "כניסה נכשלה");
+    } finally {
+      setLoggingIn(false);
+    }
+  }
+
   const loadConversations = useCallback(async () => {
     if (!token) return;
     try {
@@ -650,17 +673,18 @@ export default function AdminPage() {
                 autoComplete="off"
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && tokenInput.trim() && (setAuthed(null), setToken(tokenInput.trim()))}
+                onKeyDown={(e) => e.key === "Enter" && submitMasterLogin()}
                 placeholder="קוד גישה ראשי"
                 aria-label="קוד גישה ראשי"
                 className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
               />
               {authError && <div className="text-xs text-red-400 text-center">{authError}</div>}
               <button
-                onClick={() => tokenInput.trim() && (setAuthed(null), setToken(tokenInput.trim()))}
-                className="w-full bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-xl py-2.5 text-sm"
+                onClick={submitMasterLogin}
+                disabled={loggingIn}
+                className="w-full bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-xl py-2.5 text-sm disabled:opacity-60"
               >
-                כניסה
+                {loggingIn ? "נכנס…" : "כניסה"}
               </button>
               <button
                 onClick={() => { setLoginMode("team"); setAuthError(""); }}
@@ -693,19 +717,15 @@ export default function AdminPage() {
     setDrawerOpen(false);
   }
 
-  /** התנתקות: מוחק את קוד הגישה מהמכשיר הזה וחוזר למסך הכניסה */
+  /** התנתקות: מוחק את קוד הגישה מהמכשיר + את עוגיית ההתחברות, וחוזר למסך הכניסה */
   function logout() {
     if (!confirm("להתנתק מהפאנל במכשיר הזה?")) return;
     localStorage.removeItem("admin_token");
     localStorage.removeItem("agent_name");
-    setToken("");
-    setTokenInput("");
-    setAgentName("");
-    setLoginCode("");
-    setLoginMode("team"); // חזרה למסך הכניסה הרגיל של הצוות
-    setSelectedId(null);
-    setDrawerOpen(false);
-    setAuthed(false);
+    // מחיקת העוגייה בשרת ואז מעבר למסך הכניסה של האתר (השער החדש)
+    fetch("/api/admin/logout", { method: "POST" })
+      .catch(() => undefined)
+      .finally(() => window.location.replace("/login"));
   }
 
   /** דשבורד/ידע קופצים לאינבוקס עם סינון מוכן */
