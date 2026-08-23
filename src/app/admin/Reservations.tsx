@@ -263,8 +263,9 @@ export default function Reservations({
       {!loaded && <div className="text-sm text-[var(--muted)] p-4">טוען…</div>}
       {loaded && err && <div className="text-sm text-red-400 p-2">⚠ {err}</div>}
 
-      {/* בדסקטופ: הממתינות מימין, האג'נדה וההיסטוריה משמאל */}
-      <div className="grid xl:grid-cols-2 gap-5 items-start">
+      {/* בדסקטופ: הממתינות מימין, האג'נדה וההיסטוריה משמאל.
+          grid-cols-1 חובה: בלעדיו העמודה במובייל מתנפחת לרוחב התוכן וגולשת מהמסך */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
 
       {/* ===== בקשות ממתינות ===== */}
       {loaded && !err && (

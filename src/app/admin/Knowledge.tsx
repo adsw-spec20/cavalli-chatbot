@@ -218,7 +218,7 @@ export default function Knowledge({
   }
 
   return (
-    <div className="max-w-[1700px] grid gap-6 xl:grid-cols-2 items-start">
+    <div className="max-w-[1700px] grid grid-cols-1 gap-6 xl:grid-cols-2 items-start">
       {/* ===== שאלות פתוחות ===== */}
       <SectionCard
         title="שאלות שהבוט לא ידע לענות"

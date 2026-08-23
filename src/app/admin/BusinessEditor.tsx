@@ -172,7 +172,7 @@ export default function BusinessEditor({ token }: { token: string }) {
   return (
     <div className="max-w-[1700px] space-y-3">
       {/* בדסקטופ: שתי עמודות עצמאיות (ימין: פרטים ושעות, שמאל: תפריט וידע) - ניצול מלא של הרוחב */}
-      <div className="grid xl:grid-cols-2 gap-3 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
       <div className="space-y-3">
       <Section title="פרטים כלליים" defaultOpen>
         <Field label="שם העסק" value={cfg.name} onChange={(v) => up({ name: v })} />
@@ -327,7 +327,7 @@ export default function BusinessEditor({ token }: { token: string }) {
                 }}
                 className={`${inputCls} text-xs`}
               />
-              <div className="grid gap-2 lg:grid-cols-2 items-start">
+              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 items-start">
                 {cat.items.map((it, ii) => (
                   <div
                     key={ii}

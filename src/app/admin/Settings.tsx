@@ -167,7 +167,7 @@ export default function Settings({
   const rangeFree = rangeDays.reduce((s, d) => s + (d.free ?? 0), 0);
 
   return (
-    <div className="max-w-[1700px] grid gap-5 xl:grid-cols-2 items-start">
+    <div className="max-w-[1700px] grid grid-cols-1 gap-5 xl:grid-cols-2 items-start">
       <div className="space-y-5">
       {/* מד עלות - מנהל בלבד */}
       {isMaster && (

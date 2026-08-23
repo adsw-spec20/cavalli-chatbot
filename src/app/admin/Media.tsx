@@ -75,7 +75,7 @@ export default function Media({ token }: { token: string }) {
         {msg && <span className="text-xs text-emerald-400">{msg}</span>}
       </div>
 
-      <div className="grid xl:grid-cols-2 gap-3 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
         {items.length === 0 && (
           <div className="xl:col-span-2 bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-6 text-center text-sm text-[var(--muted)]">
             עדיין אין מדיה. הוסף פריט ראשון 👇
@@ -95,7 +95,8 @@ export default function Media({ token }: { token: string }) {
                 <span className="text-[var(--muted)] text-xs">תצוגה</span>
               )}
             </div>
-            <div className="flex-1 space-y-1.5">
+            {/* min-w-0: מאפשר לעמודה להתכווץ לרוחב המסך במובייל במקום לגלוש הצידה */}
+            <div className="flex-1 min-w-0 space-y-1.5">
               <div className="flex gap-2">
                 <input
                   value={m.label}

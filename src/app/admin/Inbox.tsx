@@ -624,7 +624,7 @@ export default function Inbox({
   /* ============================== רינדור ============================== */
 
   return (
-    <div className="grid md:grid-cols-[340px_minmax(0,1fr)] md:gap-4 h-full">
+    <div className="grid grid-cols-1 md:grid-cols-[340px_minmax(0,1fr)] md:gap-4 h-full">
       {/* ===== רשימת שיחות ===== */}
       <aside
         className={`${selectedId ? "hidden md:flex" : "flex"} flex-col bg-[var(--panel)] md:border border-[var(--border)] md:rounded-2xl overflow-hidden min-h-0`}

@@ -114,7 +114,7 @@ export default function Dashboard({
         <Kpi label="הבוט פתר לבד" value={`${stats.deflectionRate}%`} sub={`מתוך ${stats.totalConversations} שיחות`} accent />
       </div>
 
-      <div className="grid lg:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         {/* 7 ימים */}
         <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4">
           <div className="text-sm font-semibold mb-3">שיחות ב-7 הימים האחרונים</div>

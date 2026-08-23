@@ -57,8 +57,10 @@ const THEME_CSS = `
 [data-theme="light"] .text-purple-300{color:#7e22ce}
 [data-theme="light"] .text-red-300,[data-theme="light"] .text-red-400{color:#b91c1c}
 /* מובייל: העמוד עצמו לעולם לא נגלל (רק אזורי התוכן הפנימיים) - בלי זה iOS
-   דוחף את העמוד כשהמקלדת נפתחת ונשאר "חור" שחור מתחת לאפליקציה. */
-html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+   דוחף את העמוד כשהמקלדת נפתחת ונשאר "חור" שחור מתחת לאפליקציה.
+   clip (ולא רק hidden): ב-iOS עמוד עם תוכן רחב מהמסך עדיין נגרר הצידה עם
+   hidden - clip חוסם את זה לגמרי; דפדפנים ישנים נופלים חזרה ל-hidden. */
+html,body{height:100%;overflow:hidden;overflow:clip;overscroll-behavior:none}
 /* מגע: מבטל את השהיית הקליק של iOS (~350ms) על כל כפתור - הלחיצה מגיבה מיד */
 button,a,[role="button"]{touch-action:manipulation}
 /* שורת שיחה ברשימה: משוב לחיצה מיידי (בלי אנימציה) - שיהיה ברור שהמגע נקלט */
