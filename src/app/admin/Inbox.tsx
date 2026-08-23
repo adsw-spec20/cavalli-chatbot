@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   CHANNELS,
@@ -99,6 +99,73 @@ function loadReadMap(): Record<string, number> {
     return {};
   }
 }
+
+/**
+ * שורת שיחה ברשימה - קומפוננטה ממוזכרת נפרדת (ביצועים במובייל):
+ * לחיצה על שיחה או עדכון מהסקר מרנדרים מחדש רק את השורות שהשתנו בפועל,
+ * במקום לבנות מחדש את כל הרשימה - זה מה שגרם ללחיצה להרגיש תקועה בטלפון.
+ * tick מתחלף פעם בדקה רק כדי לרענן את תוויות הזמן היחסי.
+ */
+const ConvRow = memo(function ConvRow({
+  c,
+  readTs,
+  selected,
+  tick,
+  onOpen,
+}: {
+  c: ConvItem;
+  readTs: number;
+  selected: boolean;
+  tick: number;
+  onOpen: (id: string) => void;
+}) {
+  void tick;
+  // "ממתין": הלקוח כתב אחרון, או שיחה אצל נציג שאף נציג עוד לא ענה בה
+  // (גם כשההודעה האחרונה היא הודעת ההעברה של הבוט)
+  const needsReply = c.awaiting || (c.status === "human" && c.lastRole !== "agent");
+  const sev = needsReply && c.status !== "closed" ? waitSeverity(c.lastUserTs) : "none";
+  const unread = c.updatedAt > readTs;
+  return (
+    <button
+      onClick={() => onOpen(c.id)}
+      className={`conv-row w-full text-right p-3 border-b border-[var(--border)] hover:bg-[var(--panel2)] flex gap-2.5 ${selected ? "bg-[var(--panel2)]" : ""}`}
+    >
+      <div className="relative shrink-0">
+        <Avatar name={c.customerName} channel={c.channel} />
+        {unread && (
+          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--accent)] border-2 border-[var(--panel)]" title="יש חדש" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className={`text-sm truncate flex items-center gap-1 ${unread ? "font-bold" : "font-semibold"}`}>
+            {c.vip && <span title="VIP">⭐</span>}
+            {c.customerName || "לקוח"}
+          </span>
+          <span className="text-[10px] text-[var(--muted)] shrink-0">{relTime(c.updatedAt)}</span>
+        </div>
+        <div className={`text-xs truncate mt-0.5 ${unread ? "text-[var(--text)]" : "text-[var(--muted)]"}`} dir="auto">
+          {c.lastMessage || "(אין הודעות)"}
+        </div>
+        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${CHANNELS[c.channel]?.chip}`}>
+            {CHANNELS[c.channel]?.label}
+          </span>
+          {c.status === "closed" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-500/15 text-neutral-400">סגורה</span>}
+          {c.urgent && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-300 font-semibold">🔴 דחוף</span>}
+          {c.escalated && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300">הסלמה</span>}
+          {c.status === "human" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-500/15 text-sky-300">נציג מטפל</span>}
+          {c.botPaused && c.status !== "human" && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300">בוט מושהה</span>
+          )}
+          {sev !== "none" && (
+            <span className={`text-[10px] ${SEV_CLS[sev]}`}>● ממתין {waitLabel(c.lastUserTs)}</span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+});
 
 /* ============================== רכיב ראשי ============================== */
 
@@ -394,61 +461,13 @@ export default function Inbox({
     });
   }, [conversations, search, channelFilter, statusFilter]);
 
-  // ביצועים (מובייל): שורות הרשימה ממוזכרות - הקלדה בתיבת המענה לא מרנדרת מחדש
-  // מאות שורות בכל תו. nowTick מרענן את תוויות הזמן היחסי פעם בדקה.
-  const listRows = useMemo(
-    () =>
-      filtered.map((c) => {
-        // "ממתין": הלקוח כתב אחרון, או שיחה אצל נציג שאף נציג עוד לא ענה בה
-        // (גם כשההודעה האחרונה היא הודעת ההעברה של הבוט)
-        const needsReply = c.awaiting || (c.status === "human" && c.lastRole !== "agent");
-        const sev = needsReply && c.status !== "closed" ? waitSeverity(c.lastUserTs) : "none";
-        const unread = c.updatedAt > (readMap[c.id] ?? 0);
-        return (
-          <button
-            key={c.id}
-            onClick={() => openConversation(c.id)}
-            className={`conv-row w-full text-right p-3 border-b border-[var(--border)] hover:bg-[var(--panel2)] flex gap-2.5 ${selectedId === c.id ? "bg-[var(--panel2)]" : ""}`}
-          >
-            <div className="relative shrink-0">
-              <Avatar name={c.customerName} channel={c.channel} />
-              {unread && (
-                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--accent)] border-2 border-[var(--panel)]" title="יש חדש" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <span className={`text-sm truncate flex items-center gap-1 ${unread ? "font-bold" : "font-semibold"}`}>
-                  {c.vip && <span title="VIP">⭐</span>}
-                  {c.customerName || "לקוח"}
-                </span>
-                <span className="text-[10px] text-[var(--muted)] shrink-0">{relTime(c.updatedAt)}</span>
-              </div>
-              <div className={`text-xs truncate mt-0.5 ${unread ? "text-[var(--text)]" : "text-[var(--muted)]"}`} dir="auto">
-                {c.lastMessage || "(אין הודעות)"}
-              </div>
-              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${CHANNELS[c.channel]?.chip}`}>
-                  {CHANNELS[c.channel]?.label}
-                </span>
-                {c.status === "closed" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-500/15 text-neutral-400">סגורה</span>}
-                {c.urgent && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-300 font-semibold">🔴 דחוף</span>}
-                {c.escalated && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300">הסלמה</span>}
-                {c.status === "human" && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-sky-500/15 text-sky-300">נציג מטפל</span>}
-                {c.botPaused && c.status !== "human" && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300">בוט מושהה</span>
-                )}
-                {sev !== "none" && (
-                  <span className={`text-[10px] ${SEV_CLS[sev]}`}>● ממתין {waitLabel(c.lastUserTs)}</span>
-                )}
-              </div>
-            </div>
-          </button>
-        );
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filtered, readMap, selectedId, openConversation, nowTick]
-  );
+  // ביצועים (מובייל): מרנדרים רק את 60 השיחות הראשונות + כפתור "הצג עוד".
+  // סינון/חיפוש חדשים מתחילים שוב מ-60 - הרינדור נשאר קטן ומהיר.
+  const [listLimit, setListLimit] = useState(60);
+  useEffect(() => {
+    setListLimit(60);
+  }, [search, channelFilter, statusFilter]);
+  const visibleRows = useMemo(() => filtered.slice(0, listLimit), [filtered, listLimit]);
 
   // ביצועים (מובייל): גם בועות ההודעות ממוזכרות - תלויות רק בתוכן השיחה,
   // כך שהקלדה בתיבת המענה לא מרנדרת מחדש את כל ההיסטוריה בכל תו.
@@ -735,7 +754,25 @@ export default function Inbox({
               {conversations.length === 0 ? "עדיין אין שיחות. ברגע שלקוח יכתוב - זה יופיע כאן." : "אין שיחות בסינון הזה"}
             </div>
           )}
-          {loaded && listRows}
+          {loaded &&
+            visibleRows.map((c) => (
+              <ConvRow
+                key={c.id}
+                c={c}
+                readTs={readMap[c.id] ?? 0}
+                selected={selectedId === c.id}
+                tick={nowTick}
+                onOpen={openConversation}
+              />
+            ))}
+          {loaded && filtered.length > listLimit && (
+            <button
+              onClick={() => setListLimit((n) => n + 120)}
+              className="w-full py-3 text-xs text-[var(--muted)] hover:text-[var(--text)] text-center"
+            >
+              הצג עוד שיחות ({filtered.length - listLimit})
+            </button>
+          )}
         </div>
       </aside>
 

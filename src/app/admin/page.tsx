@@ -63,10 +63,13 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none}
 button,a,[role="button"]{touch-action:manipulation}
 /* שורת שיחה ברשימה: משוב לחיצה מיידי (בלי אנימציה) - שיהיה ברור שהמגע נקלט */
 .conv-row:active{background:var(--panel2)!important;transition:none!important}
-/* רשימות ארוכות: הדפדפן מרנדר רק את השורות שבמסך - גלילה ופתיחה מהירות בהרבה */
-.conv-row{content-visibility:auto;contain-intrinsic-size:auto 92px}
-/* אותו טריק גם לבועות ההודעות בשיחה - שיחות ארוכות נגללות חלק */
-.msg-row{content-visibility:auto;contain-intrinsic-size:auto 64px}
+/* בכוונה בלי content-visibility על שורות/הודעות: ב-iOS הוא גורם לקפיצות גלילה
+   (הדפדפן מנחש גבהים ומתקן תוך כדי). במקום זה הרשימה מרנדרת עד 60 שורות
+   והשיחה עד 120 הודעות - מהיר בלי ניחושים. */
+/* iOS: מקלדת שנפתחת על שדה עם פונט קטן מ-16px גורמת לזום אוטומטי - והמסך
+   נשאר מוגדל ו"נגרר" הצידה גם אחרי הסגירה (גלילה שבורה, קפיצות). 16px בשדות
+   במובייל מבטל את הזום האוטומטי; זום ידני של המשתמש נשאר אפשרי. */
+@media (max-width:767px){input,textarea,select{font-size:16px}}
 .font-display{font-family:var(--font-display),'Frank Ruhl Libre',serif}
 *{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 ::-webkit-scrollbar{width:8px;height:8px}
