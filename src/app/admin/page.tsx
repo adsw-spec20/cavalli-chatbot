@@ -195,6 +195,27 @@ function TabIcon({ tab, className }: { tab: Tab; className?: string }) {
   );
 }
 
+/** אייקון רענון (בסגנון Lucide) - מסתובב בזמן סנכרון */
+function RefreshIcon({ spinning, className }: { spinning?: boolean; className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`${className ?? "w-[18px] h-[18px]"} shrink-0 ${spinning ? "animate-spin" : ""}`}
+      aria-hidden
+    >
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
+  );
+}
+
 /** לוגו המותג: אריח זהב מוזהב עם C בסריף */
 function BrandMark({ size = "w-9 h-9 text-lg" }: { size?: string }) {
   return (
@@ -264,6 +285,11 @@ export default function AdminPage() {
   const knownEscalations = useRef<Set<string>>(new Set());
   const pollFailures = useRef(0);
   const lastConvsJson = useRef("");
+  // חותמת המשיכה המוצלחת האחרונה: אחרי הקפאת רקע (טלפון נעול שעות) הרשימה
+  // בזיכרון עתיקה - התראות שנגזרות ממנה מושתקות עד שמגיע דאטה טרי (תקרית 23.8)
+  const lastSyncOk = useRef(0);
+  // רענון ידני (כפתור בכותרת): ספינר בזמן משיכה יזומה של הכל
+  const [syncing, setSyncing] = useState(false);
   // רענון עדין פעם בדקה רק בשביל תוויות הזמן היחסי ("לפני 3 ד'") - עכשיו
   // שהסקר מדלג על רינדור כשאין שינוי, בלי זה התוויות היו קופאות.
   const [, setRelTick] = useState(0);
@@ -394,6 +420,11 @@ export default function AdminPage() {
         lastConvsJson.current = json;
         setConversations(list);
       }
+      // חזרה מרקע אחרי הקפאה ארוכה: גם אם הרשימה לא השתנתה מכריחים רינדור
+      // אחד (דרך טיקר הזמן) - שהתראת "ערוץ שקט" ותוויות הזמן יתעדכנו מיד
+      const wasStale = Date.now() - lastSyncOk.current > 90_000;
+      lastSyncOk.current = Date.now();
+      if (wasStale) setRelTick((x) => x + 1);
       setConvsLoaded(true);
       pollFailures.current = 0;
       setOffline(false);
@@ -452,19 +483,52 @@ export default function AdminPage() {
     return () => clearInterval(t);
   }, [authed, token, tab]);
 
+  /** משיכת מצב מערכת (אזעקה + בוט פעיל/כבוי) - משמש גם את הסקר וגם רענון יזום */
+  const refreshSettings = useCallback(() => {
+    if (!token) return Promise.resolve();
+    return api<PanelSettings>(token, "/settings")
+      .then((s) => {
+        setAlarm(s.alarm ?? null);
+        setBotEnabled(s.botEnabled);
+      })
+      .catch(() => {});
+  }, [token]);
+
   // רענון אזעקת המערכת כל דקה - שהצוות יידע מיד אם הבוט נפל (לקח מתקרית 3.8)
   useEffect(() => {
     if (!authed) return;
-    const t = setInterval(() => {
-      api<PanelSettings>(token, "/settings")
-        .then((s) => {
-          setAlarm(s.alarm ?? null);
-          setBotEnabled(s.botEnabled);
-        })
-        .catch(() => {});
-    }, 60_000);
+    const t = setInterval(refreshSettings, 60_000);
     return () => clearInterval(t);
-  }, [authed, token]);
+  }, [authed, refreshSettings]);
+
+  // 📱 חזרה מרקע: הטלפון מקפיא טאב ברקע (כולל סקר ה-4 שניות), ובפתיחה מחדש
+  // הפאנל מצייר רגע ארוך צילום ישן של הבוקר. מושכים הכל מיד ברגע שהטאב חוזר
+  // להיות גלוי - גם בפתיחה מקיצור דרך במסך הבית וגם בשחזור מ-bfcache (תקרית 23.8)
+  useEffect(() => {
+    if (!authed) return;
+    const onWake = () => {
+      if (document.visibilityState !== "visible") return;
+      loadConversations();
+      refreshSettings();
+    };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("pageshow", onWake);
+    return () => {
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("pageshow", onWake);
+    };
+  }, [authed, loadConversations, refreshSettings]);
+
+  /** רענון ידני: מושך שיחות + מצב מערכת, עם ספינר (מינימום חצי שנייה - שיהיה משוב ברור) */
+  async function manualRefresh() {
+    if (syncing) return;
+    setSyncing(true);
+    const started = Date.now();
+    await Promise.all([loadConversations(), refreshSettings()]);
+    const wait = 500 - (Date.now() - started);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    setSyncing(false);
+  }
 
   async function clearAlarm() {
     setAlarm(null);
@@ -491,6 +555,9 @@ export default function AdminPage() {
   // נתק בערוצים (טוקן שפג, webhook שנפל). מחושב מהרשימה שכבר נטענת - בלי עלות.
   const quietAlert = (() => {
     if (!convsLoaded) return null;
+    // רק על דאטה טרי: אם המשיכה המוצלחת האחרונה ישנה (טאב שחזר מהקפאת רקע),
+    // הרשימה בזיכרון לא משקפת מציאות - עדיף רגע בלי באנר מאשר אזעקת שווא
+    if (Date.now() - lastSyncOk.current > 90_000) return null;
     const hour = Number(
       new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", hour: "2-digit", hour12: false }).format(new Date())
     );
@@ -713,6 +780,15 @@ export default function AdminPage() {
             <div className={`font-bold leading-tight text-[15px] tracking-wide ${fontDisplay.className}`}>קפה קוואלי</div>
             <div className="text-[10px] text-[var(--muted)] tracking-wider">פאנל ניהול ושירות</div>
           </div>
+          <button
+            onClick={manualRefresh}
+            disabled={syncing}
+            className="ms-auto w-8 h-8 grid place-items-center rounded-xl text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel2)] disabled:opacity-70"
+            aria-label="רענון נתונים"
+            title="רענון נתונים"
+          >
+            <RefreshIcon spinning={syncing} className="w-4 h-4" />
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto">{NavLinks}</div>
         {SidebarFooter}
@@ -772,6 +848,16 @@ export default function AdminPage() {
           <header className="md:hidden shrink-0 bg-[var(--bg)] border-b border-[var(--border)] px-3 py-2.5 flex items-center gap-3">
             <span className="font-bold flex-1">{TABS.find((t) => t.key === tab)?.label}</span>
             {!botEnabled && <span className="text-[10px] bg-red-500/15 text-red-400 rounded-full px-2 py-0.5">בוט כבוי</span>}
+            {/* רענון ידני: חיוני במצב אפליקציה מותקנת - אין שם כפתור רענון של דפדפן */}
+            <button
+              onClick={manualRefresh}
+              disabled={syncing}
+              className="w-9 h-9 -my-1.5 grid place-items-center rounded-xl text-[var(--muted)] hover:text-[var(--text)] active:bg-[var(--panel2)] disabled:opacity-70"
+              aria-label="רענון נתונים"
+              title="רענון נתונים"
+            >
+              <RefreshIcon spinning={syncing} />
+            </button>
             {attention > 0 && tab !== "inbox" && (
               <button onClick={() => go("inbox")} className="bg-red-500 text-white text-xs rounded-full min-w-5 h-5 px-1.5 grid place-items-center" aria-label={`${attention} שיחות ממתינות`}>
                 {attention}

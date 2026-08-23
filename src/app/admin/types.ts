@@ -198,6 +198,9 @@ export async function api<T = unknown>(
   opts?: RequestInit
 ): Promise<T> {
   const res = await fetch(`/api/admin${path}`, {
+    // בלי קאש דפדפן בכלל: הפאנל חי על סקירה מתמדת, ותשובה ישנה מהקאש
+    // מציגה לצוות מציאות שלא קיימת (ראה תקרית "ערוץ שקט" 23.8)
+    cache: "no-store",
     ...opts,
     headers: {
       "x-admin-token": token,
