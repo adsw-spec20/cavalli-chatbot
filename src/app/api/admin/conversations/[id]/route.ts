@@ -12,7 +12,10 @@ export async function GET(
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const { id } = await params;
-  const detail = await getConversationDetail(id);
+  // ?all=1 - טעינת כל ההיסטוריה (כפתור "הצג הודעות קודמות" בפאנל)
+  const detail = await getConversationDetail(id, {
+    allMessages: req.nextUrl.searchParams.get("all") === "1",
+  });
   if (!detail) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }

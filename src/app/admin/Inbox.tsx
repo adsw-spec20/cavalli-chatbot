@@ -201,10 +201,15 @@ export default function Inbox({
   }, []);
 
   const lastDetailJson = useRef("");
+  // ביצועים: השרת שולח רק את ~120 ההודעות האחרונות. "הצג הודעות קודמות" טוען
+  // את כל ההיסטוריה - והדגל נשמר כדי שהסקר של כל 4 שניות לא יקטום אותה בחזרה.
+  const wantAllHistory = useRef(false);
+  // גובה הגלילה לפני הוספת היסטוריה מעל - כדי להישאר על אותה הודעה אחרי הטעינה
+  const prependAdjust = useRef<number | null>(null);
   const loadDetail = useCallback(
     async (id: string) => {
       try {
-        const d = await api<Detail>(token, `/conversations/${id}`);
+        const d = await api<Detail>(token, `/conversations/${id}${wantAllHistory.current ? "?all=1" : ""}`);
         // ביצועים: הריענון של כל 4 שניות מרנדר מחדש את כל השיחה גם כשכלום לא
         // השתנה - במובייל זה גורם להקלדה מקוטעת. מדלגים כשאין שינוי אמיתי.
         const json = JSON.stringify(d);
@@ -229,8 +234,12 @@ export default function Inbox({
     // ומאפסים את מטמון הדילוג - אחרת חזרה לאותה שיחה עלולה להיתקע על השלד.
     setDetail((d) => (d && d.conversation.id !== selectedId ? null : d));
     lastDetailJson.current = "";
+    wantAllHistory.current = false; // כל שיחה נפתחת עם ההודעות האחרונות בלבד (מהיר)
     loadDetail(selectedId);
-    const t = setInterval(() => loadDetail(selectedId), 4000);
+    const t = setInterval(() => {
+      // ברקע לא סוקרים - onWake של הפאנל מרענן הכל מיד עם החזרה
+      if (document.visibilityState === "visible") loadDetail(selectedId);
+    }, 4000);
     return () => clearInterval(t);
   }, [selectedId, loadDetail]);
 
@@ -264,6 +273,15 @@ export default function Inbox({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !detail) return;
+    // אחרי טעינת "הודעות קודמות": ההיסטוריה נוספה מעל - מחזירים את הגלילה
+    // לאותה הודעה שהמשתמש הסתכל עליה, בלי קפיצה לתחתית ובלי צ'יפ "חדשות".
+    if (prependAdjust.current !== null) {
+      el.scrollTop += el.scrollHeight - prependAdjust.current;
+      prependAdjust.current = null;
+      prevConvId.current = detail.conversation.id;
+      prevMsgCount.current = detail.messages.length;
+      return;
+    }
     const opened = prevConvId.current !== detail.conversation.id;
     const grew = detail.messages.length > prevMsgCount.current;
     prevConvId.current = detail.conversation.id;
@@ -447,7 +465,7 @@ export default function Inbox({
         if (m.role === "system") {
           if (!m.meta?.activity) return daySep;
           return (
-            <div key={m.id}>
+            <div key={m.id} className="msg-row">
               {daySep}
               <div className="text-center">
                 <span className="text-[10px] text-[var(--muted)] bg-[var(--panel2)] rounded-full px-2.5 py-0.5">
@@ -459,7 +477,7 @@ export default function Inbox({
         }
         const mine = m.role !== "user";
         return (
-          <div key={m.id}>
+          <div key={m.id} className="msg-row">
             {daySep}
             <div className={`flex ${mine ? "justify-start" : "justify-end"}`}>
               <div className="max-w-[85%] md:max-w-[70%]">
@@ -858,6 +876,21 @@ export default function Inbox({
                 }}
                 className="h-full overflow-y-auto overscroll-contain p-3 space-y-2"
               >
+                {detail?.hasOlder && (
+                  <div className="text-center pb-1">
+                    <button
+                      onClick={() => {
+                        if (!selectedId) return;
+                        wantAllHistory.current = true;
+                        prependAdjust.current = scrollRef.current?.scrollHeight ?? null;
+                        loadDetail(selectedId);
+                      }}
+                      className="text-[11px] text-[var(--muted)] bg-[var(--panel2)] border border-[var(--border)] rounded-full px-3 py-1.5 hover:text-[var(--text)]"
+                    >
+                      ↑ הצג הודעות קודמות
+                    </button>
+                  </div>
+                )}
                 {messageRows}
               </div>
               {newBelow && (

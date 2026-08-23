@@ -197,11 +197,15 @@ export class FileRepository implements Repository {
     return message;
   }
 
-  async getMessages(conversationId: string): Promise<StoredMessage[]> {
+  async getMessages(
+    conversationId: string,
+    opts?: { limit?: number }
+  ): Promise<StoredMessage[]> {
     const store = await this.load();
-    return store.messages
+    const all = store.messages
       .filter((m) => m.conversationId === conversationId)
       .sort((a, b) => a.ts - b.ts);
+    return opts?.limit ? all.slice(-opts.limit) : all;
   }
 
   async getAllMessages(): Promise<StoredMessage[]> {

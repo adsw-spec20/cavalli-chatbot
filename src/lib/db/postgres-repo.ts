@@ -18,6 +18,10 @@ import type {
 } from "./types";
 import type { Channel } from "../channels/types";
 
+/** גרסת הסכמה: חובה להעלות את המספר בכל שינוי מבנה (טבלה/עמודה/אינדקס),
+    אחרת ההגירה תדולג בפרודקשן והשינוי לא ייכנס. */
+const SCHEMA_VERSION = "1";
+
 export class PostgresRepository implements Repository {
   private sql: NeonQueryFunction<false, false>;
   private ready: Promise<void> | null = null;
@@ -27,8 +31,32 @@ export class PostgresRepository implements Repository {
   }
 
   private init(): Promise<void> {
-    if (!this.ready) this.ready = this.migrate();
+    if (!this.ready) {
+      this.ready = this.ensureSchema().catch((err) => {
+        this.ready = null; // כשל זמני (רשת/DB) - הבקשה הבאה תנסה שוב במקום להיתקע לנצח
+        throw err;
+      });
+    }
     return this.ready;
+  }
+
+  /**
+   * ביצועים (זמן תגובה במובייל): ההגירה המלאה היא ~17 פקודות DDL, וכל אחת היא
+   * נסיעת רשת נפרדת ל-Neon. להריץ את כולן בכל עליית שרת (cold start) הוסיף
+   * שניות לבקשה הראשונה אחרי פתיחת האפליקציה. במקום זה - בדיקה אחת של גרסת
+   * הסכמה, וההגירה רצה רק כשבאמת יש מה לשנות.
+   */
+  private async ensureSchema(): Promise<void> {
+    try {
+      const rows = await this.sql`SELECT value FROM settings WHERE key = 'schema_version'`;
+      if (rows[0]?.value === SCHEMA_VERSION) return;
+    } catch {
+      // טבלת settings עוד לא קיימת (התקנה ראשונה) - ממשיכים להגירה המלאה
+    }
+    await this.migrate();
+    await this.sql`
+      INSERT INTO settings (key, value) VALUES ('schema_version', ${SCHEMA_VERSION})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
   }
 
   private async migrate(): Promise<void> {
@@ -309,14 +337,15 @@ export class PostgresRepository implements Repository {
   async getConversationSummaries(): Promise<ConversationSummary[]> {
     await this.init();
     try {
-      // שאילתה אחת במקום משיכת כל ההודעות: הודעה אחרונה + ספירה + זמן לקוח אחרון
+      // שאילתה אחת במקום משיכת כל ההודעות: הודעה אחרונה + זמן לקוח אחרון
       // דרך subqueries ממופתחות (idx_messages_conv_ts), ופרטי הלקוח ב-JOIN.
+      // ביצועים: בלי COUNT להודעות (ה-UI לא מציג אותו וזו הייתה סריקה לכל
+      // שיחה), ותקרה של 300 השיחות האחרונות - הרשימה לא תופחת לנצח עם השנים.
       const rows = await this.sql`
         SELECT c.*,
                cu.name AS cust_name, cu.vip AS cust_vip, cu.tags AS cust_tags,
                lm.content AS last_content, lm.role AS last_role,
-               (SELECT MAX(ts) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user') AS last_user_ts,
-               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+               (SELECT MAX(ts) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user') AS last_user_ts
         FROM conversations c
         LEFT JOIN customers cu ON cu.id = c.customer_id
         LEFT JOIN LATERAL (
@@ -324,7 +353,8 @@ export class PostgresRepository implements Repository {
           WHERE m.conversation_id = c.id AND m.role <> 'system'
           ORDER BY m.ts DESC LIMIT 1
         ) lm ON true
-        ORDER BY c.updated_at DESC`;
+        ORDER BY c.updated_at DESC
+        LIMIT 300`;
       return rows.map((r) => ({
         conversation: this.toConversation(r),
         customerName: (r.cust_name as string) ?? undefined,
@@ -333,7 +363,6 @@ export class PostgresRepository implements Repository {
         lastMessage: r.last_content ? (r.last_content as string).slice(0, 80) : undefined,
         lastMessageRole: (r.last_role as StoredMessage["role"]) ?? undefined,
         lastUserTs: r.last_user_ts ? Number(r.last_user_ts) : undefined,
-        messageCount: Number(r.message_count ?? 0),
       }));
     } catch (err) {
       // רשת ביטחון: אם השאילתה המהירה נכשלת, האינבוקס ממשיך לעבוד בדרך האיטית
@@ -379,8 +408,19 @@ export class PostgresRepository implements Repository {
     return this.toMessage(rows[0]);
   }
 
-  async getMessages(conversationId: string): Promise<StoredMessage[]> {
+  async getMessages(
+    conversationId: string,
+    opts?: { limit?: number }
+  ): Promise<StoredMessage[]> {
     await this.init();
+    if (opts?.limit) {
+      // N האחרונות (ממופתח idx_messages_conv_ts) ואז היפוך לסדר כרונולוגי -
+      // שיחת וואטסאפ ותיקה עם מאות הודעות לא נמשכת כולה לפאנל בכל רענון
+      const rows = await this.sql`
+        SELECT * FROM messages WHERE conversation_id = ${conversationId}
+        ORDER BY ts DESC LIMIT ${opts.limit}`;
+      return rows.map((r) => this.toMessage(r)).reverse();
+    }
     const rows = await this.sql`SELECT * FROM messages WHERE conversation_id = ${conversationId} ORDER BY ts ASC`;
     return rows.map((r) => this.toMessage(r));
   }

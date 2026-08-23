@@ -65,6 +65,8 @@ button,a,[role="button"]{touch-action:manipulation}
 .conv-row:active{background:var(--panel2)!important;transition:none!important}
 /* רשימות ארוכות: הדפדפן מרנדר רק את השורות שבמסך - גלילה ופתיחה מהירות בהרבה */
 .conv-row{content-visibility:auto;contain-intrinsic-size:auto 92px}
+/* אותו טריק גם לבועות ההודעות בשיחה - שיחות ארוכות נגללות חלק */
+.msg-row{content-visibility:auto;contain-intrinsic-size:auto 64px}
 .font-display{font-family:var(--font-display),'Frank Ruhl Libre',serif}
 *{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 ::-webkit-scrollbar{width:8px;height:8px}
@@ -454,39 +456,38 @@ export default function AdminPage() {
   useEffect(() => {
     if (!authed) return;
     loadConversations();
-    const t = setInterval(loadConversations, 4000);
+    // ברקע (טאב מוסתר / טלפון נעול) לא סוקרים - onWake מושך הכל מיד בחזרה
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") loadConversations();
+    }, 4000);
     return () => clearInterval(t);
   }, [authed, loadConversations]);
 
   useEffect(() => {
-    if (!authed) return;
+    if (!authed || tab !== "inbox") return; // התבניות משמשות רק את האינבוקס
     api<QuickReply[]>(token, "/templates").then(setTemplates).catch(() => {});
   }, [authed, token, tab]);
 
   // מוני הבועות האדומות על הלשוניות: שאלות פתוחות בידע + הזמנות ממתינות
   // (מתרעננים כל 30 שניות, בכל מעבר טאב, וגם ברענון הידני)
+  // ביצועים: בקשה אחת קטנה (/badges) במקום שלוש תשובות מלאות רק בשביל לספור
   const loadBadges = useCallback(() => {
     if (!token) return Promise.resolve();
-    return Promise.all([
-      api<unknown[]>(token, "/knowledge?status=open")
-        .then((items) => setOpenQuestions(Array.isArray(items) ? items.length : 0))
-        .catch(() => {}),
-      api<{ pending?: unknown[] }>(token, "/reservations")
-        .then((d) => setPendingResv(d.pending?.length ?? 0))
-        .catch(() => {}),
-      api<Record<string, { answer?: string; skipped?: boolean }>>(token, "/questionnaire")
-        .then((a) => {
-          const done = Object.values(a).filter((x) => x.answer || x.skipped).length;
-          setQuizComplete(done >= 234);
-        })
-        .catch(() => {}),
-    ]).then(() => undefined);
+    return api<{ openQuestions: number; pendingReservations: number; quizDone: number }>(token, "/badges")
+      .then((b) => {
+        setOpenQuestions(b.openQuestions);
+        setPendingResv(b.pendingReservations);
+        setQuizComplete(b.quizDone >= 234);
+      })
+      .catch(() => {});
   }, [token]);
 
   useEffect(() => {
     if (!authed) return;
     loadBadges();
-    const t = setInterval(loadBadges, 30_000);
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") loadBadges();
+    }, 30_000);
     return () => clearInterval(t);
   }, [authed, loadBadges, tab]);
 
@@ -504,7 +505,9 @@ export default function AdminPage() {
   // רענון אזעקת המערכת כל דקה - שהצוות יידע מיד אם הבוט נפל (לקח מתקרית 3.8)
   useEffect(() => {
     if (!authed) return;
-    const t = setInterval(refreshSettings, 60_000);
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") refreshSettings();
+    }, 60_000);
     return () => clearInterval(t);
   }, [authed, refreshSettings]);
 

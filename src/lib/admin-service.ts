@@ -45,7 +45,7 @@ export interface ConversationListItem {
   lastMessage?: string;
   /** חותמת זמן של הודעת הלקוח האחרונה (לחישוב זמן המתנה / SLA) */
   lastUserTs?: number;
-  messageCount: number;
+  messageCount?: number;
   /** האם ההודעה האחרונה מהלקוח (כלומר ממתינה למענה) */
   awaiting: boolean;
   /** תפקיד כותב ההודעה האחרונה (user/assistant/agent) - מאפשר לזהות שיחה אצל
@@ -97,18 +97,27 @@ export interface ConversationDetail {
   conversation: Conversation;
   customer: Customer | null;
   messages: PanelMessage[];
+  /** יש הודעות ישנות יותר שלא נשלחו (הפאנל מציג כפתור "טען את כל ההיסטוריה") */
+  hasOlder?: boolean;
 }
 
+/** כמה הודעות אחרונות נשלחות לפאנל כברירת מחדל - שיחות ותיקות לא מורידות
+    מאות הודעות לטלפון בכל פתיחה ובכל רענון של 4 שניות */
+const DETAIL_MESSAGE_LIMIT = 120;
+
 export async function getConversationDetail(
-  id: string
+  id: string,
+  opts?: { allMessages?: boolean }
 ): Promise<ConversationDetail | null> {
   const repo = getRepo();
   const conversation = await repo.getConversation(id);
   if (!conversation) return null;
+  const limit = opts?.allMessages ? undefined : DETAIL_MESSAGE_LIMIT;
   const [customer, messages] = await Promise.all([
     repo.getCustomer(conversation.customerId),
-    repo.getMessages(id) as Promise<PanelMessage[]>,
+    repo.getMessages(id, limit ? { limit } : undefined) as Promise<PanelMessage[]>,
   ]);
+  const hasOlder = !!limit && messages.length === limit;
   // העשרה להצגה: הודעות שנשלחה איתן מדיה נושאות רק מזהים (meta.sentMedia) -
   // פותרים אותם מול ספריית המדיה כדי שהצוות יראה את התמונה/סרטון כמו הלקוח.
   if (messages.some((m) => Array.isArray(m.meta?.sentMedia))) {
@@ -124,7 +133,7 @@ export async function getConversationDetail(
       if (items.length) msg.media = items;
     }
   }
-  return { conversation, customer, messages };
+  return { conversation, customer, messages, hasOlder };
 }
 
 /** רישום פעולה ביומן הפעילות של השיחה (מוצג בתוך השיחה). */
@@ -179,7 +188,7 @@ export async function agentReply(id: string, text: string, agentName?: string) {
 
   // מניעת שליחה כפולה: אם אותה תשובת נציג בדיוק נשמרה בשניות האחרונות
   // (לחיצה כפולה / retry של הדפדפן), מחזירים את הקיימת בלי לשלוח שוב ללקוח.
-  const recent = await repo.getMessages(id);
+  const recent = await repo.getMessages(id, { limit: 10 });
   const dup = [...recent]
     .reverse()
     .find((m) => m.role === "agent" && m.content === text && Date.now() - m.ts < 15_000);
@@ -254,7 +263,7 @@ export async function polishDraft(conversationId: string, draft: string): Promis
   const model = process.env.CHATBOT_MODEL ?? "claude-sonnet-4-6";
   const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 15_000 });
   // ההודעה האחרונה של הלקוח - הקשר שעוזר להתאים פנייה ומגדר, לא לשנות תוכן
-  const msgs = await getRepo().getMessages(conversationId);
+  const msgs = await getRepo().getMessages(conversationId, { limit: 20 });
   const lastUser = [...msgs].reverse().find((m) => m.role === "user")?.content ?? "";
   try {
     const res = await client.messages.create({

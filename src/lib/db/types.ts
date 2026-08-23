@@ -118,7 +118,8 @@ export interface ConversationSummary {
   lastMessageRole?: MessageRole;
   /** חותמת ההודעה האחרונה של הלקוח (לחישוב זמן המתנה) */
   lastUserTs?: number;
-  messageCount: number;
+  /** אופציונלי: ה-UI לא מציג אותו, ומימוש Postgres מדלג על הספירה (יקרה) */
+  messageCount?: number;
 }
 
 export interface Repository {
@@ -147,7 +148,8 @@ export interface Repository {
 
   // ----- הודעות -----
   addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage>;
-  getMessages(conversationId: string): Promise<StoredMessage[]>;
+  /** limit: מחזיר רק את N ההודעות האחרונות (בסדר כרונולוגי) - לפאנל במובייל */
+  getMessages(conversationId: string, opts?: { limit?: number }): Promise<StoredMessage[]>;
   getAllMessages(): Promise<StoredMessage[]>;
 
   // ----- ידע נלמד (שאלות פתוחות + תשובות) -----

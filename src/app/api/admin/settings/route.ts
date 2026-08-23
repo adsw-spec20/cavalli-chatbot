@@ -12,16 +12,20 @@ export async function GET(req: NextRequest) {
   }
   // role+name: הפאנל משתמש בזה כדי לדעת מי מחובר (מנהל/איש צוות)
   // alertEmail/alertPhones: יעדי ההתראות - מוצגים לעריכה למנהל בלבד
-  const alertEmail =
-    auth.role === "master" ? ((await getRepo().getSetting("alert_email")) ?? "") : undefined;
-  const alertPhones =
-    auth.role === "master" ? ((await getRepo().getSetting("alert_phones")) ?? "") : undefined;
+  // ביצועים: כל השאילתות במקביל - כל await עוקב היה עוד נסיעת רשת ל-DB
+  const [alertEmailRaw, alertPhonesRaw, alarmRaw, botEnabled] = await Promise.all([
+    auth.role === "master" ? getRepo().getSetting("alert_email") : Promise.resolve(null),
+    auth.role === "master" ? getRepo().getSetting("alert_phones") : Promise.resolve(null),
+    getRepo().getSetting("api_alarm"),
+    getBotEnabled(),
+  ]);
+  const alertEmail = auth.role === "master" ? (alertEmailRaw ?? "") : undefined;
+  const alertPhones = auth.role === "master" ? (alertPhonesRaw ?? "") : undefined;
   // אזעקת מערכת (כשל מודל / קרדיטים שאזלו) - מוצגת כבאנר אדום לכל הצוות
   let alarm: { ts: number; reason: string } | undefined;
   try {
-    const raw = await getRepo().getSetting("api_alarm");
-    if (raw) {
-      const parsed = JSON.parse(raw) as { ts: number; reason: string };
+    if (alarmRaw) {
+      const parsed = JSON.parse(alarmRaw) as { ts: number; reason: string };
       // רלוונטית רק אם טרייה (עד 24 שעות) - אחרת מתעלמים
       if (parsed?.ts && Date.now() - parsed.ts < 24 * 3600_000) alarm = parsed;
     }
@@ -29,7 +33,7 @@ export async function GET(req: NextRequest) {
     /* אין אזעקה */
   }
   return NextResponse.json({
-    botEnabled: await getBotEnabled(),
+    botEnabled,
     role: auth.role,
     name: auth.name,
     alertEmail,

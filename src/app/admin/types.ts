@@ -18,7 +18,7 @@ export interface ConvItem {
   updatedAt: number;
   lastMessage?: string;
   lastUserTs?: number;
-  messageCount: number;
+  messageCount?: number;
   awaiting: boolean;
   /** תפקיד כותב ההודעה האחרונה (user/assistant/agent) */
   lastRole?: string;
@@ -69,6 +69,8 @@ export interface Detail {
   };
   customer: DetailCustomer | null;
   messages: DetailMessage[];
+  /** השרת שלח רק את ההודעות האחרונות - יש היסטוריה ישנה יותר לטעינה לפי בקשה */
+  hasOlder?: boolean;
 }
 
 export interface Stats {

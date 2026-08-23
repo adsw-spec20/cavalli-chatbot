@@ -56,11 +56,21 @@ export const hashCode = (memberId: string, code: string) =>
 const signToken = (memberId: string, codeHash: string) =>
   sha256(`${memberId}.${codeHash}.${secret()}`);
 
+// ביצועים: אימות טוקן צוות רץ על כל בקשת פאנל (כולל הסקר של כל 4 שניות),
+// וכל אימות משך את רשימת הצוות מה-DB - נסיעת רשת שלמה רק בשביל להיכנס.
+// מטמון קצר בזיכרון חוסך אותה; מחיקת איש צוות נכנסת לתוקף תוך עד 30 שניות
+// (ובאותו instance - מיד, כי השמירה מנקה את המטמון).
+const TEAM_CACHE_MS = 30_000;
+let teamCache: { members: TeamMember[]; ts: number } | null = null;
+
 export async function loadTeam(): Promise<TeamMember[]> {
+  if (teamCache && Date.now() - teamCache.ts < TEAM_CACHE_MS) return teamCache.members;
   try {
     const raw = await getRepo().getSetting(KEY);
     const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
+    const members = Array.isArray(arr) ? arr : [];
+    teamCache = { members, ts: Date.now() };
+    return members;
   } catch {
     return [];
   }
@@ -68,6 +78,7 @@ export async function loadTeam(): Promise<TeamMember[]> {
 
 export async function saveTeam(members: TeamMember[]): Promise<void> {
   await getRepo().setSetting(KEY, JSON.stringify(members));
+  teamCache = { members, ts: Date.now() };
 }
 
 export const toPublic = (m: TeamMember): TeamMemberPublic => ({
