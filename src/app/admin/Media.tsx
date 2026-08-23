@@ -103,7 +103,7 @@ export default function Media({ token }: { token: string }) {
                   placeholder="שם (למשל: הדרך לחניה)"
                   onChange={(e) => update(i, { label: e.target.value })}
                   onBlur={() => save(items)}
-                  className="flex-1 bg-[var(--panel2)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-sm outline-none"
+                  className="flex-1 min-w-0 bg-[var(--panel2)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-sm outline-none"
                 />
                 <select
                   value={m.type}
