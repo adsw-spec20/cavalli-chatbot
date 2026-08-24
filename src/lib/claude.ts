@@ -74,6 +74,10 @@ export interface GenerateOptions {
   /** הזמנות פעילות (ממתינות/מאושרות עתידיות) של הלקוח - שהבוט יזכור התחייבויות
       גם אחרי ימים, גם בשיחה חדשה, וגם כשההיסטוריה נחתכה */
   activeReservations?: string;
+  /** רמז על פרטי ההזמנה שכבר נמסרו בשיחה (חולץ בקוד) - כדי שהמודל לא ישאל
+      פעמיים ולא יתבלבל. נשלח בתוך ההודעה האחרונה ולא כבלוק מערכת, כדי לא
+      לפסול את מטמון ההיסטוריה (הוא משתנה בכל תור). */
+  reservationSlots?: string;
 }
 
 export interface GenerateResult {
@@ -291,9 +295,11 @@ export async function generateReply(
   // אפשר לשים מידע שמשתנה בכל בקשה בלי לפסול את המטמון של כל מה שלפניו.
   const lastIdx = reqMessages.length - 1;
   if (lastIdx >= 0 && reqMessages[lastIdx].role === "user") {
+    const ctx = [`השעה בישראל כעת: ${israelDateTime()}`];
+    if (options.reservationSlots) ctx.push(options.reservationSlots);
     reqMessages[lastIdx] = {
       role: "user",
-      content: `[מידע מערכת, לא נכתב על ידי הלקוח - השעה בישראל כעת: ${israelDateTime()}]\n${history[lastIdx].content}`,
+      content: `[מידע מערכת, לא נכתב על ידי הלקוח - ${ctx.join("\n")}]\n${history[lastIdx].content}`,
     };
   }
 

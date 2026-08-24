@@ -20,6 +20,7 @@ import {
   reservationDateLabel,
 } from "./reservations";
 import { checkReservationAvailability } from "./reservation-availability";
+import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint } from "./reservation-slots";
 import { isOpenNow, israelDateISO, effectiveHoursToday } from "./business-hours";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
@@ -1304,6 +1305,13 @@ export async function handleIncomingMessage(
     /* לא קריטי - ממשיכים בלי */
   }
 
+  // רמז פרטי הזמנה (24.8): כשהשיחה היא זרימת הזמנה, הקוד מחלץ את מה שכבר נמסר
+  // ומעביר למודל - כדי שלא ישאל פעמיים ולא יתבלבל בפרטים. רמז בלבד: השיחה קובעת.
+  let reservationSlots: string | undefined;
+  if (looksLikeReservationFlow(history)) {
+    reservationSlots = reservationSlotsHint(extractReservationSlots(history)) ?? undefined;
+  }
+
   let result;
   try {
     result = await generateReply(history, {
@@ -1312,6 +1320,7 @@ export async function handleIncomingMessage(
       customerMemory: customer.memory,
       channel: input.channel,
       activeReservations,
+      reservationSlots,
     });
   } catch (err) {
     // תקלה רגעית במוח (API נפל/timeout) - הלקוח לעולם לא נשאר בלי מענה.
