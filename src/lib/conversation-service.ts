@@ -22,7 +22,7 @@ import {
 import { checkReservationAvailability } from "./reservation-availability";
 import { bareHourHint } from "./time-hints";
 import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint } from "./reservation-slots";
-import { isOpenNow, israelDateISO, effectiveHoursToday } from "./business-hours";
+import { isOpenNow, israelDateISO, effectiveHoursToday, isWithinGateWindow } from "./business-hours";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
 import type { BusinessConfig } from "./business-config";
@@ -748,15 +748,15 @@ async function runGateOpen(opts: {
   const { repo, conversationId, cfg, customerId, customerName, channel, gLang, priorMessages, modelReply } = opts;
   const phone = cfg.contact.phone;
 
-  // מחוץ לשעות הפעילות (אלא אם מתג העקיפה דלוק) - השער לא נפתח.
-  if (!gateHoursBypassed() && !isOpenNow(cfg)) {
-    const today = effectiveHoursToday(cfg);
-    console.log(`[GATE] נחסם: מחוץ לשעות הפעילות. conv=${conversationId}`);
+  // מחוץ לחלון פעולת השער (שעה לפני הפתיחה עד שעה אחרי הסגירה) - מפנים לחיוג ישיר.
+  // מתג העקיפה (PALGATE_IGNORE_HOURS) גובר, אם דלוק (לבדיקות).
+  if (!gateHoursBypassed() && !isWithinGateWindow(cfg)) {
+    console.log(`[GATE] נחסם: מחוץ לחלון הפעולה. conv=${conversationId}`);
     return {
       reply:
         gLang === "en"
-          ? `Opening the parking gate is only possible during opening hours 🙏${today ? ` Today we're open ${today}.` : " We're closed today."}`
-          : `פתיחת שער החניה אפשרית רק בשעות הפעילות 🙏${today ? ` היום אנחנו פתוחים ${today}.` : " היום אנחנו סגורים."}`,
+          ? `Remote gate opening is available around our opening hours, and it's currently outside that window 🙏 You can open the gate by calling 050-979-8917.`
+          : `פתיחת השער מרחוק זמינה בסמוך לשעות הפעילות, וכרגע אנחנו מחוץ לטווח 🙏 אפשר לפתוח את השער בחיוג ישיר למספר 050-979-8917.`,
       status: "bot",
       opened: false,
     };
@@ -787,7 +787,7 @@ async function runGateOpen(opts: {
 
   try {
     await openParkingGate();
-    const bypassNote = gateHoursBypassed() && !isOpenNow(cfg) ? " (עקיפת שעות זמנית - מצב הקמה)" : "";
+    const bypassNote = gateHoursBypassed() && !isWithinGateWindow(cfg) ? " (עקיפת שעות זמנית - מצב הקמה)" : "";
     console.log(`[GATE] השער נפתח${bypassNote}. conv=${conversationId} customer=${customerId}`);
     await repo.addMessage({
       conversationId,
