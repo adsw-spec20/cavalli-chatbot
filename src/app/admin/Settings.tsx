@@ -179,7 +179,11 @@ export default function Settings({
         method: "POST",
         body: JSON.stringify({ test: true, endpoint: sub.endpoint }),
       });
-      setPushMsg(res.sent > 0 ? "נשלחה! ההתראה אמורה לקפוץ תוך שניות" : "השליחה לא הצליחה - כבו והדליקו מחדש");
+      setPushMsg(
+        res.sent > 0
+          ? `נשלחו ${res.sent} התראות דוגמה (נציג, הזמנה, תקלה) - אמורות לקפוץ תוך שניות`
+          : "השליחה לא הצליחה - כבו והדליקו מחדש"
+      );
     } catch (e) {
       setPushErr(e instanceof Error ? e.message : "השליחה נכשלה");
     } finally {

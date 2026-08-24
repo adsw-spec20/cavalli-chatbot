@@ -31,16 +31,35 @@ export async function POST(req: NextRequest) {
   }
   const body = await req.json().catch(() => ({}));
 
-  // --- התראת ניסיון למכשיר הזה בלבד ---
+  // --- התראות ניסיון למכשיר הזה בלבד: דוגמה חיה של כל שלושת התרחישים ---
   if (body.test === true) {
     const endpoint = typeof body.endpoint === "string" ? body.endpoint : "";
     if (!endpoint) return NextResponse.json({ error: "endpoint required" }, { status: 400 });
-    const sent = await sendTeamPush({
-      title: "🔔 בדיקת התראות - קפה קוואלי",
-      body: "אם קיבלת את זה, ההתראות במכשיר הזה עובדות מצוין!",
-      tag: "push-test",
-      onlyEndpoint: endpoint,
-    });
+    // אותם כותרות ופורמט כמו ההתראות האמיתיות, עם נתוני דוגמה מזוהים
+    // ("ישראל ישראלי") כדי שאפשר יהיה לצלם ולהראות לצוות איך זה נראה
+    const samples = [
+      {
+        title: "🔴 דחוף! שיחה עברה לנציג (וואטסאפ)",
+        body: "ישראל ישראלי: הלקוח מבקש לדבר עם נציג לגבי הזמנה לאירוע",
+        tag: "test-escalation",
+      },
+      {
+        title: "🍽️ בקשת הזמנה חדשה",
+        body: "4 אנשים, יום חמישי בשעה 20:00, ע\"ש ישראל ישראלי",
+        tag: "test-reservation",
+      },
+      {
+        title: "🚨 תקלת מערכת - הבוט",
+        body: "הודעת ניסיון: ככה תיראה התראה אם הבוט יפסיק לענות ללקוחות",
+        tag: "test-alarm",
+      },
+    ];
+    let sent = 0;
+    for (const s of samples) {
+      sent += await sendTeamPush({ ...s, onlyEndpoint: endpoint });
+      // הפוגה קטנה כדי שההתראות יגיעו כשלוש נפרדות ובסדר הנכון
+      await new Promise((r) => setTimeout(r, 400));
+    }
     return NextResponse.json({ sent });
   }
 
