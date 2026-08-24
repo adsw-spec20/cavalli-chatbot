@@ -376,6 +376,35 @@ export default function AdminPage() {
     };
   }, []);
 
+  // קישור עמוק מהתראת פוש: /admin?conv=<id> פותח ישר את השיחה. מסלול א' -
+  // כניסה טרייה עם הפרמטר ב-URL (הפאנל היה סגור). הפרמטר מנוקה אחרי השימוש
+  // כדי שרענון לא יכריח את אותה שיחה שוב.
+  useEffect(() => {
+    if (authed !== true) return;
+    const params = new URLSearchParams(window.location.search);
+    const conv = params.get("conv");
+    if (!conv) return;
+    openConversation(conv);
+    params.delete("conv");
+    const qs = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed]);
+
+  // מסלול ב' - הפאנל כבר פתוח והמשתמש לחץ על התראה: ה-service worker שולח
+  // לנו הודעה עם היעד, ואנחנו פותחים את השיחה בלי טעינה מחדש.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type !== "open-url") return;
+      const m = String(e.data.url || "").match(/[?&]conv=([A-Za-z0-9%-]+)/);
+      if (m) openConversation(decodeURIComponent(m[1]));
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!token) return;
     api<PanelSettings>(token, "/settings")

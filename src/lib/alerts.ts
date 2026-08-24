@@ -152,12 +152,35 @@ export async function sendSystemAlarmWhatsApp(reason: string): Promise<void> {
   }
 }
 
+/**
+ * פוש על הודעת המשך מלקוח בשיחה שנציג כבר מטפל בה. בלי זה, ההתראה היחידה
+ * היא רגע ההסלמה - וכל מה שהלקוח כותב אחרי המענה הראשוני של הנציג "נבלע"
+ * עד שמישהו במקרה פותח את הפאנל. tag פר-שיחה: רצף הודעות מאותו לקוח לא
+ * מציף את המכשיר - ההתראה פשוט מתעדכנת לאחרונה. לחיצה פותחת את השיחה עצמה.
+ */
+export async function sendHumanFollowUpPush(args: {
+  conversationId: string;
+  channel: string;
+  customerName?: string;
+  text: string;
+}): Promise<void> {
+  const ch = CHANNEL_HE[args.channel] ?? args.channel;
+  await sendTeamPush({
+    title: `💬 הודעה חדשה בשיחה אצל נציג (${ch})`,
+    body: `${args.customerName || "לקוח"}: ${args.text || "הודעה חדשה"}`.slice(0, 180),
+    tag: `conv-${args.conversationId}`,
+    url: `/admin?conv=${encodeURIComponent(args.conversationId)}`,
+  });
+}
+
 export async function sendEscalationEmail(args: {
   customerName?: string;
   channel: string;
   reason: string;
   summary: string;
   urgent?: boolean;
+  /** מזהה השיחה - לחיצה על הפוש תפתח אותה ישירות */
+  conversationId?: string;
 }): Promise<void> {
   const subject = `${args.urgent ? "🔴 דחוף - " : ""}הסלמה חדשה (${args.channel}) - קפה קוואלי`;
   const html = `
@@ -178,7 +201,10 @@ export async function sendEscalationEmail(args: {
     sendTeamPush({
       title: `${args.urgent ? "🔴 דחוף! " : "🔔 "}שיחה עברה לנציג (${ch})`,
       body: `${args.customerName || "לקוח"}: ${args.summary || args.reason}`.slice(0, 180),
-      tag: "escalation",
+      tag: args.conversationId ? `conv-${args.conversationId}` : "escalation",
+      url: args.conversationId
+        ? `/admin?conv=${encodeURIComponent(args.conversationId)}`
+        : undefined,
     }),
   ]);
 }

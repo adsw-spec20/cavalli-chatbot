@@ -11,7 +11,7 @@ import { getRepo } from "./db";
 import { generateReply } from "./claude";
 import { loadBusinessConfig } from "./business-config-store";
 import { loadMedia, isMediaRelevant, type MediaItem } from "./media-store";
-import { sendEscalationEmail, sendSystemAlarmWhatsApp } from "./alerts";
+import { sendEscalationEmail, sendHumanFollowUpPush, sendSystemAlarmWhatsApp } from "./alerts";
 import { processGapQuestion } from "./knowledge-filter";
 import {
   createReservation,
@@ -595,6 +595,8 @@ function buildHandoffMessage(
 }
 
 const HISTORY_LIMIT = 12;
+// חלון מורחב לשיחות שנציג היה מעורב בהן (ראה בניית ההיסטוריה)
+const HISTORY_LIMIT_AFTER_AGENT = 24;
 
 // טיפול ברצף הודעות + הגבלת קצב
 const DEBOUNCE_MS = 500; // המתנה קצרה לראות אם המשתמש שולח עוד הודעה (קצר = מענה מהיר יותר)
@@ -790,6 +792,7 @@ async function runGateOpen(opts: {
       reason: "תקלה בפתיחת שער החניה",
       summary: gateSummary,
       urgent: true,
+      conversationId,
     }).catch(() => {});
     return {
       reply:
@@ -918,13 +921,17 @@ export async function handleIncomingMessage(
     meta: input.messageId ? { ...(input.meta || {}), mid: input.messageId } : input.meta,
   });
 
-  // אם נציג אנושי כבר מטפל בשיחה, הבוט לא עונה
-  if (conversation.status === "human") {
-    return { conversationId: conversation.id, reply: null, status: "human" };
-  }
-
-  // הבוט מושהה לשיחה הזו בלבד (נציג בחר לטפל ידנית) - הבוט שותק, ההודעה ממתינה בפאנל
-  if (conversation.botPaused) {
+  // אם נציג אנושי מטפל בשיחה (או שהבוט הושהה לה) - הבוט שותק, אבל הצוות מקבל
+  // פוש על כל הודעת המשך של הלקוח: בלעדיו יש התראה רק ברגע ההסלמה, וכל מה
+  // שהלקוח כותב אחרי המענה הראשוני "נבלע" עד שנציג במקרה פותח את הפאנל
+  // (בקשת משתמש 24.8). tag פר-שיחה מונע הצפה ברצף הודעות.
+  if (conversation.status === "human" || conversation.botPaused) {
+    sendHumanFollowUpPush({
+      conversationId: conversation.id,
+      channel: input.channel,
+      customerName: customer.name,
+      text: input.text,
+    }).catch(() => undefined);
     return { conversationId: conversation.id, reply: null, status: conversation.status };
   }
 
@@ -1053,10 +1060,19 @@ export async function handleIncomingMessage(
   // ששאלה שהנציג כבר ענה עליה טופלה - ולא יחזור עליה ולא ימזג שאלות שכבר נענו.
   // אבל היא מתויגת (AGENT_MSG_PREFIX) כדי שהמודל ידע להבדיל בין דבריו לדברי
   // הצוות ולא יסתור אותם (כלל 20 בפרומפט).
+  // חלון היסטוריה: בשיחה שעברה טיפול אנושי מרחיבים את החלון, כדי שההקשר
+  // המקורי (מה הלקוח ביקש לפני שהנציג נכנס) לא יידחק החוצה על ידי חילופי
+  // הדברים עם הנציג - כשהשיחה חוזרת לבוט הוא ממשיך עם התמונה המלאה.
+  // שיחות רגילות נשארות בחלון הקטן (עלות).
+  const windowSize = stored
+    .slice(-HISTORY_LIMIT_AFTER_AGENT)
+    .some((m) => m.role === "agent")
+    ? HISTORY_LIMIT_AFTER_AGENT
+    : HISTORY_LIMIT;
   const history = mergeConsecutive(
     stored
       .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "agent")
-      .slice(-HISTORY_LIMIT)
+      .slice(-windowSize)
       .map((m) => ({
         role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
         content: m.role === "agent" ? AGENT_MSG_PREFIX + m.content : m.content,
@@ -1273,6 +1289,7 @@ export async function handleIncomingMessage(
           channel: input.channel,
           reason: "פניית דרושים - מועמד/ת לעבודה",
           summary: jobsSummary,
+          conversationId: conversation.id,
         }).catch(() => {});
         return { conversationId: conversation.id, reply: canned, status: "human" };
       }
@@ -1398,6 +1415,7 @@ export async function handleIncomingMessage(
       reason: result.escalate.reason,
       summary: result.escalate.summary,
       urgent: result.escalate.urgent,
+      conversationId: conversation.id,
     }).catch(() => {});
     await repo.addMessage({
       conversationId: conversation.id,

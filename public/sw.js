@@ -43,9 +43,13 @@ self.addEventListener("notificationclick", (event) => {
   const url = (event.notification.data && event.notification.data.url) || "/admin";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-      // אם הפאנל כבר פתוח - מתמקדים בו במקום לפתוח חלון נוסף
+      // אם הפאנל כבר פתוח - מתמקדים בו ומבקשים ממנו לנווט (למשל לפתוח את
+      // השיחה שההתראה מדברת עליה) בלי טעינה מחדש של כל האפליקציה
       for (const client of list) {
-        if (client.url.includes("/admin") && "focus" in client) return client.focus();
+        if (client.url.includes("/admin") && "focus" in client) {
+          client.postMessage({ type: "open-url", url });
+          return client.focus();
+        }
       }
       return self.clients.openWindow(url);
     })
