@@ -19,7 +19,7 @@ function templateDate(r: Reservation): string {
   return r.dateText;
 }
 function approveTemplate(r: Reservation): string {
-  return `חדשות טובות - יש לנו מקום ל-${templateDate(r)} בשעה ${r.time} 🙂 ${r.people} אנשים, על שם ${r.name}. כדי להשלים את ההזמנה נשלח לך עוד רגע קישור טאביט עם הפרטים - שם משלמים פיקדון של 100 ש"ח, וברגע שהוא שולם ההזמנה מאושרת סופית. מחכים לך בקפה קוואלי! 🥂`;
+  return `חדשות טובות - יש לנו מקום ל-${templateDate(r)} בשעה ${r.time} 🙂 ${r.people} אנשים, על שם ${r.name}. כדי להשלים את ההזמנה נשלח לך עוד רגע קישור לתשלום עם הפרטים - שם משלמים פיקדון של 100 ש"ח, וברגע שהוא שולם ההזמנה מאושרת סופית. מחכים לך בקפה קוואלי! 🥂`;
 }
 function declineTemplate(r: Reservation): string {
   return `היי ${r.name} 🙏 בדקנו ולצערנו אין לנו מקום פנוי ל-${templateDate(r)} בשעה ${r.time}. אפשר לנסות שעה או יום אחרים, או להתקשר אלינו ל-*8149 ונשמח לעזור למצוא פתרון.`;
