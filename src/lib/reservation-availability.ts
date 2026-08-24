@@ -89,8 +89,22 @@ function hoursFor(cfg: BusinessConfig, iso: string): string | null {
   return cfg.hours.find((h) => h.day === heDay)?.hours ?? null;
 }
 
+// בלי אימוג'י בסוף: השורה שלפניה כבר נגמרת באחד, ושני סמיילים בהודעה של שתי
+// שורות נראה מוגזם (נראה בוואטסאפ חי 24.8).
 const EVENING_OFFER =
-  "אם תרצו לשריין שולחן מראש, אפשר לערבי שני-חמישי מ-18:00 - ואשמח לסדר את זה כאן בצ'אט 🙂";
+  "אם תרצו לשריין שולחן מראש, אפשר לערבי שני-חמישי מ-18:00 - ואשמח לסדר את זה כאן בצ'אט.";
+
+/** "מחר" / "היום" / "ביום שלישי" - כדי שהתשובה תרגיש כמו מענה לשאלה ולא כמו עלון */
+function whenLabel(iso: string, now: Date): string {
+  const today = now.toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
+  if (iso === today) return "היום";
+  const [y, m, d] = today.split("-").map(Number);
+  const tomorrow = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+  if (iso === tomorrow) return "מחר";
+  const [iy, im, id] = iso.split("-").map(Number);
+  const dow = new Date(Date.UTC(iy, im - 1, id)).getUTCDay();
+  return `ביום ${["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"][dow]}`;
+}
 
 /**
  * מחזיר תשובה קבועה כשאי אפשר להזמין בזמן המבוקש, או null כשהבקשה תקינה
@@ -171,10 +185,13 @@ export function checkReservationAvailability(
     if (!isToday || nowHour >= 18) return null;
   }
 
+  const when = whenLabel(iso, now);
+  // "היום בשעות היום" מגושם - לכן פתיח אחר כשמדובר בהיום עצמו
+  const lead = when === "היום" ? "היום פשוט מגיעים בלי הזמנה" : `${when} בשעות היום מגיעים בלי הזמנה`;
   return {
     reason: "daytime",
     text:
-      `בשעות היום מגיעים בלי הזמנה - על בסיס מקום פנוי, ותמיד נשמח לארח 🙂\n` +
+      `${lead} - על בסיס מקום פנוי, ותמיד נשמח לארח 🙂\n` +
       `הזמנות מראש הן לשעות הערב, מ-18:00, בימים שני-חמישי - אם בא לכם, אפשר לשריין כאן בצ'אט.`,
   };
 }
