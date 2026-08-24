@@ -293,22 +293,14 @@ export async function generateReply(
   // ----- הזרקת השעה לתוך ההודעה האחרונה (24.8) -----
   // ההודעה האחרונה אף פעם אינה חלק מהקידומת הממוטמנת, ולכן זה המקום היחיד שבו
   // אפשר לשים מידע שמשתנה בכל בקשה בלי לפסול את המטמון של כל מה שלפניו.
-  // ⚗️ מתג ניסוי זמני (LEGACY_TIME_BLOCK=1) - להשוואת A/B בין מיקום חותמת הזמן
-  // בבלוק מערכת (התנהגות ישנה) לבין הזרקה להודעה האחרונה. יוסר בסוף החקירה.
-  const legacyTime = process.env.LEGACY_TIME_BLOCK === "1";
-  if (legacyTime) {
-    systemBlocks.push({ type: "text", text: `המועד הנוכחי בישראל (שעון מקומי): ${israelDateTime()}.` });
-  }
   const lastIdx = reqMessages.length - 1;
   if (lastIdx >= 0 && reqMessages[lastIdx].role === "user") {
-    const ctx = legacyTime ? [] : [`השעה בישראל כעת: ${israelDateTime()}`];
+    const ctx = [`השעה בישראל כעת: ${israelDateTime()}`];
     if (options.reservationSlots) ctx.push(options.reservationSlots);
-    if (ctx.length) {
-      reqMessages[lastIdx] = {
-        role: "user",
-        content: `[מידע מערכת, לא נכתב על ידי הלקוח - ${ctx.join("\n")}]\n${history[lastIdx].content}`,
-      };
-    }
+    reqMessages[lastIdx] = {
+      role: "user",
+      content: `[מידע מערכת, לא נכתב על ידי הלקוח - ${ctx.join("\n")}]\n${history[lastIdx].content}`,
+    };
   }
 
   // ----- מטמון היסטוריית השיחה (24.8) -----
