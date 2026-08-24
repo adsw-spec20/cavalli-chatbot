@@ -12,6 +12,7 @@
  */
 
 import { getRepo } from "./db";
+import { sendTeamPush } from "./push";
 
 const PANEL_URL = "https://cavalli-chatbot.vercel.app/admin";
 
@@ -138,11 +139,14 @@ export async function sendSystemAlarmWhatsApp(reason: string): Promise<void> {
     const last = Number((await repo.getSetting("last_alarm_wa_ts")) ?? 0);
     if (Date.now() - last < ALARM_WA_THROTTLE_MS) return;
     await repo.setSetting("last_alarm_wa_ts", String(Date.now()));
-    await sendTeamWhatsAppAlert(
+    const alarmText =
       reason === "credit"
         ? "🚨 תקלה: נגמרו הקרדיטים של הבוט! לקוחות מקבלים הודעת תקלה. יש להטעין קרדיטים ב-console.anthropic.com בהקדם"
-        : "🚨 תקלת מערכת: הבוט לא מצליח לענות ללקוחות כרגע. בדקו את הפאנל"
-    );
+        : "🚨 תקלת מערכת: הבוט לא מצליח לענות ללקוחות כרגע. בדקו את הפאנל";
+    await Promise.all([
+      sendTeamWhatsAppAlert(alarmText),
+      sendTeamPush({ title: "🚨 תקלת מערכת - הבוט", body: alarmText, tag: "system-alarm" }),
+    ]);
   } catch (err) {
     console.error("[alerts] התראת אזעקה בוואטסאפ נכשלה:", err);
   }
@@ -164,13 +168,18 @@ export async function sendEscalationEmail(args: {
       <p><b>סיכום:</b> ${escapeHtml(args.summary)}</p>
       <p><a href="${PANEL_URL}">פתיחת הפאנל</a></p>
     </div>`;
-  // מייל (אם מוגדר Resend) + וואטסאפ לצוות (אם הוגדרו מספרים) - במקביל
+  // מייל (אם מוגדר Resend) + וואטסאפ לצוות (אם הוגדרו מספרים) + פוש - במקביל
   const ch = CHANNEL_HE[args.channel] ?? args.channel;
   await Promise.all([
     sendAlertEmail(subject, html),
     sendTeamWhatsAppAlert(
       `${args.urgent ? "🔴 דחוף! " : ""}הסלמה חדשה ב${ch} מאת ${args.customerName || "לקוח"}: ${args.summary || args.reason}`
     ),
+    sendTeamPush({
+      title: `${args.urgent ? "🔴 דחוף! " : "🔔 "}שיחה עברה לנציג (${ch})`,
+      body: `${args.customerName || "לקוח"}: ${args.summary || args.reason}`.slice(0, 180),
+      tag: "escalation",
+    }),
   ]);
 }
 

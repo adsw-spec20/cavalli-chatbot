@@ -12,6 +12,7 @@
 import { randomUUID } from "crypto";
 import { getRepo } from "./db";
 import { sendAlertEmail, sendTeamWhatsAppAlert, escapeHtml } from "./alerts";
+import { sendTeamPush } from "./push";
 
 const KEY = "reservations";
 const MAX_KEPT = 300;
@@ -169,6 +170,12 @@ export async function createReservation(
   sendTeamWhatsAppAlert(
     `🍽️ בקשת הזמנה חדשה: ${reservation.people} אנשים, ${whenText} בשעה ${reservation.time}, ע"ש ${reservation.name}${reservation.notes ? ` (${reservation.notes})` : ""}. לאישור בפאנל`
   ).catch(() => {});
+  // התראת פוש לצוות (לא חוסמת)
+  sendTeamPush({
+    title: "🍽️ בקשת הזמנה חדשה",
+    body: `${reservation.people} אנשים, ${whenText} בשעה ${reservation.time}, ע"ש ${reservation.name}`,
+    tag: "reservation",
+  }).catch(() => {});
 
   return reservation;
 }

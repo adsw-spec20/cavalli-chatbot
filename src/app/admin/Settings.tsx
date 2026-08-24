@@ -43,6 +43,12 @@ export default function Settings({
   const [saved, setSaved] = useState(false);
   const [saveErr, setSaveErr] = useState("");
 
+  // --- התראות פוש (per-device): המצב נבדק מול המנוי שקיים במכשיר הזה ---
+  const [pushState, setPushState] = useState<"checking" | "unsupported" | "off" | "on">("checking");
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMsg, setPushMsg] = useState("");
+  const [pushErr, setPushErr] = useState("");
+
   // --- מנהל בלבד: התראות מייל + ניהול צוות ---
   const [alertEmail, setAlertEmail] = useState("");
   const [alertPhones, setAlertPhones] = useState("");
@@ -55,6 +61,29 @@ export default function Settings({
   const [newCode, setNewCode] = useState("");
   const [teamErr, setTeamErr] = useState("");
   const [namesResult, setNamesResult] = useState("");
+
+  useEffect(() => {
+    // מצב התראות הפוש במכשיר הזה. באייפון PushManager קיים רק כשנפתח
+    // מהאפליקציה המותקנת במסך הבית - בספארי רגיל יוצג "לא נתמך".
+    (async () => {
+      if (
+        typeof window === "undefined" ||
+        !("serviceWorker" in navigator) ||
+        !("PushManager" in window) ||
+        typeof Notification === "undefined"
+      ) {
+        setPushState("unsupported");
+        return;
+      }
+      try {
+        const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+        const sub = reg ? await reg.pushManager.getSubscription() : null;
+        setPushState(sub ? "on" : "off");
+      } catch {
+        setPushState("off");
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     api<QuickReply[]>(token, "/templates").then(setTemplates).catch(() => {});
@@ -71,6 +100,92 @@ export default function Settings({
       api<TeamMemberInfo[]>(token, "/team").then(setTeam).catch(() => {});
     }
   }, [token, isMaster]);
+
+  /** המרת מפתח VAPID ציבורי לפורמט ש-subscribe דורש */
+  function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
+    const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+    const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(b64);
+    const out = new Uint8Array(new ArrayBuffer(raw.length));
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  /** הדלקת התראות פוש במכשיר הזה (חייב להיקרא מלחיצה - דרישת אייפון) */
+  async function enablePush() {
+    if (pushBusy) return;
+    setPushBusy(true);
+    setPushErr("");
+    setPushMsg("");
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        throw new Error("ההרשאה לא אושרה. אפשר לאשר בהגדרות המכשיר > עדכונים (Notifications)");
+      }
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+      const info = await api<{ configured: boolean; publicKey: string }>(token, "/push");
+      if (!info.configured || !info.publicKey) throw new Error("התראות פוש לא מוגדרות בשרת");
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(info.publicKey),
+      });
+      await api(token, "/push", {
+        method: "POST",
+        body: JSON.stringify({ subscription: sub.toJSON(), name: agentName || undefined }),
+      });
+      setPushState("on");
+      setPushMsg("ההתראות הופעלו במכשיר הזה ✓ שווה לשלוח ניסיון לוודא");
+    } catch (e) {
+      setPushErr(e instanceof Error ? e.message : "ההפעלה נכשלה, נסו שוב");
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  /** כיבוי במכשיר הזה: ביטול המנוי בדפדפן + הסרה מהשרת */
+  async function disablePush() {
+    if (pushBusy) return;
+    setPushBusy(true);
+    setPushErr("");
+    setPushMsg("");
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      if (sub) {
+        await api(token, `/push?endpoint=${encodeURIComponent(sub.endpoint)}`, { method: "DELETE" }).catch(() => {});
+        await sub.unsubscribe();
+      }
+      setPushState("off");
+      setPushMsg("ההתראות כובו במכשיר הזה");
+    } catch {
+      setPushErr("הכיבוי נכשל, נסו שוב");
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  /** התראת ניסיון למכשיר הזה בלבד */
+  async function testPush() {
+    if (pushBusy) return;
+    setPushBusy(true);
+    setPushErr("");
+    setPushMsg("");
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      if (!sub) throw new Error("אין מנוי פעיל במכשיר הזה");
+      const res = await api<{ sent: number }>(token, "/push", {
+        method: "POST",
+        body: JSON.stringify({ test: true, endpoint: sub.endpoint }),
+      });
+      setPushMsg(res.sent > 0 ? "נשלחה! ההתראה אמורה לקפוץ תוך שניות" : "השליחה לא הצליחה - כבו והדליקו מחדש");
+    } catch (e) {
+      setPushErr(e instanceof Error ? e.message : "השליחה נכשלה");
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   async function saveAlertEmail() {
     try {
@@ -498,10 +613,57 @@ export default function Settings({
 
       {/* התראות */}
       <section className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 space-y-3">
-        <div className="flex items-center justify-between">
+        {/* התראות פוש - עובדות גם כשהאפליקציה סגורה */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-sm">🔔 התראות למכשיר הזה</h3>
+              <p className="text-xs text-[var(--muted)]">
+                קופצות גם כשהאפליקציה סגורה: שיחה שעוברת לנציג, הזמנה חדשה או תקלה.
+              </p>
+            </div>
+            {pushState === "on" ? (
+              <span className="shrink-0 text-xs text-emerald-400">פעיל ✓</span>
+            ) : pushState === "off" ? (
+              <button
+                onClick={enablePush}
+                disabled={pushBusy}
+                className="shrink-0 text-xs bg-[var(--accent)] text-[var(--accent-fg)] rounded-lg px-3 py-1.5 font-semibold disabled:opacity-60"
+              >
+                {pushBusy ? "מפעיל…" : "הפעל"}
+              </button>
+            ) : pushState === "unsupported" ? (
+              <span className="shrink-0 text-[11px] text-[var(--muted)] text-left max-w-[130px]">
+                זמין רק מהאפליקציה שמותקנת במסך הבית
+              </span>
+            ) : null}
+          </div>
+          {pushState === "on" && (
+            <div className="flex gap-2">
+              <button
+                onClick={testPush}
+                disabled={pushBusy}
+                className="text-xs border border-[var(--border)] rounded-lg px-3 py-1.5 hover:bg-[var(--panel2)] disabled:opacity-60"
+              >
+                שלח התראת ניסיון
+              </button>
+              <button
+                onClick={disablePush}
+                disabled={pushBusy}
+                className="text-xs text-[var(--muted)] rounded-lg px-3 py-1.5 hover:bg-[var(--panel2)] disabled:opacity-60"
+              >
+                כבה במכשיר הזה
+              </button>
+            </div>
+          )}
+          {pushMsg && <p className="text-xs text-emerald-400">{pushMsg}</p>}
+          {pushErr && <p className="text-xs text-red-400">⚠ {pushErr}</p>}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-[var(--border)] pt-3">
           <div>
             <h3 className="font-semibold text-sm">התראות דפדפן</h3>
-            <p className="text-xs text-[var(--muted)]">התראה כשמגיעה הסלמה חדשה.</p>
+            <p className="text-xs text-[var(--muted)]">התראה כשמגיעה הסלמה חדשה (כשהפאנל פתוח).</p>
           </div>
           {notify ? (
             <span className="text-xs text-emerald-400">פעיל ✓</span>

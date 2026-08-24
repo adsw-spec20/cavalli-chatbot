@@ -35,6 +35,9 @@ const PUBLIC_PATHS = [
   "/admin-manifest.webmanifest",
   "/icons/",
   "/favicon.ico",
+  // ה-service worker של התראות הפוש: הדפדפן מוריד/מעדכן אותו גם ברקע,
+  // לא בהכרח עם עוגיית התחברות. הקובץ לא חושף שום מידע עסקי.
+  "/sw.js",
 ];
 
 function isPublic(pathname: string): boolean {
