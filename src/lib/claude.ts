@@ -254,10 +254,10 @@ export async function generateReply(
   if (memoryBlock) {
     systemBlocks.push({ type: "text", text: memoryBlock });
   }
-  systemBlocks.push({
-    type: "text",
-    text: `המועד הנוכחי בישראל (שעון מקומי): ${israelDateTime()}.`,
-  });
+  // ⚠️ בלוק השעה *אינו* כאן יותר (שונה 24.8) - הוא מוזרק לתוך ההודעה האחרונה.
+  // הסיבה: מטמון עובד לפי קידומת, ובלוק שמשתנה בכל דקה חסם כל אפשרות למטמן
+  // את היסטוריית השיחה. כל שאר הבלוקים כאן יציבים לאורך שיחה, ולכן אפשר עכשיו
+  // למטמן גם את ההיסטוריה (ראה למטה) - החיסכון הגדול בשיחות ארוכות כמו הזמנות.
   if (options.activeReservations) {
     systemBlocks.push({
       type: "text",
@@ -286,13 +286,38 @@ export async function generateReply(
     content: m.content,
   }));
 
-  // ⚠️ אין כאן נקודת מטמון שנייה - בכוונה.
-  // מטמון עובד לפי התאמת "קידומת": כל שינוי בבתים שלפני הנקודה פוסל אותה.
-  // בלוק השעה הנוכחית (שמשתנה בכל בקשה) יושב לפני ההודעות, ולכן נקודת מטמון
-  // על ההודעה האחרונה לעולם לא הייתה נמצאת - ובמקום לחסוך, היא גרמה לכתיבה
-  // מחדש של כל ה-prompt בכל בקשה (מדדנו: ~5,000 טוקני כתיבה להודעה).
-  // ההיסטוריה קצרה ממילא, אז שליחתה כקלט רגיל זולה בהרבה.
-  // נקודת המטמון היחידה היא ה-System Prompt (למעלה) - יציב וזהה לכל הלקוחות.
+  // ----- הזרקת השעה לתוך ההודעה האחרונה (24.8) -----
+  // ההודעה האחרונה אף פעם אינה חלק מהקידומת הממוטמנת, ולכן זה המקום היחיד שבו
+  // אפשר לשים מידע שמשתנה בכל בקשה בלי לפסול את המטמון של כל מה שלפניו.
+  const lastIdx = reqMessages.length - 1;
+  if (lastIdx >= 0 && reqMessages[lastIdx].role === "user") {
+    reqMessages[lastIdx] = {
+      role: "user",
+      content: `[מידע מערכת, לא נכתב על ידי הלקוח - השעה בישראל כעת: ${israelDateTime()}]\n${history[lastIdx].content}`,
+    };
+  }
+
+  // ----- מטמון היסטוריית השיחה (24.8) -----
+  // שיחה ארוכה שולחת מחדש את כל ההיסטוריה בכל תור, ולכן העלות גדלה בריבוע:
+  // הזמנה טיפוסית היא 7.7 תורים ועולה $0.22, פי שמונה משאלה בודדת.
+  // נקודת מטמון על ההודעה שלפני האחרונה גורמת לכך שכל תור *כותב* רק את מה
+  // שהתווסף וקורא את השאר בעשירית המחיר.
+  // ⚠️ רק משיחה מספיק ארוכה: כתיבת מטמון עולה 1.25x מקלט רגיל, אז בשיחה קצרה
+  // (רוב השיחות!) נקודת מטמון תייקר במקום להוזיל. הסף נבחר כך שהחיסכון בקריאות
+  // מכסה את תוספת הכתיבה.
+  const CACHE_HISTORY_FROM = 6;
+  if (reqMessages.length >= CACHE_HISTORY_FROM) {
+    const i = reqMessages.length - 2;
+    const prev = reqMessages[i];
+    if (typeof prev.content === "string") {
+      reqMessages[i] = {
+        role: prev.role,
+        content: [
+          { type: "text", text: prev.content, cache_control: { type: "ephemeral" } },
+        ],
+      };
+    }
+  }
 
   const response = await anthropic.messages.create({
     model: MODEL,
@@ -357,8 +382,14 @@ export async function generateReply(
     .map((b) => ((b as Anthropic.ToolUseBlock).input as { question: string }).question)
     .filter((q): q is string => !!q);
 
-  // הגנה: אם המודל סימן פער אבל לא כתב תשובה ללקוח, מבקשים תשובה בקריאה אחת בלי כלים
-  if (!text || !text.trim()) {
+  // הגנה: אם המודל סימן פער אבל לא כתב תשובה ללקוח, מבקשים תשובה בקריאה אחת בלי כלים.
+  // הורחב 24.8: גם *תשובה קטועה* נחשבת חסרה. כשהמודל כותב פתיח ואז קורא לכלי,
+  // התור נעצר בקריאה - והלקוח קיבל בפועל רק "שאלה חשובה 🙂" כתשובה שלמה.
+  // סף של 25 תווים תופס פתיחים כאלה בלי לפגוע בתשובות קצרות לגיטימיות ("כן, יש 🙂").
+  const usedTool = response.content.some((b) => b.type === "tool_use");
+  const stub = usedTool && (text ?? "").trim().length < 25 && !reservation && !openGateRequested;
+  if (!text || !text.trim() || stub) {
+    if (stub) console.log(`[retry] תשובה קטועה אחרי קריאת כלי: "${(text ?? "").trim()}"`);
     const retry = await anthropic.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,

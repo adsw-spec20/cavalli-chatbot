@@ -19,6 +19,7 @@ import {
   resolveReservationDate,
   reservationDateLabel,
 } from "./reservations";
+import { checkReservationAvailability } from "./reservation-availability";
 import { isOpenNow, israelDateISO, effectiveHoursToday } from "./business-hours";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
@@ -1168,13 +1169,32 @@ export async function handleIncomingMessage(
       built = menuCategoryAnswer(lastUserTurn, cfg);
       if (built) cannedKey = "category";
     }
+    // מנוע זמינות ההזמנות (24.8): בקשה ליום/שעה שאין בהם הזמנות נענית מתבנית
+    // מחושבת במקום מהמודל - זול יותר, ובעיקר לא טועה בכללי ההזמנות.
+    if (!built && cannedLang === "he") {
+      const avail = checkReservationAvailability(lastUserTurn, cfg);
+      if (avail) {
+        built = avail.text;
+        cannedKey = `avail:${avail.reason}`;
+      }
+    }
     if (!built && cannedLang === "he" && ACK_RX.test(lastUserTurn.trim())) {
       // מעקה: אם ההודעה האחרונה של הבוט הייתה שאלה, או שיש זרימת הזמנה פתוחה
       // (הבוט הציע לשריין/טאביט) - "תודה" היא חלק מהזרימה -> מודל, שיוודא שההזמנה
       // לא ננטשה באמצע (תקרית משה שירו 17.8: "תודה" באמצע הזמנה קיבל "נתראה!").
       const lastAssistant = [...stored].reverse().find((m) => m.role === "assistant");
       const la = lastAssistant?.content ?? "";
-      if (!la.includes("?") && !/לשריין|אשריין|טאביט|tabit|להזמין מראש|בצ'אט/i.test(la)) {
+      // הזמנה שכבר הועברה לצוות: "תודה" הוא סיום אמיתי, אבל אסור שהסגירה תישמע
+      // כאילו יש אישור ("נתראה ביום שלישי" - קרה בבדיקה 24.8). תשובה קבועה
+      // ובטוחה, גם חוסכת תור מודל בסוף כל הזמנה.
+      const handedOff = /מעביר את הבקשה לצוות|יבדקו שיש מקום|passed your request/i.test(la);
+      if (handedOff) {
+        built = "בשמחה! 🙂 נעדכן אותך כאן ברגע שהצוות יבדוק שיש מקום.";
+        cannedKey = "ack-reservation";
+      // "שאלה פתוחה" = ההודעה *מסתיימת* בסימן שאלה. לא מספיק שיש "?" איפשהו:
+      // תבנית המיקום נגמרת לפעמים ב-CTA רטורי ("צריכים עוד משהו? תפריט, שעות...")
+      // וזה שלח כל "תודה" שאחריה למודל בחינם-שלא-לצורך (נמצא 24.8).
+      } else if (!/\?[\s🙂😊👍🙏]*$/.test(la.trim()) && !/לשריין|אשריין|טאביט|tabit|להזמין מראש|בצ'אט/i.test(la)) {
         built = ACK_REPLIES[Math.floor(Math.random() * ACK_REPLIES.length)];
         cannedKey = "ack";
       }
@@ -1451,6 +1471,7 @@ export async function handleIncomingMessage(
   // ----- בקשת הזמנת מקום: יצירת כרטיס בפאנל + תיעוד ביומן השיחה -----
   if (result.reservation) {
     const r = result.reservation;
+    let createdIsNew = false;
     try {
       // תאריך דטרמיניסטי: הקוד גוזר בעצמו את התאריך מ"מחר"/"יום חמישי"/"13.8"
       // ולא סומך על חישוב המודל (שטעה בפועל ונדד בין תאריכים באותה שיחה).
@@ -1471,6 +1492,7 @@ export async function handleIncomingMessage(
       // רושמים ביומן השיחה רק כשבאמת נוצר כרטיס חדש - קריאה כפולה של המודל
       // (למשל אחרי "תודה") מוחזרת כ-dup ולא מייצרת רישום שני מטעה בפאנל.
       const isNew = Date.now() - created.createdAt < 10_000;
+      createdIsNew = isNew;
       if (isNew) {
         const dLabel = reservationDateLabel(resolvedISO);
         await repo.addMessage({
@@ -1491,10 +1513,15 @@ export async function handleIncomingMessage(
       langFromHistory(history) === "en"
         ? "I've passed your request to our team - they'll check availability and update you right here soon. If there's room, you'll get a Tabit link to complete a 100 ILS deposit, and the reservation is final once it's paid 🙂"
         : "קיבלתי את כל הפרטים 🙂 אני מעביר את הבקשה לצוות - הם יבדקו שיש מקום פנוי ויעדכנו כאן בצ'אט בהקדם. אם יש מקום, תקבלו קישור טאביט להשלמת פיקדון של 100 ש\"ח, וההזמנה סופית אחרי התשלום.";
-    if (reply.trim().length < 15) {
-      reply = handoffLine;
-    } else if (!/צוות|team/i.test(reply)) {
-      reply = `${reply}\n\n${handoffLine}`;
+    // ⚠️ רק על כרטיס חדש (תוקן 24.8): כשהמודל קורא לכלי פעם שנייה על אותה בקשה
+    // (קרה בפועל אחרי "תודה רבה!" בסוף הזרימה), createReservation מחזיר את
+    // הכרטיס הקיים - ואז הדבקת משפט ההעברה שוב שלחה ללקוח את כל הסיכום מחדש.
+    if (createdIsNew) {
+      if (reply.trim().length < 15) {
+        reply = handoffLine;
+      } else if (!/צוות|team/i.test(reply)) {
+        reply = `${reply}\n\n${handoffLine}`;
+      }
     }
   }
 
