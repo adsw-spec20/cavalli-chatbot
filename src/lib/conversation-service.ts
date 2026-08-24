@@ -20,6 +20,7 @@ import {
   reservationDateLabel,
 } from "./reservations";
 import { checkReservationAvailability } from "./reservation-availability";
+import { bareHourHint } from "./time-hints";
 import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint } from "./reservation-slots";
 import { isOpenNow, israelDateISO, effectiveHoursToday } from "./business-hours";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
@@ -696,6 +697,38 @@ function isGateOpenRequest(text: string): boolean {
 }
 
 /**
+ * וטו על פתיחת שער מנתיב המודל (נוסף 25.8 אחרי תקרית Liran).
+ *
+ * מה קרה: לקוח ביקש לפתוח את השער (נפתח כהלכה), ומיד אחר כך שאל "תוכל להראות לי
+ * את המצלמות של המקום?" - **המודל קרא שוב לכלי פתיחת השער**, השער נפתח פיזית
+ * בשנית, והקוד דרס את תשובת המודל (שכנראה הייתה נכונה) באישור "השער פתוח".
+ *
+ * לכן: לפני שפותחים בעקבות המודל, הקוד מוודא שההודעה האחרונה של הלקוח בכלל
+ * נוגעת לשער/חניה/פתיחה. רחב יותר מהזיהוי הדטרמיניסטי (שהוא הטריגר), כי כאן
+ * התפקיד הוא רק לפסול בקשות שברור שאינן קשורות - לא לתפוס את כל הניסוחים.
+ */
+/**
+ * גלאי תסכול (25.8, תקרית Mike): לקוח שכתב "That's not a phone number" ואז
+ * "Doesn't work" קיבל עוד ניסיונות של הבוט ונשאר בלי תשובה - והשיחה לא הוסלמה
+ * אף פעם. מעכשיו: שלוש הודעות תסכול בשיחה = מעבירים לבן אדם, בלי להתווכח.
+ */
+const FRUSTRATION_RX =
+  /לא עובד|לא הצלחתי|לא מצליח|אין מענה|לא עונ(ה|ים)|לא נכון|טעות|לא הבנת|אמרתי לך|שוב פעם|עדיין לא|מה זה\?|נמאס|מעצבן|מתסכל|לא עוזר|חבל על הזמן|בן אדם|נציג אנושי|doesn'?t work|not working|that'?s not|didn'?t work|no (one )?answer|useless|frustrat|you don'?t understand|again\?|still not/i;
+
+/** כמה מהודעות הלקוח בשיחה מביעות תסכול */
+function countFrustration(messages: ConversationMessage[]): number {
+  return messages.filter((m) => m.role === "user" && FRUSTRATION_RX.test(m.content)).length;
+}
+
+function couldBeGateRequest(text: string): boolean {
+  const t = (text ?? "").trim();
+  if (!t || t.length > 200) return false;
+  const gateish = /שער|gate|חני|parking|بوابة|كراج|الباب|בכניסה|בשער|בחוץ ליד|הגעתי|אני פה|אני כאן/i.test(t);
+  const openish = /(?<![א-ת])(תפתח|פתח|לפתוח|פותח)|\bopen\b|افتح/i.test(t);
+  return gateish || openish;
+}
+
+/**
  * זרימת פתיחת השער: בדיקת שעות (עם מתג עקיפה זמני), מגבלת קצב, פתיחה בפועל, תיעוד,
  * והסלמה בכשל. משמשת גם את הנתיב הדטרמיניסטי (בקשה מפורשת) וגם את נתיב המודל.
  * מבצעת את תופעות הלוואי (הודעות מערכת/הסלמה) אך *לא* שומרת את הודעת ה-assistant
@@ -711,7 +744,7 @@ async function runGateOpen(opts: {
   gLang: "he" | "en";
   priorMessages: Array<{ meta?: Record<string, unknown>; ts: number }>;
   modelReply: string;
-}): Promise<{ reply: string; status: "bot" | "human" }> {
+}): Promise<{ reply: string; status: "bot" | "human"; opened: boolean }> {
   const { repo, conversationId, cfg, customerId, customerName, channel, gLang, priorMessages, modelReply } = opts;
   const phone = cfg.contact.phone;
 
@@ -725,6 +758,7 @@ async function runGateOpen(opts: {
           ? `Opening the parking gate is only possible during opening hours 🙏${today ? ` Today we're open ${today}.` : " We're closed today."}`
           : `פתיחת שער החניה אפשרית רק בשעות הפעילות 🙏${today ? ` היום אנחנו פתוחים ${today}.` : " היום אנחנו סגורים."}`,
       status: "bot",
+      opened: false,
     };
   }
 
@@ -747,6 +781,7 @@ async function runGateOpen(opts: {
           ? `I've already opened the gate several times in the last hour, so I'm pausing for safety 🙏 Our team can help${phone ? ` at ${phone}` : ""}.`
           : `פתחתי כבר את השער כמה פעמים בשעה האחרונה, אז אני עוצר ליתר ביטחון 🙏 הצוות ישמח לעזור${phone ? ` בטלפון ${phone}` : ""}.`,
       status: "bot",
+      opened: false,
     };
   }
 
@@ -766,7 +801,7 @@ async function runGateOpen(opts: {
     const heConfirm = GATE_OPEN_CONFIRMATIONS_HE[Math.floor(Math.random() * GATE_OPEN_CONFIRMATIONS_HE.length)];
     const enConfirm = GATE_OPEN_CONFIRMATIONS_EN[Math.floor(Math.random() * GATE_OPEN_CONFIRMATIONS_EN.length)];
     const reply = /שער|gate/i.test(modelReply) ? modelReply : gLang === "en" ? enConfirm : heConfirm;
-    return { reply, status: "bot" };
+    return { reply, status: "bot", opened: true };
   } catch (err) {
     // הלקוח עומד עכשיו מול שער סגור - תקלה דחופה: מסלימים לצוות מיד
     console.error("[GATE] פתיחת השער נכשלה:", err);
@@ -799,6 +834,7 @@ async function runGateOpen(opts: {
           ? `I couldn't open the gate just now 🙏 I've alerted our team - they'll help right away.${phone ? ` You can also call ${phone}.` : ""}`
           : `לא הצלחתי לפתוח את השער כרגע 🙏 עדכנתי את הצוות שיעזרו מיד.${phone ? ` אפשר גם להתקשר ל-${phone}.` : ""}`,
       status: "human",
+      opened: false,
     };
   }
 }
@@ -1108,6 +1144,49 @@ export async function handleIncomingMessage(
   const quickKeys = matchQuickAnswers(lastUserTurn);
   const kbHit = quickKeys.length ? null : matchLearnedAnswer(lastUserTurn, freeQAs);
 
+  // ----- גלאי תסכול: שלוש הודעות תסכול = מפסיקים לנסות ומעבירים לבן אדם -----
+  // (תקרית Mike 24.8: לקוח שכתב "That's not a phone number" ואז "Doesn't work"
+  // קיבל עוד ניסיונות של הבוט, נשאר בלי תשובה, והשיחה מעולם לא הוסלמה.)
+  if (countFrustration(history) >= 3 && FRUSTRATION_RX.test(lastUserTurn)) {
+    const fLang = langFromHistory(history);
+    const fSummary = `הלקוח הביע תסכול שלוש פעמים בשיחה. ההודעה האחרונה: "${lastUserTurn.slice(0, 160)}"`;
+    await repo.updateConversation(conversation.id, {
+      status: "human",
+      escalated: true,
+      escalationReason: "תסכול חוזר - הבוט לא הצליח לעזור",
+      escalationSummary: fSummary,
+      meta: { urgent: true },
+    });
+    await repo.addMessage({
+      conversationId: conversation.id,
+      role: "system",
+      content: `הוסלם לנציג: תסכול חוזר - הבוט לא הצליח לעזור\nסיכום: ${fSummary}`,
+      ts: Date.now(),
+      meta: { escalation: true, summary: fSummary },
+    });
+    sendEscalationEmail({
+      customerName: customer.name,
+      channel: input.channel,
+      reason: "תסכול חוזר - הבוט לא הצליח לעזור",
+      summary: fSummary,
+      urgent: true,
+      conversationId: conversation.id,
+    }).catch(() => {});
+    const fReply = buildHandoffMessage(isFirstTurn, cfgEarly, fLang);
+    if (isFirstTurn) await repo.updateConversation(conversation.id, { disclosedAi: true });
+    await namePromise.catch(() => undefined);
+    await repo.addMessage({
+      conversationId: conversation.id,
+      role: "assistant",
+      content: fReply,
+      ts: Date.now(),
+      meta: { escalation: true },
+    });
+    await recordFreeReply();
+    console.log(`[FRUSTRATION] הוסלם אחרי 3 סימני תסכול. conv=${conversation.id}`);
+    return { conversationId: conversation.id, reply: fReply, status: "human" };
+  }
+
   // ----- פתיחת שער החניה (זיהוי דטרמיניסטי, בלי מודל) -----
   // בקשה מפורשת לפתוח את השער מטופלת ישירות בקוד - לא נשאלת מהמודל, כי הוא לפעמים
   // מסרב לבד כשהוא "חושב" שסגור. הקוד אוכף שעות בעצמו (עם מתג העקיפה הזמני).
@@ -1337,6 +1416,8 @@ export async function handleIncomingMessage(
       channel: input.channel,
       activeReservations,
       reservationSlots,
+      // פענוח שעות חשופות בקוד ("at 10" בתשע בערב = 22:00) - תקרית Mike 24.8
+      timeHint: bareHourHint(lastUserTurn) ?? undefined,
     });
   } catch (err) {
     // תקלה רגעית במוח (API נפל/timeout) - הלקוח לעולם לא נשאר בלי מענה.
@@ -1469,7 +1550,23 @@ export async function handleIncomingMessage(
   }
 
   // ----- פתיחת שער החניה (נתיב המודל - גיבוי לזיהוי הדטרמיניסטי שלמעלה) -----
-  if (result.openGateRequested && isGateConfigured()) {
+  // ⚠️ וטו (25.8, תקרית Liran): המודל קרא לכלי על "תוכל להראות לי את המצלמות?"
+  // והשער נפתח פיזית. לפני פתיחה בעקבות המודל - הקוד מוודא שההודעה האחרונה
+  // בכלל נוגעת לשער/חניה/פתיחה. אם לא: לא פותחים, לא נוגעים בתשובה, רק מתעדים.
+  if (result.openGateRequested && isGateConfigured() && !couldBeGateRequest(lastUserTurn)) {
+    console.log(
+      `[GATE] וטו: המודל ביקש לפתוח שער אבל ההודעה לא נוגעת לזה - "${lastUserTurn.slice(0, 60)}" conv=${conversation.id}`
+    );
+    await repo
+      .addMessage({
+        conversationId: conversation.id,
+        role: "system",
+        content: `🅿️ בקשת פתיחת שער מהמודל נחסמה - הודעת הלקוח לא נוגעת לשער ("${lastUserTurn.slice(0, 80)}")`,
+        ts: Date.now(),
+        meta: { activity: true, gateVetoed: true },
+      })
+      .catch(() => undefined);
+  } else if (result.openGateRequested && isGateConfigured()) {
     const gate = await runGateOpen({
       repo,
       conversationId: conversation.id,
@@ -1481,7 +1578,15 @@ export async function handleIncomingMessage(
       priorMessages: stored,
       modelReply: reply,
     });
-    reply = gate.reply;
+    // כשהשער נפתח בהצלחה - **לא דורסים** את תשובת המודל אלא משלימים אותה
+    // (בתקרית Liran הדריסה מחקה תשובה נכונה על מצלמות). כשהפתיחה נחסמה/נכשלה
+    // כן מחליפים, אחרת ניסוח אופטימי של המודל ("פתחתי לך") יסתור את המציאות.
+    if (gate.opened) {
+      const already = /שער|gate/i.test(reply);
+      reply = already || !reply.trim() ? gate.reply : `${reply}\n\n${gate.reply}`;
+    } else {
+      reply = gate.reply;
+    }
     if (gate.status === "human") {
       await repo.addMessage({
         conversationId: conversation.id,

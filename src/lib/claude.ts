@@ -78,6 +78,8 @@ export interface GenerateOptions {
       פעמיים ולא יתבלבל. נשלח בתוך ההודעה האחרונה ולא כבלוק מערכת, כדי לא
       לפסול את מטמון ההיסטוריה (הוא משתנה בכל תור). */
   reservationSlots?: string;
+  /** פענוח שעות חשופות ("at 10" ב-21:00 = 22:00) - נשלח באותה שורת הקשר */
+  timeHint?: string;
 }
 
 export interface GenerateResult {
@@ -296,6 +298,7 @@ export async function generateReply(
   const lastIdx = reqMessages.length - 1;
   if (lastIdx >= 0 && reqMessages[lastIdx].role === "user") {
     const ctx = [`השעה בישראל כעת: ${israelDateTime()}`];
+    if (options.timeHint) ctx.push(options.timeHint);
     if (options.reservationSlots) ctx.push(options.reservationSlots);
     reqMessages[lastIdx] = {
       role: "user",
