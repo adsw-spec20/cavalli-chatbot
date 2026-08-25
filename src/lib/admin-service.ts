@@ -18,7 +18,8 @@ import { generateReply } from "./claude";
 import { recordLlmUsage } from "./usage";
 import { topicBreakdown } from "./insights";
 import { polishAnswer } from "./knowledge-filter";
-import { countPendingReservations } from "./reservations";
+import { countPendingReservations, loadReservations, reservationDateLabel } from "./reservations";
+import { israelDateISO } from "./business-hours";
 import type { BusinessConfig } from "./business-config";
 import { AGENT_MSG_PREFIX, type ChannelAdapter, type ConversationMessage } from "./channels/types";
 import type { Conversation, Customer, LearnedQA, StoredMessage } from "./db";
@@ -320,6 +321,63 @@ export async function updateCustomerDetails(
   patch: { name?: string; vip?: boolean; tags?: string[]; notes?: string; memory?: string }
 ) {
   return getRepo().updateCustomer(customerId, patch);
+}
+
+// ----- העשרת כרטיס הלקוח: נתונים שלא יושבים על אובייקט הלקוח עצמו -----
+export interface CustomerEnrichment {
+  firstSeen: number;
+  lastSeen: number;
+  conversationCount: number;
+  activeReservation: {
+    whenLabel: string;
+    time: string;
+    people: number;
+    seating?: "בפנים" | "בחוץ";
+    status: "pending" | "approved";
+  } | null;
+}
+
+/** מזהה מהערות ההזמנה אם ביקשו ישיבה בפנים/בחוץ (נשמר שם ע"י זרימת ההזמנה). */
+function extractSeating(notes?: string): "בפנים" | "בחוץ" | undefined {
+  if (!notes) return undefined;
+  if (/בחוץ/.test(notes)) return "בחוץ";
+  if (/בפנים/.test(notes)) return "בפנים";
+  return undefined;
+}
+
+/**
+ * נתוני העשרה לכרטיס הלקוח: כמה זמן הוא איתנו, כמה שיחות, והזמנה פעילה קרובה
+ * (ממתינה/אושרה ושעדיין לא עברה) - נשלפת חיה ממערכת ההזמנות, לא מטקסט חופשי.
+ */
+export async function getCustomerEnrichment(customerId: string): Promise<CustomerEnrichment | null> {
+  const repo = getRepo();
+  const customer = await repo.getCustomer(customerId);
+  if (!customer) return null;
+
+  const [convs, reservations] = await Promise.all([repo.listConversations(), loadReservations()]);
+  const conversationCount = convs.filter((c) => c.customerId === customerId).length;
+
+  const today = israelDateISO();
+  const active = reservations
+    .filter(
+      (r) => r.customerId === customerId && r.status !== "declined" && (!r.dateISO || r.dateISO >= today)
+    )
+    .sort((a, b) => (a.dateISO ?? "9999").localeCompare(b.dateISO ?? "9999"))[0];
+
+  return {
+    firstSeen: customer.firstSeen,
+    lastSeen: customer.lastSeen,
+    conversationCount,
+    activeReservation: active
+      ? {
+          whenLabel: reservationDateLabel(active.dateISO) ?? active.dateText,
+          time: active.time,
+          people: active.people,
+          seating: extractSeating(active.notes),
+          status: active.status as "pending" | "approved",
+        }
+      : null,
+  };
 }
 
 // ----- עריכת המידע העסקי מהפאנל -----

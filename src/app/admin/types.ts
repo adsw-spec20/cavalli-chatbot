@@ -73,6 +73,20 @@ export interface Detail {
   hasOlder?: boolean;
 }
 
+/** נתוני העשרה לכרטיס הלקוח (GET /customer/[id]) - מה שלא יושב על אובייקט הלקוח */
+export interface CustomerEnrichment {
+  firstSeen: number;
+  lastSeen: number;
+  conversationCount: number;
+  activeReservation: {
+    whenLabel: string;
+    time: string;
+    people: number;
+    seating?: "בפנים" | "בחוץ";
+    status: "pending" | "approved";
+  } | null;
+}
+
 export interface Stats {
   totalConversations: number;
   byStatus: { bot: number; human: number; closed: number };

@@ -1,8 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateCustomerDetails } from "@/lib/admin-service";
+import { updateCustomerDetails, getCustomerEnrichment } from "@/lib/admin-service";
 import { isAdminAuthorized } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
+
+// נתוני העשרה לכרטיס הלקוח (הזמנה פעילה, ספירת שיחות, מאז/אחרון)
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  if (!(await isAdminAuthorized(req))) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  const { id } = await params;
+  const enrichment = await getCustomerEnrichment(id);
+  if (!enrichment) return NextResponse.json({ error: "not found" }, { status: 404 });
+  return NextResponse.json(enrichment);
+}
 
 export async function PATCH(
   req: NextRequest,

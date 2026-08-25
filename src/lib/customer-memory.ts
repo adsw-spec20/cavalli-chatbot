@@ -12,12 +12,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getRepo } from "./db";
 import { recordLlmUsage } from "./usage";
+import { formatMemoryForPrompt, serializeMemory } from "./customer-memory-format";
 import type { StoredMessage } from "./db/types";
 
 // מודל זול לתמצות; אפשר לעקוף דרך MEMORY_MODEL.
 const MEMORY_MODEL = process.env.MEMORY_MODEL ?? "claude-haiku-4-5-20251001";
-const MEMORY_MAX_TOKENS = 220;
-const MEMORY_MAX_CHARS = 600; // תקרה לאורך הזיכרון השמור (זול בהזרקה)
+const MEMORY_MAX_TOKENS = 300;
+const PREF_MAX_CHARS = 400; // תקרה לאורך שדה ההעדפות
+const WARN_MAX_CHARS = 160; // תקרה לאורך אזהרה בודדת
 
 // ויסות: מתי לעדכן זיכרון
 const MIN_USER_MSGS = 2; // לפחות כך הרבה הודעות לקוח לפני שיוצרים זיכרון
@@ -37,11 +39,11 @@ function getClient(): Anthropic | null {
  * ההנחיה: להשתמש בעדינות ובטבעיות, בלי להכריז שזוכרים.
  */
 export function memoryContextBlock(memory?: string): string | undefined {
-  const m = memory?.trim();
-  if (!m) return undefined;
+  const formatted = formatMemoryForPrompt(memory);
+  if (!formatted) return undefined;
   return (
     "# מה שאנחנו כבר יודעים על הלקוח (משיחות קודמות)\n" +
-    `${m}\n` +
+    `${formatted}\n` +
     "השתמש במידע הזה **בעדינות ובטבעיות** כדי לתת יחס אישי והמשכיות - " +
     "למשל להתחשב בהעדפות שלו. **אל תכריז** 'אני זוכר ש...' ואל תצטט " +
     "את הכרטיס; פשוט תן לזה לבוא לידי ביטוי בשיחה כמו מארח שמכיר את האורח. " +
@@ -49,6 +51,30 @@ export function memoryContextBlock(memory?: string): string | undefined {
     "אם המידע לא רלוונטי לשאלה הנוכחית, התעלם ממנו."
   );
 }
+
+// כלי לפלט מובנה: מכריח את המודל להחזיר אזהרות והעדפות בשדות נפרדים,
+// במקום פסקת טקסט חופשי (שהדליפה כוכביות והכניסה פרטי הזמנה חד-פעמיים).
+const MEMORY_TOOL: Anthropic.Tool = {
+  name: "save_customer_memory",
+  description: "שמור את כרטיס הזיכרון המובנה של הלקוח לטובת שיחות עתידיות.",
+  input_schema: {
+    type: "object",
+    properties: {
+      warnings: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "אזהרות ורגישויות שכדאי שהצוות ישים לב אליהן, אם עלו בשיחה: חשש מפיקדון / אין כרטיס אשראי, אלרגיה או רגישות למאכל, תלונה פתוחה, בקשה מפורשת להתייחסות מיוחדת. משפט קצר וברור לכל אחת, בעברית תקנית. מערך ריק אם אין כאלה. אל תמציא, ואל תכניס פרטי הזמנה (הם מנוהלים בנפרד).",
+      },
+      preferences: {
+        type: "string",
+        description:
+          "העדפות והרגלים קבועים של הלקוח, אם עלו: מנות/משקאות אהובים, ישיבה בפנים/בחוץ, מגיע עם ילדים/בן זוג, שם/כינוי שמסר. משפט קצר אחד בעברית תקנית, בגוף שלישי. מחרוזת ריקה אם אין. אל תכלול פרטי הזמנה חד-פעמית.",
+      },
+    },
+    required: ["warnings", "preferences"],
+  },
+};
 
 function buildTranscript(messages: StoredMessage[]): string {
   return messages
@@ -87,34 +113,49 @@ export async function maybeUpdateCustomerMemory(conversationId: string): Promise
     const transcript = buildTranscript(messages);
     if (!transcript.trim()) return;
 
-    const existing = customer.memory?.trim();
+    // מציגים למודל את הזיכרון הקיים כטקסט קריא (לא JSON גולמי)
+    const existing = formatMemoryForPrompt(customer.memory);
     const userContent =
       (existing ? `כרטיס הזיכרון הקיים:\n${existing}\n\n` : "") +
       `קטע מהשיחה (העדכנית ביותר בסוף):\n${transcript}\n\n` +
-      "עדכן את כרטיס הזיכרון: שלב את מה שכבר ידוע עם מה שחדש, והחזר גרסה מעודכנת.";
+      "עדכן את כרטיס הזיכרון: שלב את מה שכבר ידוע עם מה שחדש, וקרא לכלי עם הגרסה המעודכנת.";
 
     const res = await anthropic.messages.create({
       model: MEMORY_MODEL,
       max_tokens: MEMORY_MAX_TOKENS,
       system:
-        "אתה מתחזק 'כרטיס זיכרון' קצר על לקוח של בית קפה, לטובת שיחות עתידיות. " +
-        "כתוב 1-3 משפטים קצרים בעברית עם מה שבאמת שווה לזכור: שם/כינוי, העדפות " +
-        "(מנות/משקאות אהובים), רגישויות או אלרגיות שהוזכרו, הרגלים (בא עם ילדים/בן זוג), " +
-        "ובקשות חוזרות. כתוב תמצית עניינית בגוף שלישי, לא שיחה מלאה ולא ציטוטים. " +
-        "אל תכלול מידע רגיש מיותר ואל תמציא דבר שלא נאמר. " +
-        "אם אין שום דבר שווה-זכירה, החזר מחרוזת ריקה.",
+        "אתה מתחזק 'כרטיס זיכרון' מובנה על לקוח של בית קפה, לטובת שיחות עתידיות. " +
+        "קרא לכלי save_customer_memory עם שני שדות: 'warnings' (אזהרות/רגישויות שהצוות צריך " +
+        "לשים לב אליהן) ו-'preferences' (העדפות והרגלים קבועים). כתוב בעברית תקנית, קצר וענייני, " +
+        "בגוף שלישי. הקפד על התאמת מין נכונה (אם ברור שהלקוח/ה גבר/אישה). אל תמציא דבר שלא נאמר, " +
+        "ואל תכניס פרטי הזמנה חד-פעמית (תאריך/שעה/כמות) - הם מנוהלים במערכת ההזמנות בנפרד. " +
+        "אם אין כלום שווה-זכירה, החזר warnings ריק ו-preferences ריק.",
+      tools: [MEMORY_TOOL],
+      tool_choice: { type: "tool", name: "save_customer_memory" },
       messages: [{ role: "user", content: userContent }],
     });
 
     // רישום העלות של תמצות הזיכרון (Haiku) - נספר במד העלות אבל לא כ"תשובה"
     await recordLlmUsage(MEMORY_MODEL, res.usage, false);
 
-    const block = res.content.find((b) => b.type === "text");
-    let memory = block && block.type === "text" ? block.text.trim() : "";
-    if (memory.length > MEMORY_MAX_CHARS) memory = memory.slice(0, MEMORY_MAX_CHARS).trim();
+    const toolUse = res.content.find((b) => b.type === "tool_use");
+    const input =
+      toolUse && toolUse.type === "tool_use"
+        ? (toolUse.input as { warnings?: unknown; preferences?: unknown })
+        : {};
+    const warnings = Array.isArray(input.warnings)
+      ? input.warnings
+          .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+          .map((x) => x.trim().slice(0, WARN_MAX_CHARS))
+          .slice(0, 6)
+      : [];
+    const preferences =
+      typeof input.preferences === "string" ? input.preferences.trim().slice(0, PREF_MAX_CHARS) : "";
 
-    // אם המודל החזיר ריק/קצר מדי, לא דורסים זיכרון קיים - רק מעדכנים חותמת
-    if (memory.length < 4) {
+    const memory = serializeMemory({ warnings, preferences });
+
+    // אם המודל החזיר ריק, לא דורסים זיכרון קיים - רק מעדכנים חותמת
+    if (!memory) {
       await repo.updateCustomer(customer.id, { memoryUpdatedAt: Date.now() });
       return;
     }

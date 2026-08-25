@@ -8,9 +8,11 @@ import {
   waitLabel,
   waitSeverity,
   type ConvItem,
+  type CustomerEnrichment,
   type Detail,
   type QuickReply,
 } from "./types";
+import { parseMemory } from "@/lib/customer-memory-format";
 
 /* ============================== עזרים ============================== */
 
@@ -18,6 +20,29 @@ function initials(name?: string, fallback = "?"): string {
   if (!name) return fallback;
   const parts = name.trim().split(/\s+/);
   return (parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "");
+}
+
+/** "מאז יוני 2026" (חודש בלבד אם אותה שנה) - לשורת העובדות בכרטיס הלקוח. */
+function sinceLabel(ts: number): string {
+  const now = new Date();
+  const d = new Date(ts);
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return new Intl.DateTimeFormat("he-IL", {
+    month: "long",
+    ...(sameYear ? {} : { year: "numeric" }),
+  }).format(d);
+}
+
+/** שפת הלקוח לפי הודעותיו האחרונות (להצגת צ'יפ "אנגלית" כשמדובר בתייר). */
+function detectCustomerLang(messages: { role: string; content: string }[]): "he" | "en" {
+  const text = messages
+    .filter((m) => m.role === "user")
+    .slice(-6)
+    .map((m) => m.content)
+    .join(" ");
+  const hebrew = (text.match(/[֐-׿]/g) || []).length;
+  const latin = (text.match(/[A-Za-z]/g) || []).length;
+  return hebrew === 0 && latin >= 4 ? "en" : "he";
 }
 
 function Avatar({ name, channel, size = 38 }: { name?: string; channel: string; size?: number }) {
@@ -1044,6 +1069,7 @@ function CustomerCard({
   const [vip, setVip] = useState(!!cust?.vip);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState("");
+  const [enrichment, setEnrichment] = useState<CustomerEnrichment | null>(null);
 
   useEffect(() => {
     setName(cust?.name ?? "");
@@ -1051,6 +1077,20 @@ function CustomerCard({
     setNotes(cust?.notes ?? "");
     setVip(!!cust?.vip);
   }, [cust?.id, cust?.name, cust?.tags, cust?.notes, cust?.vip]);
+
+  // העשרה (הזמנה פעילה, ספירת שיחות, מאז/אחרון) - נטענת בקריאה נפרדת קלה
+  useEffect(() => {
+    const id = cust?.id;
+    if (!id) return;
+    let alive = true;
+    setEnrichment(null);
+    api<CustomerEnrichment>(token, `/customer/${encodeURIComponent(id)}`)
+      .then((e) => alive && setEnrichment(e))
+      .catch(() => alive && setEnrichment(null));
+    return () => {
+      alive = false;
+    };
+  }, [cust?.id, token]);
 
   if (!cust) return null;
 
@@ -1087,48 +1127,138 @@ function CustomerCard({
 
   const PRESETS = ["קבוע", "VIP", "תלונה", "ליד לאירוע", "אלרגיה"];
 
+  // ערכים נגזרים לתצוגה
+  const mem = parseMemory(cust.memory);
+  const lang = detectCustomerLang(detail.messages);
+  const res = enrichment?.activeReservation ?? null;
+  const hasBotMemory = mem.warnings.length > 0 || !!mem.preferences || !!mem.general;
+  const showRegularChip =
+    !vip && (tags.includes("קבוע") || (enrichment?.conversationCount ?? 0) >= 3);
+
   return (
-    <div className="mx-3 mt-2 bg-[var(--panel2)] border border-[var(--border)] rounded-xl p-3 text-sm space-y-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[var(--muted)] text-xs truncate">מזהה: {cust.channelUserId}</span>
-        <div className="flex items-center gap-3 shrink-0">
-          <button onClick={onMarkUnread} className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] underline">
+    <div className="mx-3 mt-2 bg-[var(--panel2)] border border-[var(--border)] rounded-xl p-3 text-sm space-y-3">
+      {/* ---- זהות: שם + טלפון + VIP ---- */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => name.trim() !== (cust.name ?? "") && save({ name: name.trim() })}
+            placeholder="שם הלקוח…"
+            className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1 text-sm font-semibold outline-none focus:border-[var(--accent)]"
+          />
+          <div className="text-[var(--muted)] text-xs mt-1 truncate" dir="ltr">
+            {cust.channelUserId}
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <button
+            onClick={() => {
+              const next = !vip;
+              setVip(next);
+              save({ vip: next });
+            }}
+            className={`text-xl leading-none transition ${vip ? "" : "opacity-25 grayscale hover:opacity-60"}`}
+            title={vip ? "לקוח VIP (לחץ להסרה)" : "סמן כ-VIP"}
+            aria-label="VIP"
+          >
+            ⭐
+          </button>
+          <button
+            onClick={onMarkUnread}
+            className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] underline whitespace-nowrap"
+          >
             סמן כלא נקרא
           </button>
-          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-            <input
-              type="checkbox"
-              checked={vip}
-              onChange={(e) => {
-                setVip(e.target.checked);
-                save({ vip: e.target.checked });
-              }}
-            />
-            ⭐ VIP
-          </label>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <span className="text-[var(--muted)] text-xs shrink-0">שם:</span>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => name.trim() !== (cust.name ?? "") && save({ name: name.trim() })}
-          placeholder="שם הלקוח…"
-          className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[var(--accent)]"
-        />
-      </div>
+
+      {/* ---- שורת עובדות: קבוע/מאז/שיחות/אחרון/שפה ---- */}
+      {enrichment && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--muted)]">
+          {showRegularChip && (
+            <span className="rounded-full bg-[var(--accent)]/15 text-[var(--accent)] px-1.5 py-0.5 font-medium">
+              קבוע
+            </span>
+          )}
+          <span>מאז {sinceLabel(enrichment.firstSeen)}</span>
+          <span aria-hidden>·</span>
+          <span>{enrichment.conversationCount} שיחות</span>
+          <span aria-hidden>·</span>
+          <span>פעם אחרונה {relTime(enrichment.lastSeen)}</span>
+          {lang === "en" && (
+            <span className="rounded-full border border-[var(--border)] px-1.5 py-0.5">🌐 אנגלית</span>
+          )}
+        </div>
+      )}
+
+      {/* ---- הזמנה פעילה (חיה ממערכת ההזמנות) ---- */}
+      {res && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-xs font-medium text-[var(--text)]">📅 הזמנה פעילה</span>
+            <span
+              className={`text-[10px] rounded-full px-1.5 py-0.5 font-medium ${
+                res.status === "approved"
+                  ? "bg-emerald-500/15 text-emerald-600"
+                  : "bg-amber-500/15 text-amber-600"
+              }`}
+            >
+              {res.status === "approved" ? "אושרה" : "ממתינה"}
+            </span>
+          </div>
+          <div className="text-xs text-[var(--text)] flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <span>{res.whenLabel}</span>
+            <span className="text-[var(--muted)]" aria-hidden>·</span>
+            <span>{res.time}</span>
+            <span className="text-[var(--muted)]" aria-hidden>·</span>
+            <span>{res.people} אנשים</span>
+            {res.seating && (
+              <>
+                <span className="text-[var(--muted)]" aria-hidden>·</span>
+                <span>ישיבה {res.seating}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---- אזהרות (מודגש) ---- */}
+      {mem.warnings.length > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-400/10 px-2.5 py-2">
+          <div className="text-xs font-semibold text-amber-600 mb-1">⚠️ לשים לב</div>
+          <ul className="space-y-0.5">
+            {mem.warnings.map((w, i) => (
+              <li key={i} className="text-xs text-[var(--text)] flex gap-1.5">
+                <span className="text-amber-600 shrink-0" aria-hidden>•</span>
+                <span className="min-w-0">{w}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ---- העדפות ---- */}
+      {(mem.preferences || mem.general) && (
+        <div className="flex gap-1.5 text-xs text-[var(--muted)] leading-relaxed">
+          <span className="shrink-0" aria-hidden>💜</span>
+          <span className="min-w-0">{mem.preferences || mem.general}</span>
+        </div>
+      )}
+
+      {/* ---- תגיות ---- */}
       <div>
-        <div className="text-[var(--muted)] text-xs mb-1">תגיות</div>
-        <div className="flex flex-wrap gap-1.5 mb-1.5">
+        <div className="text-[var(--muted)] text-xs mb-1">🏷️ תגיות</div>
+        <div className="flex flex-wrap gap-1.5">
           {tags.map((t) => (
-            <span key={t} className="text-xs bg-[var(--accent)]/15 text-[var(--accent)] rounded-full px-2 py-0.5 flex items-center gap-1">
+            <span
+              key={t}
+              className="text-xs bg-[var(--accent)]/15 text-[var(--accent)] rounded-full px-2 py-0.5 flex items-center gap-1"
+            >
               {t}
               <button onClick={() => removeTag(t)} className="opacity-70 hover:opacity-100" aria-label={`הסר תגית ${t}`}>×</button>
             </span>
           ))}
-        </div>
-        <div className="flex gap-1.5 flex-wrap">
           {PRESETS.filter((p) => !tags.includes(p)).map((p) => (
             <button
               key={p}
@@ -1151,8 +1281,10 @@ function CustomerCard({
           />
         </div>
       </div>
+
+      {/* ---- הערות צוות ---- */}
       <div>
-        <div className="text-[var(--muted)] text-xs mb-1">הערות פנימיות</div>
+        <div className="text-[var(--muted)] text-xs mb-1">📝 הערות צוות</div>
         <textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -1162,22 +1294,17 @@ function CustomerCard({
           className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[var(--accent)]"
         />
       </div>
-      {cust.memory && (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-[var(--muted)] text-xs">🧠 מה שהבוט זוכר</div>
-            <button
-              onClick={() => confirm("לנקות את זיכרון הבוט על הלקוח?") && save({ memory: "" })}
-              className="text-[10px] text-[var(--muted)] hover:text-[var(--text)]"
-            >
-              נקה
-            </button>
-          </div>
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs text-[var(--muted)] leading-relaxed">
-            {cust.memory}
-          </div>
-        </div>
+
+      {/* ---- ניקוי זיכרון הבוט ---- */}
+      {hasBotMemory && (
+        <button
+          onClick={() => confirm("לנקות את מה שהבוט זוכר על הלקוח (אזהרות והעדפות)?") && save({ memory: "" })}
+          className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] underline"
+        >
+          🧠 נקה את זיכרון הבוט
+        </button>
       )}
+
       {saving && <div className="text-[10px] text-[var(--muted)]">שומר…</div>}
       {saveErr && <div className="text-[10px] text-red-400">⚠ {saveErr}</div>}
     </div>
