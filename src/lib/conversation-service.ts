@@ -714,8 +714,9 @@ function isGateOpenRequest(text: string): boolean {
   if (otherObject && !gateWord) return false;
   // ה-lookbehind (?<![א-ת]) דורש שהפועל יהיה בתחילת מילה - כדי לא לתפוס
   // "נפתח" (סביל, "השער לא נפתח") או "מתפתח" בטעות כבקשת פתיחה.
+  // "לפתוח שער/חניה" בלי מילת יחס (תקרית 25.8 - גלש למודל שהדליף JSON ללקוח)
   const explicitVerb =
-    /(?<![א-ת])(תפתח[יו]?|פתחו? את|פתחו? לי|פתחו? לנו|לפתוח (את|לי|לנו))|אפשר לפתוח|תוכל[וי]? לפתוח|\bopen\b|افتح/i.test(t);
+    /(?<![א-ת])(תפתח[יו]?|פתחו? את|פתחו? לי|פתחו? לנו|לפתוח (את|לי|לנו|ה?שער|ה?חני))|אפשר לפתוח|תוכל[וי]? לפתוח|\bopen\b|افتح/i.test(t);
   if (!explicitVerb) return false;
   // בלי מילת שער/חניה מפורשת נדרשת גם פנייה אישית ("לי"/"לנו") כדי לא לתפוס
   // "אפשר לפתוח חלון?" או שיחה כללית על פתיחה.
@@ -1562,6 +1563,20 @@ export async function handleIncomingMessage(
     const idx = reply.indexOf(marker);
     if (idx >= 0) reply = reply.slice(0, idx).trim();
   }
+  // דליפה בפורמט אחר (תקרית 25.8): המודל כתב את קריאת הכלי כבלוק JSON מגודר
+  // ("```json {\"tool\": ...} ```") בתוך הטקסט ללקוח. מסירים כל בלוק קוד מגודר
+  // (הבוט ממילא לא אמור לשלוח קוד ללקוחות) וכל שורת JSON בודדת שמזכירה כלי.
+  reply = reply
+    .replace(/```[\s\S]*?```/g, (block) =>
+      /"tool"|tool_call|open_parking_gate|escalate_to_human|request_reservation|send_media|report_knowledge_gap/i.test(
+        block
+      )
+        ? ""
+        : block
+    )
+    .replace(/^[ \t]*\{[^{}\n]*"tool"[^{}\n]*\}[ \t]*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   // הדגשה בכוכבית כפולה (**מילה**) מוצגת כתווים גולמיים בוואטסאפ/מסנג'ר - ממירים
   // לכוכבית בודדת (מודגש תקין). תיקון דטרמיניסטי במקום לרדוף אחרי המודל בפרומפט.
   reply = reply.replace(/\*\*([^*\n]+)\*\*/g, "*$1*");
