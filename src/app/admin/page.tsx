@@ -284,10 +284,13 @@ export default function AdminPage() {
   const [convsLoaded, setConvsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [templates, setTemplates] = useState<QuickReply[]>([]);
-  // דגל "רשומת ההיסטוריה של הצ'אט הפתוח קיימת" - עבור מחוות האחורה (ראה
-  // האפקטים ליד conversationOpen): פתיחת צ'אט דוחפת רשומה, החלקה אחורה
-  // צורכת אותה וסוגרת את הצ'אט. מחוץ לצ'אט הדפדפן מתנהג רגיל (בקשת משתמש 25.8)
+  // מחוות "אחורה" בפאנל (בקשות משתמש 25.8): צ'אט פתוח - החלקה סוגרת אותו;
+  // בלי צ'אט - ההחלקה נבלעת ולא קורה כלום (אף פעם לא עוזבים את הפאנל).
+  // שלושה דגלים: רשומת הצ'אט, רשומת הבסיס ("בולעת" החלקות), וסימון pop
+  // שאנחנו יזמנו בעצמנו (history.back בסגירת צ'אט מכפתור) שיש להתעלם ממנו.
   const convShieldArmed = useRef(false);
+  const baseShieldArmed = useRef(false);
+  const expectOwnPop = useRef(false);
   const [openQuestions, setOpenQuestions] = useState(0);
   const [pendingResv, setPendingResv] = useState(0);
   // כשכל 234 שאלות השאלון נענו - הטאב מוסתר אוטומטית (לבקשת המשתמש)
@@ -395,19 +398,46 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
-  // מחוות "אחורה" (החלקה / כפתור) בזמן שצ'אט פתוח: הרשומה שנדחפה בפתיחת
-  // הצ'אט נצרכת כאן, והצ'אט נסגר - כמו בוואטסאפ. כשאין צ'אט פתוח הדגל כבוי
-  // וה-handler לא נוגע בכלום - הדפדפן מתנהג כרגיל.
+  // מטפל מחוות האחורה: צ'אט פתוח - סוגר אותו (כמו בוואטסאפ); אחרת בולע את
+  // המחווה (דוחף את רשומת הבסיס מחדש) - שום דבר לא קורה והפאנל נשאר.
   useEffect(() => {
     const onPop = () => {
+      if (expectOwnPop.current) {
+        expectOwnPop.current = false;
+        return;
+      }
       if (convShieldArmed.current) {
         convShieldArmed.current = false;
         setSelectedId(null);
+        return;
+      }
+      if (baseShieldArmed.current) {
+        window.history.pushState({ cavalliBase: true }, "");
       }
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  // מגן הבסיס מתחמש רק אחרי המגע הראשון של המשתמש בפאנל, לא בטעינה:
+  // רשומת היסטוריה שנוצרת בלי אינטראקציה אמיתית מסומנת בדפדפן כ"ניתנת
+  // לדילוג" (הגנה מפני חטיפת כפתור האחורה) ומחוות אחורה פשוט מתעלמת ממנה -
+  // זו הסיבה שהניסיון הראשון נכשל כשהגיעו לפאנל מאתר אחר.
+  useEffect(() => {
+    if (authed !== true) return;
+    const arm = () => {
+      if (!baseShieldArmed.current) {
+        baseShieldArmed.current = true;
+        window.history.pushState({ cavalliBase: true }, "");
+      }
+    };
+    window.addEventListener("pointerdown", arm, { passive: true });
+    window.addEventListener("keydown", arm);
+    return () => {
+      window.removeEventListener("pointerdown", arm);
+      window.removeEventListener("keydown", arm);
+    };
+  }, [authed]);
 
   // פתיחת צ'אט דוחפת רשומת היסטוריה - שמחוות "אחורה" תסגור את הצ'אט במקום
   // לצאת מהאתר. סגירה מכפתור החזרה (לא ממחווה) צורכת את הרשומה בעצמה
@@ -419,6 +449,7 @@ export default function AdminPage() {
       window.history.pushState({ cavalliConv: true }, "");
     } else if (!open && convShieldArmed.current) {
       convShieldArmed.current = false;
+      expectOwnPop.current = true;
       window.history.back();
     }
   }, [tab, selectedId]);
