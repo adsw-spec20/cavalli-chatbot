@@ -1241,14 +1241,6 @@ function CustomerCard({
         </div>
       )}
 
-      {/* ---- העדפות ---- */}
-      {(mem.preferences || mem.general) && (
-        <div className="flex gap-1.5 text-xs text-[var(--muted)] leading-relaxed">
-          <span className="shrink-0" aria-hidden>💜</span>
-          <span className="min-w-0">{mem.preferences || mem.general}</span>
-        </div>
-      )}
-
       {/* ---- הערות צוות ---- */}
       <div>
         <div className="text-[var(--muted)] text-xs mb-1">📝 הערות צוות</div>
