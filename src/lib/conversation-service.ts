@@ -501,7 +501,8 @@ function buildQuickAnswer(
       if (!cfg.parking?.available || !cfg.parking.summary) return null;
       const nav = cfg.contact.navigationUrl ? `\nניווט ישיר אלינו: ${cfg.contact.navigationUrl}` : "";
       const video = hasParkingVideo ? "\nמצרף סרטון קצר שמראה בדיוק איך מגיעים אליה 🙂" : "";
-      return `${cfg.parking.summary}${nav}${video}`;
+      const gate = isGateConfigured() ? `\n\n${gateOfferLine()}` : "";
+      return `${cfg.parking.summary}${nav}${video}${gate}`;
     }
     case "menu": {
       if (!cfg.menu?.length) return null;
@@ -540,15 +541,38 @@ function buildQuickAnswer(
  * כמה נוסחים והגרלה ביניהם, כדי שלקוחות חוזרים לא יקבלו תמיד מילה-במילה
  * את אותו משפט. withVideo מוסיף שורה שמכריזה על סרטון הדרך לחניה.
  */
+/**
+ * שורת "אני יכול לפתוח לכם את השער" - נוספת לתשובות חניה/הגעה כשחיבור
+ * PalGate מוגדר (בקשת בעל העסק 25.8). כמה נוסחים, שלקוחות חוזרים לא
+ * יקבלו תמיד את אותו משפט.
+ */
+function gateOfferLine(lang: "he" | "en" = "he"): string {
+  if (lang === "en") {
+    const en = [
+      "And when you reach the parking gate, just text me here and I'll open it for you 🙂",
+      "By the way, if the gate is closed when you arrive - message me and I'll open it right away 🙂",
+    ];
+    return en[Math.floor(Math.random() * en.length)];
+  }
+  const he = [
+    "ודרך אגב, כשתגיעו לשער החניה - פשוט תכתבו לי כאן ואפתח לכם אותו 🙂",
+    "וכשמגיעים לשער החניה, שולחים לי הודעה ואני פותח לכם אותו מיד 🙂",
+    "טיפ קטן: אם השער סגור כשתגיעו, תכתבו לי כאן ואפתח לכם אותו 🙂",
+    "וכשתגיעו לחניה, אני יכול גם לפתוח לכם את השער - רק תכתבו לי 🙂",
+  ];
+  return he[Math.floor(Math.random() * he.length)];
+}
+
 function locationCannedReply(cfg: BusinessConfig, lang: "he" | "en", withVideo: boolean): string {
   const addr = cfg.contact.address ?? "";
   const nav = cfg.contact.navigationUrl;
   if (lang === "en") {
     const navEn = nav ? `\nWaze: ${nav}` : "";
     const videoEn = withVideo ? "\nAttaching a short video showing the way to the parking 🎥" : "";
+    const gateEn = isGateConfigured() ? `\n${gateOfferLine("en")}` : "";
     const en = [
-      `We're at *${addr}* 🙂${navEn}\nThere's free parking right next to the cafe.${videoEn}\nSee you soon! ☕`,
-      `Happy to help! You'll find us at *${addr}* 📍${navEn}\nFree parking is right next to us.${videoEn}\nSee you! ☕`,
+      `We're at *${addr}* 🙂${navEn}\nThere's free parking right next to the cafe.${videoEn}${gateEn}\nSee you soon! ☕`,
+      `Happy to help! You'll find us at *${addr}* 📍${navEn}\nFree parking is right next to us.${videoEn}${gateEn}\nSee you! ☕`,
     ];
     return en[Math.floor(Math.random() * en.length)];
   }
@@ -564,7 +588,9 @@ function locationCannedReply(cfg: BusinessConfig, lang: "he" | "en", withVideo: 
     `הכתובת היא *${addr}.*${nav ? `\n\nאפשר לנווט אלינו בקלות דרך הקישור:\n${nav}` : ""}\n\nיש חניה חינמית ממש ליד המסעדה.${withVideo ? " היא קצת מוסתרת, אז אני שולח לך גם סרטון שמראה בדיוק מאיפה נכנסים." : ""}`,
     `המסעדה נמצאת ב-*${addr} 📍*${nav ? `\n\nניווט ישיר ב-Waze:\n${nav}` : ""}\n\nיש חניה חינמית בצמוד למסעדה.${withVideo ? " הכניסה אליה מעט מוסתרת, ולכן מצרף לך סרטון קצר עם הסבר איך להגיע 🙂" : ""}`,
   ];
-  return `${he[Math.floor(Math.random() * he.length)]}\n\n${cta}`;
+  // הצעת פתיחת השער נכנסת בין הוראות ההגעה לשורת ה-CTA (רק כשהחיבור מוגדר)
+  const gateHe = isGateConfigured() ? `\n\n${gateOfferLine()}` : "";
+  return `${he[Math.floor(Math.random() * he.length)]}${gateHe}\n\n${cta}`;
 }
 
 /** מנסח הודעת העברה לאדם, לפי שעות הפעילות ושפת הלקוח. ב-firstTurn שוזר גילוי AI. */

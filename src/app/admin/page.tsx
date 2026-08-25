@@ -284,6 +284,13 @@ export default function AdminPage() {
   const [convsLoaded, setConvsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [templates, setTemplates] = useState<QuickReply[]>([]);
+  // מראה עדכנית של "מה פתוח עכשיו" עבור מטפל מחוות האחורה (popstate) -
+  // ה-handler נרשם פעם אחת וקורא מכאן את המצב הנוכחי בלי להירשם מחדש
+  const backStateRef = useRef({ drawerOpen: false, conversationOpen: false });
+  backStateRef.current = {
+    drawerOpen,
+    conversationOpen: tab === "inbox" && !!selectedId,
+  };
   const [openQuestions, setOpenQuestions] = useState(0);
   const [pendingResv, setPendingResv] = useState(0);
   // כשכל 234 שאלות השאלון נענו - הטאב מוסתר אוטומטית (לבקשת המשתמש)
@@ -388,6 +395,26 @@ export default function AdminPage() {
     params.delete("conv");
     const qs = params.toString();
     window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed]);
+
+  // ----- מחוות "אחורה" (החלקה הצידה / כפתור אחורה) - בקשת משתמש 25.8 -----
+  // שתי מטרות: (1) החלקה בטעות לא מעיפה מהפאנל לאתר הקודם בדפדפן;
+  // (2) כשצ'אט פתוח, החלקה סוגרת אותו וחוזרת לרשימה - כמו בוואטסאפ.
+  // המנגנון: דוחפים רשומת היסטוריה "מגן" מעל הנוכחית. מחווה אחורה קופצת
+  // לרשומה שמתחת, ואז אנחנו סוגרים את מה שפתוח (תפריט צד / שיחה) ומיד
+  // דוחפים את המגן חזרה - הדפדפן נשאר בפאנל תמיד.
+  useEffect(() => {
+    if (authed !== true) return;
+    window.history.pushState({ cavalliShield: true }, "");
+    const onPop = () => {
+      const s = backStateRef.current;
+      if (s.drawerOpen) setDrawerOpen(false);
+      else if (s.conversationOpen) setSelectedId(null);
+      window.history.pushState({ cavalliShield: true }, "");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
