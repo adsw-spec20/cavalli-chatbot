@@ -409,6 +409,20 @@ export default function AdminPage() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  // פתיחת צ'אט דוחפת רשומת היסטוריה - שמחוות "אחורה" תסגור את הצ'אט במקום
+  // לצאת מהאתר. סגירה מכפתור החזרה (לא ממחווה) צורכת את הרשומה בעצמה
+  // (history.back), כך שההיסטוריה נשארת נקייה והחלקה הבאה מתנהגת רגיל.
+  useEffect(() => {
+    const open = tab === "inbox" && !!selectedId;
+    if (open && !convShieldArmed.current) {
+      convShieldArmed.current = true;
+      window.history.pushState({ cavalliConv: true }, "");
+    } else if (!open && convShieldArmed.current) {
+      convShieldArmed.current = false;
+      window.history.back();
+    }
+  }, [tab, selectedId]);
+
   // מסלול ב' - הפאנל כבר פתוח והמשתמש לחץ על התראה: ה-service worker שולח
   // לנו הודעה עם היעד, ואנחנו פותחים את השיחה בלי טעינה מחדש.
   useEffect(() => {
@@ -793,19 +807,6 @@ export default function AdminPage() {
 
   // במובייל, כששיחה פתוחה - מסך שיחה מלא: בלי כותרת עליונה ובלי סרגל תחתון
   const conversationOpen = tab === "inbox" && !!selectedId;
-
-  // פתיחת צ'אט דוחפת רשומת היסטוריה - כדי שמחוות "אחורה" תסגור את הצ'אט
-  // במקום לצאת מהאתר. סגירה מכפתור החזרה (לא ממחווה) צורכת את הרשומה בעצמה
-  // (history.back), כך שההיסטוריה נשארת נקייה והחלקה הבאה מתנהגת רגיל.
-  useEffect(() => {
-    if (conversationOpen && !convShieldArmed.current) {
-      convShieldArmed.current = true;
-      window.history.pushState({ cavalliConv: true }, "");
-    } else if (!conversationOpen && convShieldArmed.current) {
-      convShieldArmed.current = false;
-      window.history.back();
-    }
-  }, [conversationOpen]);
 
   const NavLinks = (
     <nav className="flex flex-col gap-0.5">
