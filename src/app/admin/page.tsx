@@ -406,15 +406,26 @@ export default function AdminPage() {
   // דוחפים את המגן חזרה - הדפדפן נשאר בפאנל תמיד.
   useEffect(() => {
     if (authed !== true) return;
-    window.history.pushState({ cavalliShield: true }, "");
+    const armShield = () => window.history.pushState({ cavalliShield: true }, "");
+    armShield();
     const onPop = () => {
       const s = backStateRef.current;
       if (s.drawerOpen) setDrawerOpen(false);
       else if (s.conversationOpen) setSelectedId(null);
-      window.history.pushState({ cavalliShield: true }, "");
+      armShield();
+    };
+    // חזרה לפאנל מ"אחורה" של אתר אחר מחזירה את העמוד מה-bfcache בלי להריץ
+    // מחדש את האפקטים, ומשאירה רשומת "קדימה" לאתר הזר - החלקה לצד השני הייתה
+    // בורחת אליו. pageshow תופס את הרגע הזה; חימוש מחדש גם מוחק את רשומת הקדימה.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) armShield();
     };
     window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("pageshow", onPageShow);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
