@@ -38,8 +38,8 @@ export function parseMemory(raw?: string | null): StructuredMemory {
     }
   }
 
-  // מבנה ישן: טקסט חופשי
-  return { warnings: [], preferences: "", general: s };
+  // מבנה ישן: טקסט חופשי (מנקים דליפת Markdown של כוכביות מזיכרונות ישנים)
+  return { warnings: [], preferences: "", general: s.replace(/\*\*/g, "").trim() };
 }
 
 /** האם הזיכרון ריק לחלוטין (אין מה להציג/להזריק)? */
