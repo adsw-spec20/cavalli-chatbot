@@ -672,7 +672,7 @@ export default function Inbox({
         {/* בר התראה: לקוח כתב בשיחה שנציג לקח - הבוט שותק שם, ואם אף אחד לא שם לב
             הלקוח נשאר בלי מענה. ✕ מעלים עד שתגיע הודעה חדשה יותר (טיפול מתמשך). */}
         {showHumanBar && (
-          <div className="await-pulse shrink-0 m-2 mb-0 flex items-center gap-2 bg-sky-500/15 border border-sky-500/35 rounded-xl px-3 py-2 text-xs">
+          <div className="await-pulse shrink-0 m-2 mb-0 flex items-center gap-2 bg-orange-500/15 border border-orange-500/40 rounded-xl px-3 py-2 text-xs">
             <span className="flex-1 font-semibold">
               👤 {humanAwaiting.length === 1 ? "שיחה אחת אצל נציג ממתינה לתשובה" : `${humanAwaiting.length} שיחות אצל נציג ממתינות לתשובה`}
             </span>

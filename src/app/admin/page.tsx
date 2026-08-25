@@ -88,10 +88,10 @@ input:focus,textarea:focus,select:focus{box-shadow:0 0 0 3px color-mix(in srgb,v
 /* בר "ממתין לנציג": הבהוב עדין (מסגרת + זוהר נושם) שמושך תשומת לב בלי להיות אגרסיבי.
    הטקסט נשאר קריא לחלוטין; מכובד ע"י prefers-reduced-motion למטה. */
 @keyframes await-pulse{
-  0%,100%{border-color:rgba(14,165,233,.35);box-shadow:0 0 0 0 rgba(14,165,233,0)}
-  50%{border-color:rgba(14,165,233,.9);box-shadow:0 0 14px 1px rgba(14,165,233,.4)}
+  0%,100%{border-color:rgba(249,115,22,.5);box-shadow:0 0 0 0 rgba(249,115,22,0);background-color:rgba(249,115,22,.12)}
+  50%{border-color:rgba(249,115,22,1);box-shadow:0 0 18px 2px rgba(249,115,22,.55);background-color:rgba(249,115,22,.26)}
 }
-.await-pulse{animation:await-pulse 1.6s ease-in-out infinite}
+.await-pulse{animation:await-pulse 1.3s ease-in-out infinite}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 .no-scrollbar::-webkit-scrollbar{display:none}.no-scrollbar{scrollbar-width:none}
 `;
