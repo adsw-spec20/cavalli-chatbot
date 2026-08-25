@@ -328,6 +328,8 @@ export interface CustomerEnrichment {
   firstSeen: number;
   lastSeen: number;
   conversationCount: number;
+  /** טלפון הלקוח: מהוואטסאפ (המזהה = הטלפון) או ממה שמסר בשיחה (הזמנה). null אם אין. */
+  phone: string | null;
   activeReservation: {
     whenLabel: string;
     time: string;
@@ -356,18 +358,27 @@ export async function getCustomerEnrichment(customerId: string): Promise<Custome
 
   const [convs, reservations] = await Promise.all([repo.listConversations(), loadReservations()]);
   const conversationCount = convs.filter((c) => c.customerId === customerId).length;
+  const myReservations = reservations.filter((r) => r.customerId === customerId);
+
+  // טלפון: בוואטסאפ המזהה עצמו הוא הטלפון; אחרת - הטלפון האחרון שנמסר בהזמנה.
+  let phone: string | null = customer.channel === "whatsapp" ? customer.channelUserId : null;
+  if (!phone) {
+    const withPhone = myReservations
+      .filter((r) => r.phone && /\d/.test(r.phone))
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    phone = withPhone?.phone ?? null;
+  }
 
   const today = israelDateISO();
-  const active = reservations
-    .filter(
-      (r) => r.customerId === customerId && r.status !== "declined" && (!r.dateISO || r.dateISO >= today)
-    )
+  const active = myReservations
+    .filter((r) => r.status !== "declined" && (!r.dateISO || r.dateISO >= today))
     .sort((a, b) => (a.dateISO ?? "9999").localeCompare(b.dateISO ?? "9999"))[0];
 
   return {
     firstSeen: customer.firstSeen,
     lastSeen: customer.lastSeen,
     conversationCount,
+    phone,
     activeReservation: active
       ? {
           whenLabel: reservationDateLabel(active.dateISO) ?? active.dateText,

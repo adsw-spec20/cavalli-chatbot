@@ -45,6 +45,21 @@ function detectCustomerLang(messages: { role: string; content: string }[]): "he"
   return hebrew === 0 && latin >= 4 ? "en" : "he";
 }
 
+/** תצוגת טלפון ישראלי נעימה: 972542142547 -> 054-2142547. */
+function formatPhone(p: string): string {
+  let d = p.replace(/\D/g, "");
+  if (d.startsWith("972")) d = "0" + d.slice(3);
+  if (d.length === 10 && d.startsWith("0")) return `${d.slice(0, 3)}-${d.slice(3)}`;
+  return d || p;
+}
+
+/** קישור חיוג לטלפון (פותח את המחייג בטלפון). */
+function telHref(p: string): string {
+  let d = p.replace(/\D/g, "");
+  if (d.startsWith("0")) d = "972" + d.slice(1);
+  return `tel:+${d}`;
+}
+
 function Avatar({ name, channel, size = 38 }: { name?: string; channel: string; size?: number }) {
   const dot = CHANNELS[channel]?.dot ?? "bg-neutral-500";
   return (
@@ -1063,8 +1078,6 @@ function CustomerCard({
 }) {
   const cust = detail.customer;
   const [name, setName] = useState(cust?.name ?? "");
-  const [tags, setTags] = useState<string[]>(cust?.tags ?? []);
-  const [tagInput, setTagInput] = useState("");
   const [notes, setNotes] = useState(cust?.notes ?? "");
   const [vip, setVip] = useState(!!cust?.vip);
   const [saving, setSaving] = useState(false);
@@ -1073,10 +1086,9 @@ function CustomerCard({
 
   useEffect(() => {
     setName(cust?.name ?? "");
-    setTags(cust?.tags ?? []);
     setNotes(cust?.notes ?? "");
     setVip(!!cust?.vip);
-  }, [cust?.id, cust?.name, cust?.tags, cust?.notes, cust?.vip]);
+  }, [cust?.id, cust?.name, cust?.notes, cust?.vip]);
 
   // העשרה (הזמנה פעילה, ספירת שיחות, מאז/אחרון) - נטענת בקריאה נפרדת קלה
   useEffect(() => {
@@ -1111,29 +1123,13 @@ function CustomerCard({
     }
   }
 
-  function addTag() {
-    const t = tagInput.trim();
-    if (!t || tags.includes(t)) return;
-    const next = [...tags, t];
-    setTags(next);
-    setTagInput("");
-    save({ tags: next });
-  }
-  function removeTag(t: string) {
-    const next = tags.filter((x) => x !== t);
-    setTags(next);
-    save({ tags: next });
-  }
-
-  const PRESETS = ["קבוע", "VIP", "תלונה", "ליד לאירוע", "אלרגיה"];
-
   // ערכים נגזרים לתצוגה
   const mem = parseMemory(cust.memory);
   const lang = detectCustomerLang(detail.messages);
   const res = enrichment?.activeReservation ?? null;
+  const phone = enrichment?.phone ?? null;
   const hasBotMemory = mem.warnings.length > 0 || !!mem.preferences || !!mem.general;
-  const showRegularChip =
-    !vip && (tags.includes("קבוע") || (enrichment?.conversationCount ?? 0) >= 3);
+  const showRegularChip = !vip && (enrichment?.conversationCount ?? 0) >= 3;
 
   return (
     <div className="mx-3 mt-2 bg-[var(--panel2)] border border-[var(--border)] rounded-xl p-3 text-sm space-y-3">
@@ -1147,11 +1143,18 @@ function CustomerCard({
             placeholder="שם הלקוח…"
             className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1 text-sm font-semibold outline-none focus:border-[var(--accent)]"
           />
-          <div className="text-[var(--muted)] text-xs mt-1 truncate" dir="ltr">
-            {cust.channelUserId}
-          </div>
+          {phone && (
+            <a
+              href={telHref(phone)}
+              className="inline-flex items-center gap-1 text-[var(--accent)] text-xs mt-1 hover:underline"
+              dir="ltr"
+              title="חייג ללקוח"
+            >
+              📞 {formatPhone(phone)}
+            </a>
+          )}
         </div>
-        <div className="flex flex-col items-end gap-1.5 shrink-0">
+        <div className="flex flex-col items-end gap-2 shrink-0">
           <button
             onClick={() => {
               const next = !vip;
@@ -1166,7 +1169,7 @@ function CustomerCard({
           </button>
           <button
             onClick={onMarkUnread}
-            className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] underline whitespace-nowrap"
+            className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-md px-2 py-1 whitespace-nowrap"
           >
             סמן כלא נקרא
           </button>
@@ -1246,42 +1249,6 @@ function CustomerCard({
         </div>
       )}
 
-      {/* ---- תגיות ---- */}
-      <div>
-        <div className="text-[var(--muted)] text-xs mb-1">🏷️ תגיות</div>
-        <div className="flex flex-wrap gap-1.5">
-          {tags.map((t) => (
-            <span
-              key={t}
-              className="text-xs bg-[var(--accent)]/15 text-[var(--accent)] rounded-full px-2 py-0.5 flex items-center gap-1"
-            >
-              {t}
-              <button onClick={() => removeTag(t)} className="opacity-70 hover:opacity-100" aria-label={`הסר תגית ${t}`}>×</button>
-            </span>
-          ))}
-          {PRESETS.filter((p) => !tags.includes(p)).map((p) => (
-            <button
-              key={p}
-              onClick={() => {
-                const next = [...tags, p];
-                setTags(next);
-                save({ tags: next });
-              }}
-              className="text-[11px] text-[var(--muted)] border border-[var(--border)] rounded-full px-2 py-0.5 hover:text-[var(--text)]"
-            >
-              + {p}
-            </button>
-          ))}
-          <input
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addTag()}
-            placeholder="תגית חדשה…"
-            className="text-xs bg-[var(--panel)] border border-[var(--border)] rounded-full px-2 py-0.5 w-24 outline-none"
-          />
-        </div>
-      </div>
-
       {/* ---- הערות צוות ---- */}
       <div>
         <div className="text-[var(--muted)] text-xs mb-1">📝 הערות צוות</div>
@@ -1299,7 +1266,7 @@ function CustomerCard({
       {hasBotMemory && (
         <button
           onClick={() => confirm("לנקות את מה שהבוט זוכר על הלקוח (אזהרות והעדפות)?") && save({ memory: "" })}
-          className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] underline"
+          className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-md px-2 py-1"
         >
           🧠 נקה את זיכרון הבוט
         </button>

@@ -78,6 +78,7 @@ export interface CustomerEnrichment {
   firstSeen: number;
   lastSeen: number;
   conversationCount: number;
+  phone: string | null;
   activeReservation: {
     whenLabel: string;
     time: string;
