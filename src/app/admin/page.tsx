@@ -284,13 +284,10 @@ export default function AdminPage() {
   const [convsLoaded, setConvsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [templates, setTemplates] = useState<QuickReply[]>([]);
-  // מראה עדכנית של "מה פתוח עכשיו" עבור מטפל מחוות האחורה (popstate) -
-  // ה-handler נרשם פעם אחת וקורא מכאן את המצב הנוכחי בלי להירשם מחדש
-  const backStateRef = useRef({ drawerOpen: false, conversationOpen: false });
-  backStateRef.current = {
-    drawerOpen,
-    conversationOpen: tab === "inbox" && !!selectedId,
-  };
+  // דגל "רשומת ההיסטוריה של הצ'אט הפתוח קיימת" - עבור מחוות האחורה (ראה
+  // האפקטים ליד conversationOpen): פתיחת צ'אט דוחפת רשומה, החלקה אחורה
+  // צורכת אותה וסוגרת את הצ'אט. מחוץ לצ'אט הדפדפן מתנהג רגיל (בקשת משתמש 25.8)
+  const convShieldArmed = useRef(false);
   const [openQuestions, setOpenQuestions] = useState(0);
   const [pendingResv, setPendingResv] = useState(0);
   // כשכל 234 שאלות השאלון נענו - הטאב מוסתר אוטומטית (לבקשת המשתמש)
@@ -398,36 +395,19 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
-  // ----- מחוות "אחורה" (החלקה הצידה / כפתור אחורה) - בקשת משתמש 25.8 -----
-  // שתי מטרות: (1) החלקה בטעות לא מעיפה מהפאנל לאתר הקודם בדפדפן;
-  // (2) כשצ'אט פתוח, החלקה סוגרת אותו וחוזרת לרשימה - כמו בוואטסאפ.
-  // המנגנון: דוחפים רשומת היסטוריה "מגן" מעל הנוכחית. מחווה אחורה קופצת
-  // לרשומה שמתחת, ואז אנחנו סוגרים את מה שפתוח (תפריט צד / שיחה) ומיד
-  // דוחפים את המגן חזרה - הדפדפן נשאר בפאנל תמיד.
+  // מחוות "אחורה" (החלקה / כפתור) בזמן שצ'אט פתוח: הרשומה שנדחפה בפתיחת
+  // הצ'אט נצרכת כאן, והצ'אט נסגר - כמו בוואטסאפ. כשאין צ'אט פתוח הדגל כבוי
+  // וה-handler לא נוגע בכלום - הדפדפן מתנהג כרגיל.
   useEffect(() => {
-    if (authed !== true) return;
-    const armShield = () => window.history.pushState({ cavalliShield: true }, "");
-    armShield();
     const onPop = () => {
-      const s = backStateRef.current;
-      if (s.drawerOpen) setDrawerOpen(false);
-      else if (s.conversationOpen) setSelectedId(null);
-      armShield();
-    };
-    // חזרה לפאנל מ"אחורה" של אתר אחר מחזירה את העמוד מה-bfcache בלי להריץ
-    // מחדש את האפקטים, ומשאירה רשומת "קדימה" לאתר הזר - החלקה לצד השני הייתה
-    // בורחת אליו. pageshow תופס את הרגע הזה; חימוש מחדש גם מוחק את רשומת הקדימה.
-    const onPageShow = (e: PageTransitionEvent) => {
-      if (e.persisted) armShield();
+      if (convShieldArmed.current) {
+        convShieldArmed.current = false;
+        setSelectedId(null);
+      }
     };
     window.addEventListener("popstate", onPop);
-    window.addEventListener("pageshow", onPageShow);
-    return () => {
-      window.removeEventListener("popstate", onPop);
-      window.removeEventListener("pageshow", onPageShow);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authed]);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   // מסלול ב' - הפאנל כבר פתוח והמשתמש לחץ על התראה: ה-service worker שולח
   // לנו הודעה עם היעד, ואנחנו פותחים את השיחה בלי טעינה מחדש.
@@ -813,6 +793,19 @@ export default function AdminPage() {
 
   // במובייל, כששיחה פתוחה - מסך שיחה מלא: בלי כותרת עליונה ובלי סרגל תחתון
   const conversationOpen = tab === "inbox" && !!selectedId;
+
+  // פתיחת צ'אט דוחפת רשומת היסטוריה - כדי שמחוות "אחורה" תסגור את הצ'אט
+  // במקום לצאת מהאתר. סגירה מכפתור החזרה (לא ממחווה) צורכת את הרשומה בעצמה
+  // (history.back), כך שההיסטוריה נשארת נקייה והחלקה הבאה מתנהגת רגיל.
+  useEffect(() => {
+    if (conversationOpen && !convShieldArmed.current) {
+      convShieldArmed.current = true;
+      window.history.pushState({ cavalliConv: true }, "");
+    } else if (!conversationOpen && convShieldArmed.current) {
+      convShieldArmed.current = false;
+      window.history.back();
+    }
+  }, [conversationOpen]);
 
   const NavLinks = (
     <nav className="flex flex-col gap-0.5">
