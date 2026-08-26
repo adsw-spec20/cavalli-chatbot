@@ -1,0 +1,7 @@
+﻿{
+    "botEnabled":  true,
+    "role":  "master",
+    "alertEmail":  "",
+    "alertPhones":  "",
+    "emailConfigured":  false
+}
