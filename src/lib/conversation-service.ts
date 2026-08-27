@@ -1483,11 +1483,19 @@ export async function handleIncomingMessage(
     }
     // מנוע זמינות ההזמנות (24.8): בקשה ליום/שעה שאין בהם הזמנות נענית מתבנית
     // מחושבת במקום מהמודל - זול יותר, ובעיקר לא טועה בכללי ההזמנות.
+    // מעקה הקשר (28.8): בשיחת ביטול/שינוי של הזמנה קיימת, הודעת הפרטים
+    // ("על שם דנה, מחר ב-20:00") נראית כמו בקשת הזמנה חדשה והמנוע חטף אותה
+    // ("בשישי אין הזמנות") באמצע האיסוף - בהקשר כזה המודל ממשיך את הטיפול.
     if (!built && cannedLang === "he") {
-      const avail = checkReservationAvailability(lastUserTurn, cfg);
-      if (avail) {
-        built = avail.text;
-        cannedKey = `avail:${avail.reason}`;
+      const modifyContext = [...stored.slice(-5).map((m) => m.content), lastUserTurn].some((t) =>
+        /לבטל|ביטול|בטל את|לשנות את ההזמנה|שינוי בהזמנה|להזיז את|לעדכן את ההזמנה/.test(t)
+      );
+      if (!modifyContext) {
+        const avail = checkReservationAvailability(lastUserTurn, cfg);
+        if (avail) {
+          built = avail.text;
+          cannedKey = `avail:${avail.reason}`;
+        }
       }
     }
     if (!built && cannedLang === "he" && ACK_RX.test(lastUserTurn.trim())) {
