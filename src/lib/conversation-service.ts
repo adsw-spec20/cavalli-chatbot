@@ -1877,9 +1877,12 @@ export async function handleIncomingMessage(
     // (קרה בפועל אחרי "תודה רבה!" בסוף הזרימה), createReservation מחזיר את
     // הכרטיס הקיים - ואז הדבקת משפט ההעברה שוב שלחה ללקוח את כל הסיכום מחדש.
     if (createdIsNew) {
-      if (reply.trim().length < 15) {
+      // הודעת הסיום חייבת תמיד את שני החלקים: העברה לצוות + הפיקדון (כלל
+      // בעל העסק: הפיקדון נאמר בסוף, אחרי האישור - וכאן זה הסוף). תשובה
+      // קצרה מוחלפת; ארוכה בלי פיקדון מקבלת את השורה המלאה בנוסף.
+      if (reply.trim().length < 40) {
         reply = handoffLine;
-      } else if (!/צוות|team/i.test(reply)) {
+      } else if (!/פיקדון|deposit/i.test(reply)) {
         reply = `${reply}\n\n${handoffLine}`;
       }
     }
