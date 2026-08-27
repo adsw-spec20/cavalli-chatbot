@@ -12,6 +12,7 @@ import type {
   ConversationFilter,
   ConversationSummary,
   Customer,
+  GateEvent,
   LearnedQA,
   Repository,
   StoredMessage,
@@ -118,6 +119,24 @@ export class PostgresRepository implements Repository {
     await this.sql`ALTER TABLE learned_qa ADD COLUMN IF NOT EXISTS topic text`;
     // אינדקס לשאילתת הסיכום של האינבוקס (הודעה אחרונה לפי שיחה)
     await this.sql`CREATE INDEX IF NOT EXISTS idx_messages_conv_ts ON messages (conversation_id, ts DESC)`;
+
+    // ----- אינדקסי ייחודיות (27.8): הפתרון השורשי למשלוחים כפולים של מטא -----
+    // בסביבה מרובת-שרתים כל בדיקת "כבר קיים?" בקוד היא מרוץ; רק ייחודיות
+    // ברמת ה-DB אטומית. בתוך try/catch בכוונה: אם קיימות כפילויות ישנות
+    // (מלפני הניקוי) הבנייה נכשלת בשקט והכל ממשיך כרגיל - אחרי הניקוי
+    // האתחול הבא יתפוס את האינדקס.
+    try {
+      // הודעת ערוץ (mid של מטא) נשמרת פעם אחת בלבד בכל המערכת
+      await this.sql`CREATE UNIQUE INDEX IF NOT EXISTS uniq_messages_mid
+        ON messages (((meta::jsonb)->>'mid'))
+        WHERE meta IS NOT NULL AND (meta::jsonb)->>'mid' IS NOT NULL`;
+      // פתיחת שער חוזרת: claim אטומי - retry אחד בלבד לכל פתיחה מקורית
+      await this.sql`CREATE UNIQUE INDEX IF NOT EXISTS uniq_messages_gate_retry
+        ON messages (((meta::jsonb)->>'gateRetryOf'))
+        WHERE meta IS NOT NULL AND (meta::jsonb)->>'gateRetryOf' IS NOT NULL`;
+    } catch (err) {
+      console.error("[db] בניית אינדקסי ייחודיות נדחתה (כנראה כפילויות ישנות):", err instanceof Error ? err.message.slice(0, 200) : err);
+    }
   }
 
   private toLearnedQA(r: Record<string, unknown>): LearnedQA {
@@ -270,11 +289,15 @@ export class PostgresRepository implements Repository {
   ): Promise<Conversation> {
     await this.init();
     const now = Date.now();
+    // אידמפוטנטי (27.8): שתי הפעלות מקבילות עם אותו מזהה דטרמיניסטי מתנגשות
+    // כאן במקום ליצור שתי שיחות - המפסידה מקבלת את השורה של הזוכה.
+    // DO UPDATE (ולא DO NOTHING) כדי ש-RETURNING יחזיר את השורה הקיימת בסיבוב אחד.
     const rows = await this.sql`
       INSERT INTO conversations (id, channel, customer_id, status, created_at, updated_at, escalated, escalation_reason, escalation_summary, disclosed_ai, bot_paused, csat, meta)
       VALUES (${data.id}, ${data.channel}, ${data.customerId}, ${data.status}, ${now}, ${now},
               ${data.escalated ?? null}, ${data.escalationReason ?? null}, ${data.escalationSummary ?? null},
               ${data.disclosedAi ?? null}, ${data.botPaused ?? null}, ${data.csat ?? null}, ${data.meta ? JSON.stringify(data.meta) : null})
+      ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
       RETURNING *`;
     return this.toConversation(rows[0]);
   }
@@ -332,6 +355,66 @@ export class PostgresRepository implements Repository {
     await this.sql`DELETE FROM conversations WHERE id = ${id}`;
     const remaining = await this.sql`SELECT 1 FROM conversations WHERE customer_id = ${customerId} LIMIT 1`;
     if (!remaining[0]) await this.sql`DELETE FROM customers WHERE id = ${customerId}`;
+  }
+
+  async mergeConversationInto(fromId: string, toId: string): Promise<void> {
+    await this.init();
+    if (fromId === toId) return;
+    // סדר מכוון שבטוח לכשל באמצע: קודם ההודעות עוברות, ורק אז שורת המקור
+    // נמחקת - כשל באמצע משאיר לכל היותר שיחה ריקה שמיזוג חוזר מנקה.
+    await this.sql`UPDATE messages SET conversation_id = ${toId} WHERE conversation_id = ${fromId}`;
+    await this.sql`
+      UPDATE conversations SET updated_at = GREATEST(
+        updated_at,
+        (SELECT COALESCE(updated_at, 0) FROM conversations WHERE id = ${fromId}),
+        (SELECT COALESCE(MAX(ts), 0) FROM messages WHERE conversation_id = ${toId})
+      ) WHERE id = ${toId}`;
+    await this.sql`DELETE FROM conversations WHERE id = ${fromId}`;
+  }
+
+  async dedupeMessagesByMid(conversationId: string): Promise<number> {
+    await this.init();
+    // מוחק עותקים מאוחרים של אותו mid (משלוח כפול שנקלט פעמיים לפני
+    // האינדקס) - העותק הראשון נשאר. מחזיר כמה נמחקו.
+    const rows = await this.sql`
+      DELETE FROM messages a USING messages b
+      WHERE a.conversation_id = ${conversationId}
+        AND b.conversation_id = ${conversationId}
+        AND a.meta IS NOT NULL AND b.meta IS NOT NULL
+        AND (a.meta::jsonb)->>'mid' IS NOT NULL
+        AND (a.meta::jsonb)->>'mid' = (b.meta::jsonb)->>'mid'
+        AND (a.ts > b.ts OR (a.ts = b.ts AND a.id > b.id))
+      RETURNING a.id`;
+    return rows.length;
+  }
+
+  async listGateEvents(limit: number): Promise<GateEvent[]> {
+    await this.init();
+    // נגזר ישירות מהודעות המערכת של השער - מקור אמת אחד, שורד מיזוגי שיחות.
+    // הטבלה קטנה (מאות שיחות) - סריקה ישירה מספיקה, בלי אינדקס ייעודי.
+    const rows = await this.sql`
+      SELECT m.ts, m.content, m.meta, m.conversation_id, c.channel, cu.name AS customer_name
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      LEFT JOIN customers cu ON cu.id = c.customer_id
+      WHERE m.meta IS NOT NULL AND (
+        (m.meta::jsonb)->>'gateOpened' = 'true' OR
+        (m.meta::jsonb)->>'gateBlocked' = 'true' OR
+        (m.meta::jsonb)->>'gateError' = 'true'
+      )
+      ORDER BY m.ts DESC
+      LIMIT ${limit}`;
+    return rows.map((r) => {
+      const meta = r.meta ? (JSON.parse(r.meta as string) as Record<string, unknown>) : {};
+      return {
+        ts: Number(r.ts),
+        conversationId: r.conversation_id as string,
+        customerName: (r.customer_name as string) ?? undefined,
+        channel: r.channel as string,
+        result: meta.gateOpened === true ? "opened" : meta.gateError === true ? "error" : "blocked",
+        detail: (r.content as string).slice(0, 200),
+      } as GateEvent;
+    });
   }
 
   async getConversationSummaries(): Promise<ConversationSummary[]> {
@@ -397,13 +480,18 @@ export class PostgresRepository implements Repository {
   }
 
   // ---------- messages ----------
-  async addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage> {
+  async addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage | null> {
     await this.init();
     const id = crypto.randomUUID();
+    // ON CONFLICT DO NOTHING: התנגשות באינדקס ייחודיות (mid כפול ממשלוח כפול
+    // של מטא, או claim של פתיחת שער שכבר נתפס) מחזירה null - האות למי שקרא
+    // ששרת אחר כבר מטפל באירוע הזה והוא צריך לעצור.
     const rows = await this.sql`
       INSERT INTO messages (id, conversation_id, role, content, ts, meta)
       VALUES (${id}, ${msg.conversationId}, ${msg.role}, ${msg.content}, ${msg.ts}, ${msg.meta ? JSON.stringify(msg.meta) : null})
+      ON CONFLICT DO NOTHING
       RETURNING *`;
+    if (!rows[0]) return null;
     await this.sql`UPDATE conversations SET updated_at = ${Date.now()} WHERE id = ${msg.conversationId}`;
     return this.toMessage(rows[0]);
   }

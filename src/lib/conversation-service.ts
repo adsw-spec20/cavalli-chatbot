@@ -6,7 +6,7 @@
  * אם נציג אנושי השתלט על השיחה (status=human), הבוט שותק.
  */
 
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { getRepo } from "./db";
 import { generateReply } from "./claude";
 import { loadBusinessConfig } from "./business-config-store";
@@ -937,8 +937,13 @@ export async function handleIncomingMessage(
 
   let conversation = foundConversation;
   if (!conversation) {
+    // מזהה דטרמיניסטי (27.8): שתי הפעלות מקבילות של ההודעה הראשונה מלקוח חדש
+    // (משלוח כפול של מטא) מתנגשות על אותו id ב-DB ומקבלות את אותה שיחה -
+    // במקום ליצור שתי שיחות כפולות. hash כדי שמספר טלפון לא יישב גלוי במזהה
+    // (שמופיע בלוגים ובכתובות של הפאנל). Playground ממשיך עם המזהה מהדפדפן.
+    const detId = `c-${input.channel}-${createHash("sha256").update(input.channelUserId).digest("hex").slice(0, 16)}`;
     conversation = await repo.createConversation({
-      id: input.conversationId ?? randomUUID(), // מכבד מזהה שנוצר אצל הלקוח (Playground)
+      id: input.conversationId ?? detId,
       channel: input.channel,
       customerId,
       status: "bot",
@@ -982,6 +987,11 @@ export async function handleIncomingMessage(
     ts: myTs,
     meta: input.messageId ? { ...(input.meta || {}), mid: input.messageId } : input.meta,
   });
+  // אינדקס הייחודיות דחה את השמירה: אותו mid כבר נשמר על ידי שרת מקביל
+  // (משלוח כפול של מטא) - הוא זה שעונה ללקוח, אנחנו עוצרים כאן.
+  if (!myMsg) {
+    return { conversationId: conversation.id, reply: null, status: conversation.status };
+  }
 
   // אם נציג אנושי מטפל בשיחה (או שהבוט הושהה לה) - הבוט שותק, אבל הצוות מקבל
   // פוש על כל הודעת המשך של הלקוח: בלעדיו יש התראה רק ברגע ההסלמה, וכל מה

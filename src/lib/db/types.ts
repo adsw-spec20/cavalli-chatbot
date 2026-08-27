@@ -122,6 +122,18 @@ export interface ConversationSummary {
   messageCount?: number;
 }
 
+/** אירוע שער ליומן הדשבורד (נגזר מהודעות מערכת עם meta מתאים) */
+export interface GateEvent {
+  ts: number;
+  conversationId: string;
+  customerName?: string;
+  channel: string;
+  /** opened = נפתח; blocked = נחסם (שעות/מגבלה/וטו); error = כשל טכני */
+  result: "opened" | "blocked" | "error";
+  /** תיאור קצר (תוכן הודעת המערכת) */
+  detail: string;
+}
+
 export interface Repository {
   // ----- לקוחות -----
   upsertCustomer(
@@ -147,10 +159,27 @@ export interface Repository {
   deleteConversation(id: string): Promise<void>;
 
   // ----- הודעות -----
-  addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage>;
+  /**
+   * שמירת הודעה. מחזיר null אם ההודעה נדחתה על ידי אינדקס ייחודיות
+   * (למשל mid שכבר נשמר על ידי שרת מקביל - משלוח כפול של מטא):
+   * null = "שרת אחר מטפל בהודעה הזאת, עצור".
+   */
+  addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage | null>;
   /** limit: מחזיר רק את N ההודעות האחרונות (בסדר כרונולוגי) - לפאנל במובייל */
   getMessages(conversationId: string, opts?: { limit?: number }): Promise<StoredMessage[]>;
   getAllMessages(): Promise<StoredMessage[]>;
+
+  // ----- תחזוקה ותצפית -----
+  /**
+   * מיזוג שיחה כפולה: מעביר את כל ההודעות אל שיחת היעד, מעדכן את זמן
+   * העדכון של היעד לגדול מביניהם, ומוחק את שורת שיחת המקור (בלי לגעת
+   * בהודעות וב-לקוח). בטוח להרצה חוזרת.
+   */
+  mergeConversationInto(fromId: string, toId: string): Promise<void>;
+  /** מחיקת עותקים כפולים של אותה הודעת ערוץ (אותו mid) בשיחה - משאיר את הראשון */
+  dedupeMessagesByMid(conversationId: string): Promise<number>;
+  /** אירועי שער (פתיחות/חסימות/כשלים) מכל השיחות, מהחדש לישן - ליומן בדשבורד */
+  listGateEvents(limit: number): Promise<GateEvent[]>;
 
   // ----- ידע נלמד (שאלות פתוחות + תשובות) -----
   addOpenQuestion(data: {

@@ -14,6 +14,7 @@ import type {
   ConversationFilter,
   ConversationSummary,
   Customer,
+  GateEvent,
   LearnedQA,
   Repository,
   StoredMessage,
@@ -108,6 +109,9 @@ export class FileRepository implements Repository {
     data: Omit<Conversation, "createdAt" | "updatedAt">
   ): Promise<Conversation> {
     const store = await this.load();
+    // אידמפוטנטי כמו בפרודקשן: מזהה קיים מחזיר את השיחה הקיימת
+    const existing = store.conversations[data.id];
+    if (existing) return existing;
     const now = Date.now();
     const conversation: Conversation = { ...data, createdAt: now, updatedAt: now };
     store.conversations[conversation.id] = conversation;
@@ -187,14 +191,83 @@ export class FileRepository implements Repository {
       });
   }
 
-  async addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage> {
+  async addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage | null> {
     const store = await this.load();
+    // שיקוף אינדקסי הייחודיות של פרודקשן: mid כפול או claim תפוס -> null
+    const mid = msg.meta?.mid;
+    if (mid && store.messages.some((m) => m.meta?.mid === mid)) return null;
+    const retryOf = (msg.meta as Record<string, unknown> | undefined)?.gateRetryOf;
+    if (
+      retryOf &&
+      store.messages.some((m) => (m.meta as Record<string, unknown> | undefined)?.gateRetryOf === retryOf)
+    ) {
+      return null;
+    }
     const message: StoredMessage = { ...msg, id: randomUUID() };
     store.messages.push(message);
     const conv = store.conversations[msg.conversationId];
     if (conv) conv.updatedAt = Date.now();
     await this.persist();
     return message;
+  }
+
+  async mergeConversationInto(fromId: string, toId: string): Promise<void> {
+    const store = await this.load();
+    if (fromId === toId || !store.conversations[toId]) return;
+    let maxTs = 0;
+    for (const m of store.messages) {
+      if (m.conversationId === fromId) m.conversationId = toId;
+      if (m.conversationId === toId) maxTs = Math.max(maxTs, m.ts);
+    }
+    const from = store.conversations[fromId];
+    const to = store.conversations[toId];
+    to.updatedAt = Math.max(to.updatedAt, from?.updatedAt ?? 0, maxTs);
+    delete store.conversations[fromId];
+    await this.persist();
+  }
+
+  async dedupeMessagesByMid(conversationId: string): Promise<number> {
+    const store = await this.load();
+    const seen = new Set<string>();
+    const before = store.messages.length;
+    store.messages = store.messages
+      .slice()
+      .sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id))
+      .filter((m) => {
+        const mid =
+          m.conversationId === conversationId ? (m.meta?.mid as string | undefined) : undefined;
+        if (!mid) return true;
+        if (seen.has(mid)) return false;
+        seen.add(mid);
+        return true;
+      });
+    const removed = before - store.messages.length;
+    if (removed) await this.persist();
+    return removed;
+  }
+
+  async listGateEvents(limit: number): Promise<GateEvent[]> {
+    const store = await this.load();
+    return store.messages
+      .filter((m) => {
+        const meta = m.meta as Record<string, unknown> | undefined;
+        return meta?.gateOpened === true || meta?.gateBlocked === true || meta?.gateError === true;
+      })
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, limit)
+      .map((m) => {
+        const meta = m.meta as Record<string, unknown>;
+        const conv = store.conversations[m.conversationId];
+        const customer = conv ? store.customers[conv.customerId] : undefined;
+        return {
+          ts: m.ts,
+          conversationId: m.conversationId,
+          customerName: customer?.name,
+          channel: conv?.channel ?? "?",
+          result: meta.gateOpened === true ? "opened" : meta.gateError === true ? "error" : "blocked",
+          detail: m.content.slice(0, 200),
+        } as GateEvent;
+      });
   }
 
   async getMessages(
