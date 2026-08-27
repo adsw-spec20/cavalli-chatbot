@@ -761,6 +761,41 @@ function couldBeGateRequest(text: string): boolean {
  * מבצעת את תופעות הלוואי (הודעות מערכת/הסלמה) אך *לא* שומרת את הודעת ה-assistant
  * הסופית - הקורא עושה זאת (וגם מטפל בגילוי ה-AI בתור ראשון).
  */
+/** "050-979-8917" - הנייד של העסק, נגזר מקישור הוואטסאפ שבקונפיג */
+function mobileDisplayNumber(cfg: BusinessConfig): string | undefined {
+  const m = (cfg.contact.whatsapp ?? "").match(/wa\.me\/(\d{10,14})/);
+  if (!m) return undefined;
+  const digits = m[1].startsWith("972") ? "0" + m[1].slice(3) : m[1];
+  return digits.length === 10
+    ? `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`
+    : digits;
+}
+
+/**
+ * שני מספרי ההתקשרות של העסק בשורה אחת: "‎*8149 או 050-979-8917".
+ * תמיד שניהם - לפעמים קו אחד לא נענה (בקשת בעל העסק 27.8). באנגלית הנייד
+ * קודם: חיוג כוכבית לא עובד מסים זרים של תיירים.
+ */
+function contactPhonesText(cfg: BusinessConfig, lang: "he" | "en" = "he"): string {
+  const mobile = mobileDisplayNumber(cfg);
+  const star = cfg.contact.phone;
+  const nums = (lang === "en" ? [mobile, star] : [star, mobile]).filter(Boolean) as string[];
+  return nums.join(lang === "en" ? " or " : " או ");
+}
+
+/**
+ * הודעת בלבול/תלונה קצרה שמגיעה מיד אחרי פתיחת שער - "???", "לא נפתח".
+ * קצרה בלבד: משפט ארוך הוא כנראה נושא חדש, שילך למודל.
+ */
+function isGateConfusion(text: string): boolean {
+  const t = (text ?? "").trim();
+  if (!t || t.length > 40) return false;
+  if (/^[?؟!.\s]+$/.test(t)) return true;
+  return /לא נפתח|לא עובד|לא עבד|עדיין סגור|לא פתחת|נשאר סגור|not open|didn'?t open|still closed|doesn'?t work|not working/i.test(
+    t
+  );
+}
+
 async function runGateOpen(opts: {
   repo: ReturnType<typeof getRepo>;
   conversationId: string;
@@ -771,14 +806,26 @@ async function runGateOpen(opts: {
   gLang: "he" | "en";
   priorMessages: Array<{ meta?: Record<string, unknown>; ts: number }>;
   modelReply: string;
+  /** פתיחה חוזרת אחרי דיווח "לא נפתח": מסומנת בנפרד ומקבלת נוסח משלה */
+  retry?: boolean;
 }): Promise<{ reply: string; status: "bot" | "human"; opened: boolean }> {
-  const { repo, conversationId, cfg, customerId, customerName, channel, gLang, priorMessages, modelReply } = opts;
+  const { repo, conversationId, cfg, customerId, customerName, channel, gLang, priorMessages, modelReply, retry } = opts;
   const phone = cfg.contact.phone;
 
   // מחוץ לחלון פעולת השער (שעה לפני הפתיחה עד שעה אחרי הסגירה) - מפנים לחיוג ישיר.
   // מתג העקיפה (PALGATE_IGNORE_HOURS) גובר, אם דלוק (לבדיקות).
   if (!gateHoursBypassed() && !isWithinGateWindow(cfg)) {
     console.log(`[GATE] נחסם: מחוץ לחלון הפעולה. conv=${conversationId}`);
+    // נרשם כהודעת מערכת כדי שיופיע ביומן השער בדשבורד (כמו שאר החסימות)
+    await repo
+      .addMessage({
+        conversationId,
+        role: "system",
+        content: "🅿️ בקשת פתיחת שער נחסמה - מחוץ לחלון שעות הפעילות",
+        ts: Date.now(),
+        meta: { activity: true, gateBlocked: true },
+      })
+      .catch(() => undefined);
     return {
       reply:
         gLang === "en"
@@ -815,14 +862,29 @@ async function runGateOpen(opts: {
   try {
     await openParkingGate();
     const bypassNote = gateHoursBypassed() && !isWithinGateWindow(cfg) ? " (עקיפת שעות זמנית - מצב הקמה)" : "";
-    console.log(`[GATE] השער נפתח${bypassNote}. conv=${conversationId} customer=${customerId}`);
+    console.log(`[GATE] השער נפתח${retry ? " (ניסיון חוזר)" : ""}${bypassNote}. conv=${conversationId} customer=${customerId}`);
     await repo.addMessage({
       conversationId,
       role: "system",
-      content: `🅿️ שער החניה נפתח לבקשת הלקוח${bypassNote}`,
+      content: retry
+        ? `🅿️ השער נפתח שוב (הלקוח דיווח שלא נפתח)${bypassNote}`
+        : `🅿️ שער החניה נפתח לבקשת הלקוח${bypassNote}`,
       ts: Date.now(),
-      meta: { activity: true, gateOpened: true },
+      // gateRetry מסומן כדי שפתיחה חוזרת לא תשמש עוגן לעוד פתיחה חוזרת
+      meta: retry ? { activity: true, gateOpened: true, gateRetry: true } : { activity: true, gateOpened: true },
     });
+    if (retry) {
+      // נוסח ייעודי לניסיון חוזר: מרגיע, ונותן מוצא ידני אם גם זה לא עבד
+      const phones = contactPhonesText(cfg, gLang);
+      return {
+        reply:
+          gLang === "en"
+            ? `Just opened it again 🙂 Give the gate a few seconds. If it still doesn't open, call us at ${contactPhonesText(cfg, "en")} and we'll open it manually.`
+            : `פתחתי שוב עכשיו 🙂 תנו לשער כמה שניות. אם הוא עדיין לא נפתח, חייגו ${phones} ונפתח לכם ידנית.`,
+        status: "bot",
+        opened: true,
+      };
+    }
     // אישור ברור ומגוון ללקוח, נייטרלי (בלי "להיכנס"/"לצאת" - לא יודעים לאיזה כיוון).
     // אם למודל (בנתיב הגיבוי) כבר יש ניסוח שמזכיר שער - שומרים אותו.
     const heConfirm = GATE_OPEN_CONFIRMATIONS_HE[Math.floor(Math.random() * GATE_OPEN_CONFIRMATIONS_HE.length)];
@@ -1224,6 +1286,94 @@ export async function handleIncomingMessage(
     return { conversationId: conversation.id, reply: fReply, status: "human" };
   }
 
+  // ----- "פתחתי ולא נפתח" (27.8, תקרית Neta): בלבול אחרי פתיחה = ניסיון חוזר -----
+  // "???" או "לא נפתח" מיד אחרי אישור פתיחה = הלקוח תקוע מול שער סגור. במקום
+  // שהמודל ינחש ("נראה שלא עבד") - הקוד פותח שוב, פעם אחת בלבד לכל פתיחה
+  // מקורית (claim אטומי דרך אינדקס gateRetryOf - רק שרת אחד זוכה). דיווח נוסף
+  // אחרי הניסיון החוזר = הסלמה דחופה לצוות. המודל לא מעורב בכלל.
+  if (isGateConfigured() && isGateConfusion(lastUserTurn)) {
+    const recent = stored.slice(-8);
+    const anchor = [...recent]
+      .reverse()
+      .find((m) => m.meta?.gateOpened === true && m.ts < myTs && m.ts > Date.now() - 10 * 60_000);
+    if (anchor) {
+      const gLang = langFromHistory(history);
+      if (anchor.meta?.gateRetry === true) {
+        // גם הניסיון החוזר לא עזר - עכשיו זה עניין לבן אדם, מיד
+        const summary = "הלקוח מדווח שהשער לא נפתח גם אחרי פתיחה חוזרת - צריך פתיחה ידנית עכשיו";
+        await repo.updateConversation(conversation.id, {
+          status: "human",
+          escalated: true,
+          escalationReason: "השער לא נפתח ללקוח",
+          escalationSummary: summary,
+          meta: { urgent: true },
+        });
+        await repo.addMessage({
+          conversationId: conversation.id,
+          role: "system",
+          content: "🅿️ השער לא נפתח גם אחרי ניסיון חוזר - הוסלם בדחיפות",
+          ts: Date.now(),
+          meta: { escalation: true, gateError: true, summary },
+        });
+        sendEscalationEmail({
+          customerName: customer.name,
+          channel: input.channel,
+          reason: "השער לא נפתח ללקוח",
+          summary,
+          urgent: true,
+          conversationId: conversation.id,
+        }).catch(() => {});
+        const stuckReply =
+          gLang === "en"
+            ? `I see it's still stuck, sorry about that 🙏 I've alerted our team urgently. Fastest fix: call ${contactPhonesText(cfgEarly, "en")} and they'll open it manually.`
+            : `אני רואה שזה עדיין תקוע, מצטער 🙏 העברתי את זה לצוות בדחיפות. הכי מהיר: חייגו ${contactPhonesText(cfgEarly)} ויפתחו לכם ידנית.`;
+        await namePromise.catch(() => undefined);
+        await repo.addMessage({
+          conversationId: conversation.id,
+          role: "assistant",
+          content: stuckReply,
+          ts: Date.now(),
+          meta: { escalation: true },
+        });
+        await recordFreeReply();
+        return { conversationId: conversation.id, reply: stuckReply, status: "human" };
+      }
+      // claim אטומי: משלוח כפול של אותה הודעת בלבול -> רק שרת אחד פותח בפועל
+      const claim = await repo.addMessage({
+        conversationId: conversation.id,
+        role: "system",
+        content: "🅿️ הלקוח דיווח שהשער לא נפתח - מנסה לפתוח שוב",
+        ts: Date.now(),
+        meta: { activity: true, gateRetryOf: anchor.id },
+      });
+      if (!claim) {
+        return { conversationId: conversation.id, reply: null, status: conversation.status };
+      }
+      const gate = await runGateOpen({
+        repo,
+        conversationId: conversation.id,
+        cfg: cfgEarly,
+        customerId,
+        customerName: customer.name,
+        channel: input.channel,
+        gLang,
+        priorMessages: stored,
+        modelReply: "",
+        retry: true,
+      });
+      await namePromise.catch(() => undefined);
+      await repo.addMessage({
+        conversationId: conversation.id,
+        role: "assistant",
+        content: gate.reply,
+        ts: Date.now(),
+        meta: gate.status === "human" ? { escalation: true } : { gateReply: true },
+      });
+      await recordFreeReply();
+      return { conversationId: conversation.id, reply: gate.reply, status: gate.status };
+    }
+  }
+
   // ----- פתיחת שער החניה (זיהוי דטרמיניסטי, בלי מודל) -----
   // בקשה מפורשת לפתוח את השער מטופלת ישירות בקוד - לא נשאלת מהמודל, כי הוא לפעמים
   // מסרב לבד כשהוא "חושב" שסגור. הקוד אוכף שעות בעצמו (עם מתג העקיפה הזמני).
@@ -1614,7 +1764,8 @@ export async function handleIncomingMessage(
         role: "system",
         content: `🅿️ בקשת פתיחת שער מהמודל נחסמה - הודעת הלקוח לא נוגעת לשער ("${lastUserTurn.slice(0, 80)}")`,
         ts: Date.now(),
-        meta: { activity: true, gateVetoed: true },
+        // gateBlocked: שהחסימה תופיע גם ביומן השער בדשבורד
+        meta: { activity: true, gateVetoed: true, gateBlocked: true },
       })
       .catch(() => undefined);
   } else if (result.openGateRequested && isGateConfigured()) {

@@ -55,6 +55,11 @@ export default function Dashboard({
 }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [err, setErr] = useState("");
+  // יומן השער (27.8): מי הבוט פתח לו את השער ומתי, כולל חסימות וכשלים
+  const [gateLog, setGateLog] = useState<{
+    events: Array<{ ts: number; customerName?: string; channel: string; result: string; detail: string }>;
+    openedLast7Days: number;
+  } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -62,8 +67,16 @@ export default function Dashboard({
       api<Stats>(token, "/stats")
         .then((s) => alive && setStats(s))
         .catch((e) => alive && setErr(e instanceof Error ? e.message : "שגיאה"));
+    const loadGate = () =>
+      api<{ events: []; openedLast7Days: number }>(token, "/gate-log")
+        .then((g) => alive && setGateLog(g))
+        .catch(() => {});
     load();
-    const t = setInterval(load, 15000);
+    loadGate();
+    const t = setInterval(() => {
+      load();
+      loadGate();
+    }, 15000);
     return () => {
       alive = false;
       clearInterval(t);
@@ -113,6 +126,51 @@ export default function Dashboard({
         />
         <Kpi label="הבוט פתר לבד" value={`${stats.deflectionRate}%`} sub={`מתוך ${stats.totalConversations} שיחות`} accent />
       </div>
+
+      {/* 🅿️ יומן שער החניה (27.8): מי, מתי ומה קרה - נגזר מהודעות המערכת */}
+      {gateLog && gateLog.events.length > 0 && (
+        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold text-sm">🅿️ פעילות שער החניה</h3>
+            <span className="text-xs text-[var(--muted)]">
+              {gateLog.openedLast7Days} פתיחות ב-7 הימים האחרונים
+            </span>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {gateLog.events.slice(0, 50).map((e, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 text-xs border-b border-[var(--border)] last:border-0 py-1.5"
+              >
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 font-semibold ${
+                    e.result === "opened"
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : e.result === "error"
+                        ? "bg-red-500/15 text-red-400"
+                        : "bg-amber-500/15 text-amber-300"
+                  }`}
+                >
+                  {e.result === "opened" ? "נפתח" : e.result === "error" ? "כשל" : "נחסם"}
+                </span>
+                <span className="font-medium truncate">{e.customerName || "לקוח"}</span>
+                <span className="text-[var(--muted)] shrink-0">
+                  {CHANNELS[e.channel]?.label ?? e.channel}
+                </span>
+                <span className="text-[var(--muted)] mr-auto whitespace-nowrap shrink-0">
+                  {new Date(e.ts).toLocaleString("he-IL", {
+                    timeZone: "Asia/Jerusalem",
+                    day: "numeric",
+                    month: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         {/* 7 ימים */}
