@@ -25,7 +25,7 @@ import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint
 import { isOpenNow, israelDateISO, effectiveHoursToday, isWithinGateWindow } from "./business-hours";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
-import type { BusinessConfig } from "./business-config";
+import { contactPhonesText, type BusinessConfig } from "./business-config";
 import { AGENT_MSG_PREFIX, type Channel, type ConversationMessage } from "./channels/types";
 
 // ביטויים שמעידים שהבוט לא ידע לענות (פער ידע) -> נרשום את שאלת הלקוח
@@ -498,11 +498,23 @@ function buildQuickAnswer(
         `ובכל מקרה, נשמח לארח אתכם אצלנו 🤍`
       );
     case "parking": {
-      if (!cfg.parking?.available || !cfg.parking.summary) return null;
-      const nav = cfg.contact.navigationUrl ? `\nניווט ישיר אלינו: ${cfg.contact.navigationUrl}` : "";
-      const video = hasParkingVideo ? "\nמצרף סרטון קצר שמראה בדיוק איך מגיעים אליה 🙂" : "";
-      const gate = isGateConfigured() ? `\n\n${gateOfferLine()}` : "";
-      return `${cfg.parking.summary}${nav}${video}${gate}`;
+      if (!cfg.parking?.available) return null;
+      // שוכתב 27.8 (בקשת בעל העסק): קצר וקולע, מבנה אחיד - [חניה חינמית
+      // צמודה] + [סרטון/ניווט] + [שער סגור? תכתבו ואפתח] - בלי שכבות ובלי
+      // כפילות שער. הסרטון עושה את העבודה הקשה של ההסבר.
+      const variants = hasParkingVideo
+        ? [
+            "יש לנו חניה חינמית גדולה צמודה למסעדה 🙂 הכניסה קצת מוסתרת, אז מצרף סרטון קצר שמראה בדיוק איך נכנסים.",
+            "בטח! יש חניה חינמית ממש ליד המסעדה 🙂 שולח סרטון קצר עם הדרך אליה.",
+            "יש חניה חינמית צמודה אלינו 🙂 היא קצת מתחבאת, אז הנה סרטון קצר שמראה את הכניסה.",
+            "החניה שלנו חינמית וממש צמודה 🙂 מצרף סרטון קצר שמראה איך נכנסים אליה.",
+          ]
+        : [
+            `יש חניה חינמית ממש צמודה אלינו 🙂${cfg.contact.navigationUrl ? ` הנה ניווט ב-Waze ישר לכניסה:\n${cfg.contact.navigationUrl}` : ""}`,
+          ];
+      const base = variants[Math.floor(Math.random() * variants.length)];
+      const gate = isGateConfigured() ? `\n${gateOfferLine()}` : "";
+      return `${base}${gate}`;
     }
     case "menu": {
       if (!cfg.menu?.length) return null;
@@ -527,7 +539,7 @@ function buildQuickAnswer(
       // בלי הפניה לוואטסאפ: הלקוח כבר מדבר איתנו כאן, וזה אותו מענה בכל הערוצים
       const ways = [
         cfg.contact.reservationUrl ? `- אונליין: ${cfg.contact.reservationUrl}` : "",
-        cfg.contact.phone ? `- בטלפון: ${cfg.contact.phone}` : "",
+        cfg.contact.phone ? `- בטלפון: ${contactPhonesText(cfg)}` : "",
         `- או פשוט כאן בצ'אט 🙂 כתבו לי כמה תהיו ומתי, ואעביר את הבקשה לצוות`,
       ].filter(Boolean).join("\n");
       return `אפשר להזמין מקום בכמה דרכים:\n${ways}\n\nכדאי לדעת: הזמנות מראש הן לשעות הערב (מ-18:00) בימים שני-חמישי. בימי ראשון (שנסגרים ב-18:00), בשעות היום ובימי שישי מגיעים בלי הזמנה - על בסיס מקום פנוי 🙂`;
@@ -547,18 +559,19 @@ function buildQuickAnswer(
  * יקבלו תמיד את אותו משפט.
  */
 function gateOfferLine(lang: "he" | "en" = "he"): string {
+  // בלי אימוג'י בכוונה: משפט הפתיחה של התשובה כבר נושא אחד, ואחד מספיק להודעה
   if (lang === "en") {
     const en = [
-      "And when you reach the parking gate, just text me here and I'll open it for you 🙂",
-      "By the way, if the gate is closed when you arrive - message me and I'll open it right away 🙂",
+      "If the gate is closed when you arrive, just text me here and I'll open it.",
+      "Gate closed? One message here and I'll open it for you.",
     ];
     return en[Math.floor(Math.random() * en.length)];
   }
   const he = [
-    "ודרך אגב, כשתגיעו לשער החניה - פשוט תכתבו לי כאן ואפתח לכם אותו 🙂",
-    "וכשמגיעים לשער החניה, שולחים לי הודעה ואני פותח לכם אותו מיד 🙂",
-    "טיפ קטן: אם השער סגור כשתגיעו, תכתבו לי כאן ואפתח לכם אותו 🙂",
-    "וכשתגיעו לחניה, אני יכול גם לפתוח לכם את השער - רק תכתבו לי 🙂",
+    "ואם השער סגור, תכתבו לי כאן ואפתח לכם.",
+    "ואם השער סגור, הודעה אחת כאן ואני פותח לכם.",
+    "שער סגור? תכתבו לי ואפתח לכם מיד.",
+    "ואם השער סגור, תכתבו לי ואני כבר פותח.",
   ];
   return he[Math.floor(Math.random() * he.length)];
 }
@@ -601,7 +614,8 @@ function buildHandoffMessage(
 ): string {
   const phone = config.contact.phone;
   if (lang === "en") {
-    const phoneLine = phone ? ` You can also call us at ${phone}.` : "";
+    const phonesEn = contactPhonesText(config, "en");
+    const phoneLine = phonesEn ? ` You can also call us at ${phonesEn}.` : "";
     const body = isOpenNow(config)
       ? `connecting you with a member of our team, and they'll get back to you right here shortly.${phoneLine}`
       : `passing your message on to our team. We're currently closed, so they'll get back to you during opening hours.${phoneLine}`;
@@ -610,7 +624,7 @@ function buildHandoffMessage(
     }
     return `Got it 🙋 I'm ${body}`;
   }
-  const phoneLine = phone ? ` אפשר גם להתקשר ל-${phone}.` : "";
+  const phoneLine = phone ? ` אפשר גם לחייג ${contactPhonesText(config)}.` : "";
   const body = isOpenNow(config)
     ? `מעביר אותך לנציג אנושי מהצוות, והוא יחזור אליך כאן בהקדם.${phoneLine}`
     : `מעביר את פנייתך לצוות. אנחנו כרגע סגורים, אז הם יחזרו אליך בשעות הפעילות.${phoneLine}`;
@@ -798,28 +812,6 @@ function couldBeGateRequest(text: string): boolean {
  * מבצעת את תופעות הלוואי (הודעות מערכת/הסלמה) אך *לא* שומרת את הודעת ה-assistant
  * הסופית - הקורא עושה זאת (וגם מטפל בגילוי ה-AI בתור ראשון).
  */
-/** "050-979-8917" - הנייד של העסק, נגזר מקישור הוואטסאפ שבקונפיג */
-function mobileDisplayNumber(cfg: BusinessConfig): string | undefined {
-  const m = (cfg.contact.whatsapp ?? "").match(/wa\.me\/(\d{10,14})/);
-  if (!m) return undefined;
-  const digits = m[1].startsWith("972") ? "0" + m[1].slice(3) : m[1];
-  return digits.length === 10
-    ? `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`
-    : digits;
-}
-
-/**
- * שני מספרי ההתקשרות של העסק בשורה אחת: "‎*8149 או 050-979-8917".
- * תמיד שניהם - לפעמים קו אחד לא נענה (בקשת בעל העסק 27.8). באנגלית הנייד
- * קודם: חיוג כוכבית לא עובד מסים זרים של תיירים.
- */
-function contactPhonesText(cfg: BusinessConfig, lang: "he" | "en" = "he"): string {
-  const mobile = mobileDisplayNumber(cfg);
-  const star = cfg.contact.phone;
-  const nums = (lang === "en" ? [mobile, star] : [star, mobile]).filter(Boolean) as string[];
-  return nums.join(lang === "en" ? " or " : " או ");
-}
-
 /**
  * הודעת בלבול/תלונה קצרה שמגיעה מיד אחרי פתיחת שער - "???", "לא נפתח".
  * קצרה בלבד: משפט ארוך הוא כנראה נושא חדש, שילך למודל.
@@ -889,8 +881,8 @@ async function runGateOpen(opts: {
     return {
       reply:
         gLang === "en"
-          ? `I've already opened the gate several times in the last hour, so I'm pausing for safety 🙏 Our team can help${phone ? ` at ${phone}` : ""}.`
-          : `פתחתי כבר את השער כמה פעמים בשעה האחרונה, אז אני עוצר ליתר ביטחון 🙏 הצוות ישמח לעזור${phone ? ` בטלפון ${phone}` : ""}.`,
+          ? `I've already opened the gate several times in the last hour, so I'm pausing for safety 🙏 Our team can help - call ${contactPhonesText(cfg, "en")}.`
+          : `פתחתי כבר את השער כמה פעמים בשעה האחרונה, אז אני עוצר ליתר ביטחון 🙏 הצוות ישמח לעזור - חייגו ${contactPhonesText(cfg)}.`,
       status: "bot",
       opened: false,
     };
@@ -957,8 +949,8 @@ async function runGateOpen(opts: {
     return {
       reply:
         gLang === "en"
-          ? `I couldn't open the gate just now 🙏 I've alerted our team - they'll help right away.${phone ? ` You can also call ${phone}.` : ""}`
-          : `לא הצלחתי לפתוח את השער כרגע 🙏 עדכנתי את הצוות שיעזרו מיד.${phone ? ` אפשר גם להתקשר ל-${phone}.` : ""}`,
+          ? `I couldn't open the gate just now 🙏 I've alerted our team - they'll help right away. You can also call ${contactPhonesText(cfg, "en")}.`
+          : `לא הצלחתי לפתוח את השער כרגע 🙏 עדכנתי את הצוות שיעזרו מיד. אפשר גם לחייג ${contactPhonesText(cfg)}.`,
       status: "human",
       opened: false,
     };
@@ -1173,14 +1165,15 @@ export async function handleIncomingMessage(
       if (now - last > RATE_NOTICE_COOLDOWN_MS) {
         rateNoticeAt.set(conversation.id, now);
         if (rateNoticeAt.size > 1000) rateNoticeAt.delete(rateNoticeAt.keys().next().value as string);
-        const phone = (await loadBusinessConfig()).contact.phone;
+        const rlCfg = await loadBusinessConfig();
+        const phone = rlCfg.contact.phone;
         const rlLang = detectLang(
           recent.filter((m) => m.role === "user").slice(-3).map((m) => m.content)
         );
         const notice =
           rlLang === "en"
-            ? `I got a few messages in a row 🙂 I'm answering them one by one, so give me a moment and I'll get back to you.${phone ? ` If it's urgent, you can call our team at ${phone}.` : ""}`
-            : `קיבלתי כמה הודעות ברצף 🙂 אני עונה אחת-אחת, אז שנייה של סבלנות ואני אחזור אליך.${phone ? ` אם זה דחוף אפשר להתקשר לצוות ב-${phone}.` : ""}`;
+            ? `I got a few messages in a row 🙂 I'm answering them one by one, so give me a moment and I'll get back to you.${phone ? ` If it's urgent, you can call our team at ${contactPhonesText(rlCfg, "en")}.` : ""}`
+            : `קיבלתי כמה הודעות ברצף 🙂 אני עונה אחת-אחת, אז שנייה של סבלנות ואני אחזור אליך.${phone ? ` אם זה דחוף אפשר לחייג ${contactPhonesText(rlCfg)}.` : ""}`;
         await repo.addMessage({
           conversationId: conversation.id,
           role: "assistant",
@@ -1667,8 +1660,8 @@ export async function handleIncomingMessage(
     const phone = cfg.contact.phone;
     const fallback =
       langFromHistory(history) === "en"
-        ? `Sorry, I'm having a technical issue right now 🙏 I've passed your message to our team and they'll get back to you here.${phone ? ` If it's urgent, you can call us at ${phone}.` : ""}`
-        : `סליחה, יש לי תקלה טכנית כרגע 🙏 העברתי את הפנייה לצוות שלנו והם יחזרו אליך כאן.${phone ? ` אם זה דחוף, אפשר להתקשר ל-${phone}.` : ""}`;
+        ? `Sorry, I'm having a technical issue right now 🙏 I've passed your message to our team and they'll get back to you here.${phone ? ` If it's urgent, you can call us at ${contactPhonesText(cfg, "en")}.` : ""}`
+        : `סליחה, יש לי תקלה טכנית כרגע 🙏 העברתי את הפנייה לצוות שלנו והם יחזרו אליך כאן.${phone ? ` אם זה דחוף, אפשר לחייג ${contactPhonesText(cfg)}.` : ""}`;
     await repo.addMessage({
       conversationId: conversation.id,
       role: "assistant",
