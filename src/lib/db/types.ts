@@ -178,6 +178,12 @@ export interface Repository {
   mergeConversationInto(fromId: string, toId: string): Promise<void>;
   /** מחיקת עותקים כפולים של אותה הודעת ערוץ (אותו mid) בשיחה - משאיר את הראשון */
   dedupeMessagesByMid(conversationId: string): Promise<number>;
+  /**
+   * תיקון שיחה אחרי מיזוג: קובע סטטוס (אם ניתן) בלי לגעת בזמן העדכון,
+   * ומחשב מחדש את זמן העדכון מההודעה האמיתית האחרונה - כך שיחה ישנה
+   * שמוזגה לא קופצת לראש תיבת הפניות כאילו קרה בה משהו עכשיו.
+   */
+  repairConversationAfterMerge(id: string, status?: "bot" | "human" | "closed"): Promise<void>;
   /** אירועי שער (פתיחות/חסימות/כשלים) מכל השיחות, מהחדש לישן - ליומן בדשבורד */
   listGateEvents(limit: number): Promise<GateEvent[]>;
 

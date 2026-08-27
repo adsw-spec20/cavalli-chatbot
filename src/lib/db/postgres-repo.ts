@@ -388,6 +388,20 @@ export class PostgresRepository implements Repository {
     return rows.length;
   }
 
+  async repairConversationAfterMerge(
+    id: string,
+    status?: "bot" | "human" | "closed"
+  ): Promise<void> {
+    await this.init();
+    if (status) {
+      await this.sql`UPDATE conversations SET status = ${status} WHERE id = ${id}`;
+    }
+    await this.sql`
+      UPDATE conversations
+      SET updated_at = COALESCE((SELECT MAX(ts) FROM messages WHERE conversation_id = ${id}), created_at)
+      WHERE id = ${id}`;
+  }
+
   async listGateEvents(limit: number): Promise<GateEvent[]> {
     await this.init();
     // נגזר ישירות מהודעות המערכת של השער - מקור אמת אחד, שורד מיזוגי שיחות.

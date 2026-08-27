@@ -22,6 +22,45 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "master only" }, { status: 403 });
   }
   const body = await req.json().catch(() => ({}));
+
+  // ----- תיקון אחרי המיזוג של 27.8 (הבאג: זמני העדכון נדרסו ל"עכשיו" -----
+  // וסטטוסים ישנים קמו לתחייה): מחזיר לכל שיחה את הזמן האמיתי של ההודעה
+  // האחרונה שלה, וסטטוס יעד אם סופק - אלא אם הגיעו הודעות חדשות מאז המיזוג
+  // (sinceTs), כי אז השיחה באמת חיה ואסור לסגור אותה.
+  if (body.action === "repair-merge") {
+    const items = Array.isArray(body.items) ? body.items : [];
+    const sinceTs = typeof body.sinceTs === "number" ? body.sinceTs : 0;
+    const repo = getRepo();
+    let repaired = 0;
+    let statusSkipped = 0;
+    for (const item of items) {
+      if (typeof item?.id !== "string") continue;
+      let status: "bot" | "human" | "closed" | undefined =
+        item.status === "bot" || item.status === "human" || item.status === "closed"
+          ? item.status
+          : undefined;
+      if (status) {
+        // לעולם לא פותחים מחדש שיחה סגורה - זה דורס סגירות ידניות של הצוות
+        const current = await repo.getConversation(item.id);
+        if (current?.status === "closed" && status !== "closed") {
+          status = undefined;
+          statusSkipped++;
+        }
+      }
+      if (status && sinceTs) {
+        const msgs = await repo.getMessages(item.id, { limit: 1 });
+        const lastTs = msgs[msgs.length - 1]?.ts ?? 0;
+        if (lastTs > sinceTs) {
+          status = undefined; // פעילות חדשה מאז המיזוג - לא נוגעים בסטטוס
+          statusSkipped++;
+        }
+      }
+      await repo.repairConversationAfterMerge(item.id, status);
+      repaired++;
+    }
+    return NextResponse.json({ ok: true, repaired, statusSkipped });
+  }
+
   if (body.action !== "merge-duplicates") {
     return NextResponse.json({ error: "unknown action" }, { status: 400 });
   }
@@ -64,19 +103,18 @@ export async function POST(req: NextRequest) {
     };
 
     if (execute) {
-      // מצב "חשוב" לא הולך לאיבוד: אם אחת הכפולות בטיפול נציג / מוסלמת /
-      // מושהית - השורדת מאמצת את זה. סגורה נשארת סגורה רק אם כולן סגורות.
-      const anyHuman = sorted.some((c) => c.status === "human");
-      const anyOpen = sorted.some((c) => c.status !== "closed");
-      const escalatedSrc = [...sorted].reverse().find((c) => c.escalated);
+      // הסטטוס של השורדת = הסטטוס של השיחה הפעילה ביותר בקבוצה (לא OR של
+      // כולן - הלקח מ-27.8: OR החיה סטטוסים תקועים מלפני חודשים). דגלים
+      // מצטברים (הסלמה/השהיה/גילוי-AI) נלקחים רק מהשיחה העדכנית.
+      const newest = [...sorted].sort((a, b) => b.updatedAt - a.updatedAt)[0];
       await repo.updateConversation(survivor.id, {
-        status: anyHuman ? "human" : anyOpen ? "bot" : "closed",
-        escalated: sorted.some((c) => c.escalated) || undefined,
-        escalationReason: escalatedSrc?.escalationReason,
-        escalationSummary: escalatedSrc?.escalationSummary,
-        botPaused: sorted.some((c) => c.botPaused) || undefined,
+        status: newest.status,
+        escalated: newest.escalated || undefined,
+        escalationReason: newest.escalationReason,
+        escalationSummary: newest.escalationSummary,
+        botPaused: newest.botPaused || undefined,
         disclosedAi: sorted.some((c) => c.disclosedAi) || undefined,
-        meta: sorted.some((c) => c.meta?.urgent) ? { ...(survivor.meta || {}), urgent: true } : survivor.meta,
+        meta: newest.meta?.urgent ? { ...(survivor.meta || {}), urgent: true } : survivor.meta,
       });
       for (const dup of dups) {
         await repo.mergeConversationInto(dup.id, survivor.id);
@@ -84,6 +122,9 @@ export async function POST(req: NextRequest) {
       // אחרי איחוד: אותה הודעת ערוץ עשויה להופיע פעמיים (כל שרת שמר עותק
       // לשיחה שלו) - מסירים את הכפולים לפי mid
       entry.dedupedMids = await repo.dedupeMessagesByMid(survivor.id);
+      // זמן העדכון חוזר לזמן ההודעה האמיתית האחרונה - שהמיזוג לא "יקפיץ"
+      // שיחות ישנות לראש תיבת הפניות (הבאג של 27.8)
+      await repo.repairConversationAfterMerge(survivor.id);
       // הזמנות שהצביעו על שיחה שמוזגה - מצביעות עכשיו על השורדת
       for (const r of reservations) {
         if (entry.merged.includes(r.conversationId)) {

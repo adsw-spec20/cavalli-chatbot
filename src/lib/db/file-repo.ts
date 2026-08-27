@@ -246,6 +246,21 @@ export class FileRepository implements Repository {
     return removed;
   }
 
+  async repairConversationAfterMerge(
+    id: string,
+    status?: "bot" | "human" | "closed"
+  ): Promise<void> {
+    const store = await this.load();
+    const conv = store.conversations[id];
+    if (!conv) return;
+    if (status) conv.status = status;
+    const maxTs = store.messages
+      .filter((m) => m.conversationId === id)
+      .reduce((acc, m) => Math.max(acc, m.ts), 0);
+    conv.updatedAt = maxTs || conv.createdAt;
+    await this.persist();
+  }
+
   async listGateEvents(limit: number): Promise<GateEvent[]> {
     const store = await this.load();
     return store.messages
