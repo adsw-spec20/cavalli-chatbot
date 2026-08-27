@@ -624,6 +624,43 @@ const HISTORY_LIMIT = 12;
 // חלון מורחב לשיחות שנציג היה מעורב בהן (ראה בניית ההיסטוריה)
 const HISTORY_LIMIT_AFTER_AGENT = 24;
 
+// ----- עזרי רשתות הביטחון להזמנות (27.8, תקרית כרם) -----
+
+/** משפט ההעברה-לצוות התקני בסוף זרימת הזמנה (הפיקדון מוזכר רק כאן, אחרי האישור) */
+function reservationHandoffLine(lang: "he" | "en"): string {
+  return lang === "en"
+    ? "I've passed your request to our team - they'll check availability and update you right here soon. If there's room, you'll get a payment link to complete a 100 ILS deposit, and the reservation is final once it's paid 🙂"
+    : "קיבלתי את כל הפרטים 🙂 אני מעביר את הבקשה לצוות - הם יבדקו שיש מקום פנוי ויעדכנו כאן בצ'אט בהקדם. אם יש מקום, תקבלו קישור לתשלום פיקדון של 100 ש\"ח, וההזמנה סופית אחרי התשלום.";
+}
+
+/** אישור קצר וחד-משמעי של הלקוח ("כן", "נכון", "מאשר") - ותו לא */
+const RESERVATION_AFFIRM_RX =
+  /^(כן|כן כן|נכון|הכל נכון|מאשר|מאשרת|אישור|סבבה|יאללה|מעולה|אוקיי|אוקי|בדיוק|ok|okay|yes|yep|sure)[\s,!.🙂😊👍🙏]*$/i;
+
+/** האם הודעת הבוט הקודמת היא סיכום הזמנה שמבקש אישור */
+function isReservationSummaryMsg(text: string): boolean {
+  if (!/הכל נכון|נכון\?|correct\?|לאשר/.test(text)) return false;
+  let score = 0;
+  if (/לסיכום|הנה הפרטים|סועדים:|to sum up/i.test(text)) score += 2;
+  if (/\d{1,2}:\d{2}/.test(text)) score++;
+  if (/על שם|שם:|name/i.test(text)) score++;
+  if (/אנשים|סועדים|people/i.test(text)) score++;
+  return score >= 2;
+}
+
+/**
+ * מדיניות ההזמנות בקוד (לנתיב הדטרמיניסטי): ערבי שני-חמישי מ-18:00 בלבד.
+ * ראשון נסגר ב-18:00 (אין ערב), שישי אין הזמנות בכלל, שבת סגור.
+ * הנתיב הדטרמיניסטי לא יוצר בקשה שלא עומדת בזה - משאיר למודל/לצוות.
+ */
+function reservationPolicyOk(dateISO?: string, time?: string): boolean {
+  if (!dateISO || !time || !/^\d{4}-\d{2}-\d{2}$/.test(dateISO)) return false;
+  const [y, m, d] = dateISO.split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=ראשון
+  if (dow < 1 || dow > 4) return false; // רק שני(1) עד חמישי(4)
+  return time >= "18:00";
+}
+
 // טיפול ברצף הודעות + הגבלת קצב
 const DEBOUNCE_MS = 500; // המתנה קצרה לראות אם המשתמש שולח עוד הודעה (קצר = מענה מהיר יותר)
 const RATE_PER_MIN = 15;
@@ -1842,10 +1879,7 @@ export async function handleIncomingMessage(
     // רשת ביטחון (תוקן 11.8 - קודם עדכן את result.text אחרי ש-reply כבר חולץ,
     // ולכן לא עבד בפועל): אחרי קריאת הכלי הלקוח חייב לדעת שהבקשה עברה לצוות
     // ושאישור מגיע רק אחרי בדיקת זמינות - לעולם לא ניסוח שנשמע כאילו סגור.
-    const handoffLine =
-      langFromHistory(history) === "en"
-        ? "I've passed your request to our team - they'll check availability and update you right here soon. If there's room, you'll get a Tabit link to complete a 100 ILS deposit, and the reservation is final once it's paid 🙂"
-        : "קיבלתי את כל הפרטים 🙂 אני מעביר את הבקשה לצוות - הם יבדקו שיש מקום פנוי ויעדכנו כאן בצ'אט בהקדם. אם יש מקום, תקבלו קישור לתשלום פיקדון של 100 ש\"ח, וההזמנה סופית אחרי התשלום.";
+    const handoffLine = reservationHandoffLine(langFromHistory(history));
     // ⚠️ רק על כרטיס חדש (תוקן 24.8): כשהמודל קורא לכלי פעם שנייה על אותה בקשה
     // (קרה בפועל אחרי "תודה רבה!" בסוף הזרימה), createReservation מחזיר את
     // הכרטיס הקיים - ואז הדבקת משפט ההעברה שוב שלחה ללקוח את כל הסיכום מחדש.
@@ -1855,6 +1889,129 @@ export async function handleIncomingMessage(
       } else if (!/צוות|team/i.test(reply)) {
         reply = `${reply}\n\n${handoffLine}`;
       }
+    }
+  }
+
+  // ----- רשתות ביטחון להזמנות (27.8, תקרית כרם) -----
+  // המודל אסף את כל הפרטים, ענה "בשמחה!" ולא פתח בקשה - הלקוחה הגיעה למסעדה
+  // והמארחת לא ידעה כלום. שלוש שכבות בקוד, שרצות רק כשהמודל לא קרא לכלי:
+  //   ב. הלקוח אישר סיכום והמודל לא פתח בקשה -> הקוד פותח בעצמו, ורק כשהחילוץ
+  //      הדטרמיניסטי מסכים עם הסיכום שהבוט עצמו כתב (שתי קריאות בלתי תלויות),
+  //      התאריך עומד במדיניות (ערבי שני-חמישי מ-18:00), ואין בקשה ממתינה.
+  //   א. הכל נאסף והמודל ענה אישור קצר בלי סיכום -> הקוד שולח את הסיכום בעצמו.
+  //   ג. ווצ'דוג: הכל נאסף וכלום לא נפתח אחרי כמה תורות -> התראה שקטה לצוות.
+  // (מצב "אצל נציג" כבר חזר מוקדם למעלה - לכאן מגיעות רק שיחות שהבוט עונה בהן)
+  if (!result.reservation && looksLikeReservationFlow(history)) {
+    try {
+      // חלון חילוץ: רק מאז ההזמנה הקודמת / פתיחת הפרק האחרון של השיחה -
+      // שפרטים מביקור קודם (השיחה היא חלון מתמשך אחד ללקוח) לא ידלפו לבקשה
+      // חדשה. התאריכים נפתרים לפי זמן הכתיבה של כל הודעה (ts).
+      const boundaryTs = stored.reduce(
+        (acc, m) =>
+          m.role === "system" && (m.meta?.reservation === true || m.meta?.reopened === true) && m.ts > acc
+            ? m.ts
+            : acc,
+        0
+      );
+      const windowMsgs = stored.filter((m) => m.ts > boundaryTs).slice(-30);
+      const slots = extractReservationSlots(windowMsgs);
+      const complete = slots.missing.length === 0;
+
+      if (complete) {
+        const gLang = langFromHistory(history);
+        const prevAssistant = [...stored].reverse().find((m) => m.role === "assistant");
+        const pendingExists = (await loadReservations()).some(
+          (r) => r.status === "pending" && r.conversationId === conversation.id
+        );
+        const policyOk = reservationPolicyOk(slots.dateISO, slots.time);
+        const dLabel = reservationDateLabel(slots.dateISO);
+
+        // --- רשת ב: אישור לסיכום שהמודל לא תרגם לבקשה -> הקוד פותח אותה ---
+        const summaryAgrees =
+          !!prevAssistant &&
+          isReservationSummaryMsg(prevAssistant.content) &&
+          prevAssistant.content.includes(String(slots.people)) &&
+          prevAssistant.content.includes(slots.time!) &&
+          (slots.name ? prevAssistant.content.includes(slots.name) : false);
+        if (
+          !pendingExists &&
+          policyOk &&
+          summaryAgrees &&
+          RESERVATION_AFFIRM_RX.test(lastUserTurn.trim())
+        ) {
+          const created = await createReservation({
+            conversationId: conversation.id,
+            customerId,
+            channel: input.channel,
+            customerName: customer.name,
+            people: slots.people!,
+            dateText: dLabel ?? slots.dateISO!,
+            dateISO: slots.dateISO,
+            time: slots.time!,
+            name: slots.name!,
+            phone: slots.phone!,
+            notes: `ישיבה ${slots.seating}`,
+          });
+          if (Date.now() - created.createdAt < 10_000) {
+            console.log(`[RESV-NET] הקוד פתח בקשה שהמודל פספס. conv=${conversation.id}`);
+            await repo.addMessage({
+              conversationId: conversation.id,
+              role: "system",
+              content: `🍽️ נפתחה בקשת הזמנה (רשת ביטחון - המודל אישר בלי לפתוח): ${slots.people} אנשים, ${dLabel} ב-${slots.time}, ע"ש ${slots.name} (${slots.phone})`,
+              ts: Date.now(),
+              meta: { activity: true, reservation: true },
+            });
+          }
+          reply = reservationHandoffLine(gLang);
+        } else if (
+          // --- רשת א: תשובת אישור קצרה בלי סיכום -> הקוד שולח סיכום ---
+          !pendingExists &&
+          policyOk &&
+          reply.trim().length > 0 &&
+          reply.trim().length < 25 &&
+          !reply.includes("?") &&
+          !RESERVATION_AFFIRM_RX.test(lastUserTurn.trim())
+        ) {
+          console.log(`[RESV-NET] תשובה קצרה עם פרטים מלאים - הקוד שולח סיכום. conv=${conversation.id}`);
+          reply =
+            gLang === "en"
+              ? `One moment before we wrap up, here are the details 🙂\nGuests: *${slots.people}*\nDate: *${dLabel}*\nTime: *${slots.time}*\nSeating: *${slots.seating}*\nName: ${slots.name}\nPhone: ${slots.phone}\nIs everything correct?`
+              : `רגע לפני שסוגרים, הנה הפרטים 🙂\nסועדים: *${slots.people}*\nתאריך: *${dLabel}*\nשעה: *${slots.time}*\nישיבה: *${slots.seating}*\nשם: ${slots.name}\nטלפון: ${slots.phone}\nהכל נכון?`;
+        } else if (!pendingExists) {
+          // --- רשת ג (ווצ'דוג): הכל נאסף מזמן וכלום לא נפתח - שהצוות ידע ---
+          const phoneIdx = windowMsgs.findIndex(
+            (m) => m.role === "user" && slots.phone && m.content.includes(slots.phone)
+          );
+          const userMsgsAfter =
+            phoneIdx >= 0 ? windowMsgs.slice(phoneIdx + 1).filter((m) => m.role === "user").length : 0;
+          const alreadyFlagged = windowMsgs.some((m) => m.meta?.reservationWatchdog === true);
+          if (userMsgsAfter >= 4 && !alreadyFlagged) {
+            console.log(`[RESV-NET] ווצ'דוג: פרטים מלאים בלי בקשה. conv=${conversation.id}`);
+            await repo.updateConversation(conversation.id, {
+              escalated: true,
+              escalationReason: "ייתכן שבקשת הזמנה נפלה בין הכיסאות",
+              escalationSummary: `נאספו כל הפרטים ולא נפתחה בקשה: ${slots.people} אנשים, ${dLabel} ב-${slots.time}, ע"ש ${slots.name} (${slots.phone}) - כדאי לחזור ללקוח`,
+            });
+            await repo.addMessage({
+              conversationId: conversation.id,
+              role: "system",
+              content: "🍽️ ווצ'דוג הזמנות: כל הפרטים נאספו אך לא נפתחה בקשה - נשלחה התראה לצוות",
+              ts: Date.now(),
+              meta: { activity: true, reservationWatchdog: true },
+            });
+            sendEscalationEmail({
+              customerName: customer.name,
+              channel: input.channel,
+              reason: "ייתכן שבקשת הזמנה נפלה בין הכיסאות",
+              summary: `${slots.people} אנשים, ${dLabel} ב-${slots.time}, ע"ש ${slots.name} (${slots.phone})`,
+              conversationId: conversation.id,
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (err) {
+      // רשת ביטחון לעולם לא מפילה את הזרימה הרגילה
+      console.error("[RESV-NET] שגיאה ברשתות ההזמנה:", err);
     }
   }
 

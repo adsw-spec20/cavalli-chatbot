@@ -34,11 +34,32 @@ export function looksLikeReservationFlow(messages: ConversationMessage[]): boole
   return messages.slice(-8).some((m) => FLOW_MARKERS.test(m.content));
 }
 
+// מספרים במילים (27.8, תרחיש כרם: "נהיה שתיים" לא זוהה). נספרים כאנשים
+// רק בהקשר מפורש של כמות - מילת מספר לבדה ("שמונה") היא לרוב תשובת שעה.
+const HE_NUM_WORDS: Record<string, number> = {
+  אחד: 1, אחת: 1, שניים: 2, שתיים: 2, שנים: 2,
+  שלושה: 3, שלוש: 3, ארבעה: 4, ארבע: 4, חמישה: 5, חמש: 5,
+  שישה: 6, שש: 6, שבעה: 7, שבע: 7, שמונה: 8, תשעה: 9, תשע: 9, עשרה: 10, עשר: 10,
+};
+const HE_NUM_ALT = Object.keys(HE_NUM_WORDS).join("|");
+
 function parsePeople(t: string): number | undefined {
   if (/זוג(?![א-ת])|זוגי/.test(t)) return 2;
   const strong = t.match(/(\d{1,3})\s*(?:אנשים|איש(?![א-ת])|סועדים|נפשות|מקומות)/);
   if (strong) {
     const n = Number(strong[1]);
+    if (n >= 1 && n <= 200) return n;
+  }
+  // "נהיה שתיים" / "ארבעה אנשים" - מילת מספר עם הקשר כמות מפורש בלבד
+  // בכוונה בלי "נגיע": "נגיע שמונה" הוא לרוב שעה ("נגיע [ב]שמונה"), לא כמות
+  const word =
+    t.match(new RegExp(`(?:נהיה|יהיו|אנחנו)\\s+(${HE_NUM_ALT})(?![א-ת])`)) ??
+    t.match(new RegExp(`(?<![א-ת])(${HE_NUM_ALT})\\s+(?:אנשים|סועדים|איש(?![א-ת]))`));
+  if (word) return HE_NUM_WORDS[word[1]];
+  // "נהיה 4" (ספרות אחרי פועל כמות) - אבל לא שעה ("נגיע ב-20:00")
+  const verbDigits = t.match(/(?:נהיה|יהיו)\s+(\d{1,3})(?![:.\d])/);
+  if (verbDigits) {
+    const n = Number(verbDigits[1]);
     if (n >= 1 && n <= 200) return n;
   }
   // "ל-4" אבל לא שעה ("ל-20:00") ולא תאריך ("ל-13.8")
@@ -89,15 +110,23 @@ function parsePhone(t: string): string | undefined {
  * סורק את הודעות הלקוח (החדשה ביותר מנצחת) ומחזיר את מה שכבר נמסר.
  * ההודעות של הבוט לא נסרקות בכוונה - כדי שהצעה שלו ("על שם מי?") לא תיקרא
  * כאילו הלקוח כבר ענה, ושמספרי הטלפון של המסעדה לא ייקלטו כטלפון הלקוח.
+ *
+ * עיגון תאריכים (27.8): כשלהודעות יש חותמת זמן (ts), "מחר"/"היום" נפתרים
+ * לפי מועד הכתיבה של אותה הודעה - לא לפי עכשיו. בלי זה, "מחר" מלפני שבוע
+ * (בשיחה מתמשכת) היה נקרא כ"מחר של היום". קריטי לנתיב הדטרמיניסטי שיוצר
+ * הזמנות אמיתיות.
  */
-export function extractReservationSlots(messages: ConversationMessage[]): ReservationSlots {
-  const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content);
+export function extractReservationSlots(
+  messages: Array<{ role: string; content: string; ts?: number }>
+): ReservationSlots {
+  const userMsgs = messages.filter((m) => m.role === "user");
   const slots: ReservationSlots = { missing: [] };
 
-  for (const t of userTexts) {
+  for (const msg of userMsgs) {
+    const t = msg.content;
     const people = parsePeople(t);
     if (people !== undefined) slots.people = people;
-    const iso = resolveReservationDate(t, undefined);
+    const iso = resolveReservationDate(t, undefined, msg.ts ? new Date(msg.ts) : undefined);
     if (iso) slots.dateISO = iso;
     const time = parseTime(t);
     if (time) slots.time = time;
