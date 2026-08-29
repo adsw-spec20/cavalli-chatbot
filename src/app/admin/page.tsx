@@ -19,6 +19,7 @@ const Settings = dynamic(() => import("./Settings"), { loading: lazyLoading });
 const Media = dynamic(() => import("./Media"), { loading: lazyLoading });
 const Reservations = dynamic(() => import("./Reservations"), { loading: lazyLoading });
 const Questionnaire = dynamic(() => import("./Questionnaire"), { loading: lazyLoading });
+const TeamQuestions = dynamic(() => import("./TeamQuestions"), { loading: lazyLoading });
 const TestChat = dynamic(() => import("./TestChat"), { loading: lazyLoading });
 
 // טיפוגרפיה: Heebo לגוף (קריא ונקי בעברית), Frank Ruhl Libre לכותרות ומספרים (תחושת מסעדה יוקרתית)
@@ -96,13 +97,14 @@ input:focus,textarea:focus,select:focus{box-shadow:0 0 0 3px color-mix(in srgb,v
 .no-scrollbar::-webkit-scrollbar{display:none}.no-scrollbar{scrollbar-width:none}
 `;
 
-type Tab = "inbox" | "reservations" | "knowledge" | "questionnaire" | "dashboard" | "business" | "media" | "test" | "settings";
+type Tab = "inbox" | "reservations" | "knowledge" | "questionnaire" | "teamq" | "dashboard" | "business" | "media" | "test" | "settings";
 // הסדר לפי תדירות שימוש: פניות -> לימוד הבוט -> נתונים -> תחזוקה
 const TABS: { key: Tab; label: string }[] = [
   { key: "inbox", label: "תיבת פניות" },
   { key: "reservations", label: "הזמנות" },
   { key: "knowledge", label: "ידע" },
   { key: "questionnaire", label: "שאלון" },
+  { key: "teamq", label: "שאלות לצוות" },
   { key: "dashboard", label: "דשבורד" },
   { key: "business", label: "מידע עסקי" },
   { key: "media", label: "מדיה" },
@@ -117,6 +119,7 @@ const TAB_META: Record<Exclude<Tab, "inbox">, { title: string; subtitle: string 
   reservations: { title: "הזמנות מקום", subtitle: "אישור בקשות, אג'נדת ההזמנות הקרובות והיסטוריה - הלקוח מקבל כל תשובה ישירות בצ'אט" },
   knowledge: { title: "ניהול ידע", subtitle: "שאלות שהבוט לא ידע לענות עליהן, והידע שכבר נלמד - כל תשובה שנשמרת נכנסת לתוקף מיד" },
   questionnaire: { title: "שאלון הידע", subtitle: "234 שאלות שנבנו מניתוח כל השיחות - כל תשובה נשמרת מיד ומוטמעת לבוט" },
+  teamq: { title: "שאלות לצוות", subtitle: "הרשימה של אדיר לצוות קוואלי - שאלה אחת בכל פעם, בקצב שלכם. כל תשובה נשמרת מיד" },
   dashboard: { title: "דשבורד", subtitle: "תמונת מצב חיה: עומס, ערוצים, נושאים ומגמות" },
   business: { title: "מידע עסקי", subtitle: "שעות, תפריט, תאריכים מיוחדים ופרטי קשר - הבוט מתעדכן מיד עם השמירה" },
   media: { title: "ספריית מדיה", subtitle: "תמונות וסרטונים שהבוט שולח ללקוחות כשרלוונטי" },
@@ -152,6 +155,14 @@ const ICON_PATHS: Record<Tab, ReactNode> = {
       <circle cx="12" cy="12" r="10" />
       <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
       <path d="M12 17h.01" />
+    </>
+  ),
+  teamq: (
+    <>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M18 9h.01" />
+      <path d="M15.09 5a3 3 0 0 1 5.83 1c0 1.5-2 2.25-2 2.25" />
     </>
   ),
   dashboard: (
@@ -1050,6 +1061,7 @@ export default function AdminPage() {
             <Knowledge token={token} onMutate={loadConversations} onTest={openTest} onOpenConversation={openConversation} agentName={agentName} />
           )}
           {tab === "questionnaire" && <Questionnaire token={token} agentName={agentName} />}
+          {tab === "teamq" && <TeamQuestions token={token} agentName={agentName} />}
           {tab === "dashboard" && <Dashboard token={token} onOpenInbox={openInbox} onOpenKnowledge={() => go("knowledge")} onOpenReservations={() => go("reservations")} />}
           {tab === "business" && <BusinessEditor token={token} />}
           {tab === "media" && <Media token={token} />}
