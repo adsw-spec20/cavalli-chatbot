@@ -192,82 +192,90 @@ export default function TeamQuestions({
   }
 
   // ---------- אשף: שאלה אחת על המסך ----------
+  // מובייל (עוצב מחדש 29.8 אחרי פידבק): כותרת דקה, כפתורים דביקים בתחתית
+  // שנשארים גלויים מעל המקלדת, וגלילה אוטומטית לשדה כשמתחילים להקליד.
   const progress = Math.round(((doneCount + skippedCount) / TEAM_QUESTIONS_TOTAL) * 100);
   const existing = answers[q.id];
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4">
-      {/* פס התקדמות */}
-      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4">
-        <div className="flex items-center justify-between text-xs text-[var(--muted)] mb-2">
-          <span>
-            שאלה {idx + 1} מתוך {TEAM_QUESTIONS_TOTAL} · {q.emoji} {q.group}
+    <div className="max-w-2xl mx-auto flex flex-col gap-3">
+      {/* שורת התקדמות דקה */}
+      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2">
+        <div className="flex items-center justify-between text-xs text-[var(--muted)]">
+          <span className="truncate">
+            {idx + 1}/{TEAM_QUESTIONS_TOTAL} · {q.emoji} {q.group}
           </span>
-          <button onClick={() => setMode("overview")} className="underline hover:text-[var(--text)]">
+          <button
+            onClick={() => setMode("overview")}
+            className="shrink-0 underline hover:text-[var(--text)] mr-2"
+          >
             מבט על
           </button>
         </div>
-        <div className="h-2 rounded-full bg-[var(--panel2)] overflow-hidden">
-          <div
-            className="h-full bg-[var(--accent)] transition-all"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-        <div className="text-[11px] text-[var(--muted)] mt-1">
-          {doneCount} נענו · {skippedCount} דולגו
+        <div className="h-1.5 rounded-full bg-[var(--panel2)] overflow-hidden mt-1.5">
+          <div className="h-full bg-[var(--accent)] transition-all" style={{ width: `${progress}%` }} />
         </div>
       </div>
 
       {/* השאלה */}
-      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 md:p-5 space-y-2.5">
         {q.task && (
           <span className="inline-block text-[11px] bg-purple-500/15 text-purple-300 rounded-full px-2 py-0.5 font-semibold">
             📋 משימה לביצוע
           </span>
         )}
-        <h2 className="text-lg font-semibold leading-snug">{q.text}</h2>
+        <h2 className="text-base md:text-lg font-semibold leading-snug">{q.text}</h2>
         {q.note && <p className="text-xs text-[var(--muted)]">{q.note}</p>}
         {existing?.answer && (
-          <p className="text-xs text-emerald-400">✓ כבר נענתה - אפשר לערוך את התשובה למטה</p>
+          <p className="text-xs text-emerald-400">✓ כבר נענתה - אפשר לערוך את התשובה</p>
         )}
 
         <textarea
           ref={textareaRef}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onFocus={() => {
+            // אחרי שאנימציית המקלדת נגמרת - מוודאים שהשדה והכפתורים באזור הנראה
+            setTimeout(() => {
+              textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }, 350);
+          }}
           rows={4}
           placeholder={q.task ? "מה בוצע / מה סוכם…" : "התשובה שלך…"}
           className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2.5 outline-none focus:border-[var(--accent)] resize-none"
           style={{ fontSize: 16 }}
         />
+      </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+      {/* כפתורי הפעולה - דביקים לתחתית אזור הגלילה: תמיד נראים, גם כשהמקלדת פתוחה */}
+      <div className="sticky bottom-0 bg-[var(--bg)] border-t border-[var(--border)] -mx-3 px-3 py-2.5 md:static md:bg-transparent md:border-0 md:m-0 md:p-0">
+        <div className="flex items-center gap-2">
           <button
             onClick={saveAndNext}
             disabled={saving || !draft.trim()}
-            className="bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-xl px-5 py-2.5 text-sm disabled:opacity-40"
+            className="flex-1 md:flex-none bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-xl px-5 min-h-11 text-sm disabled:opacity-40"
           >
             {saving ? "שומר…" : "שמור והבא ←"}
           </button>
           <button
             onClick={skip}
             disabled={saving}
-            className="border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm hover:bg-[var(--panel2)] disabled:opacity-40"
+            className="border border-[var(--border)] rounded-xl px-4 min-h-11 text-sm hover:bg-[var(--panel2)] disabled:opacity-40"
           >
-            דלג בינתיים
+            דלג
           </button>
           <button
             onClick={back}
             disabled={idx === 0}
-            className="text-sm text-[var(--muted)] rounded-xl px-3 py-2.5 hover:text-[var(--text)] disabled:opacity-30"
+            className="text-sm text-[var(--muted)] rounded-xl px-2.5 min-h-11 hover:text-[var(--text)] disabled:opacity-30"
           >
             → חזור
           </button>
-          {savedFlash && <span className="text-xs text-emerald-400">נשמר ✓</span>}
+          {savedFlash && <span className="text-xs text-emerald-400 shrink-0">נשמר ✓</span>}
         </div>
       </div>
 
-      <p className="text-[11px] text-[var(--muted)] text-center">
+      <p className="hidden md:block text-[11px] text-[var(--muted)] text-center">
         כל תשובה נשמרת מיד. אפשר לצאת ולחזור מתי שנוח - ממשיכים מאותה נקודה.
       </p>
     </div>
