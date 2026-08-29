@@ -859,7 +859,11 @@ export default function AdminPage() {
 
   const NavLinks = (
     <nav className="flex flex-col gap-0.5">
-      {TABS.filter((t) => !(t.key === "questionnaire" && quizComplete)).map((t) => {
+      {/* השאלון הגדול הוא כלי עבודה של המנהל הראשי בלבד (בקשה 29.8, למניעת
+          בלבול עם "שאלות לצוות"); מוסתר גם כשהושלם */}
+      {TABS.filter(
+        (t) => !(t.key === "questionnaire" && (quizComplete || role !== "master"))
+      ).map((t) => {
         const active = tab === t.key;
         return (
           <button
@@ -1060,7 +1064,7 @@ export default function AdminPage() {
           {tab === "knowledge" && (
             <Knowledge token={token} onMutate={loadConversations} onTest={openTest} onOpenConversation={openConversation} agentName={agentName} />
           )}
-          {tab === "questionnaire" && <Questionnaire token={token} agentName={agentName} />}
+          {tab === "questionnaire" && role === "master" && <Questionnaire token={token} agentName={agentName} />}
           {tab === "teamq" && <TeamQuestions token={token} agentName={agentName} />}
           {tab === "dashboard" && <Dashboard token={token} onOpenInbox={openInbox} onOpenKnowledge={() => go("knowledge")} onOpenReservations={() => go("reservations")} />}
           {tab === "business" && <BusinessEditor token={token} />}
