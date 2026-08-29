@@ -45,8 +45,10 @@ export default function TeamQuestions({
     api<Record<string, TQAnswer>>(token, "/team-questions")
       .then((a) => {
         setAnswers(a);
-        // מתחילים מהשאלה הפתוחה הראשונה; אם הכל נענה - מבט על
-        const firstOpen = FLAT.findIndex((q) => !a[q.id]?.answer && !a[q.id]?.skipped);
+        // ברירת המחדל היא תמיד ממשק המענה, כל עוד יש שאלה בלי תשובה -
+        // גם אם דילגו עליה בעבר (דילוג = "אחר כך", לא "ירדה מהפרק").
+        // רק כשהכל באמת נענה עוברים למבט-על.
+        const firstOpen = FLAT.findIndex((q) => !a[q.id]?.answer);
         if (firstOpen === -1) setMode("overview");
         else setIdx(firstOpen);
         setLoaded(true);
@@ -94,16 +96,15 @@ export default function TeamQuestions({
   }
 
   function advance() {
-    // לשאלה הפתוחה הבאה אחרי הנוכחית; אם אין - מבט על
+    // לשאלה הבאה שאין לה תשובה (שאלות שדולגו בעבר נחשבות עדיין "לענות");
+    // בסוף הסבב - מבט על
     for (let i = idx + 1; i < FLAT.length; i++) {
-      const a = answers[FLAT[i].id];
-      if (!a?.answer && !a?.skipped) {
+      if (!answers[FLAT[i].id]?.answer) {
         setIdx(i);
         return;
       }
     }
-    if (idx + 1 < FLAT.length) setIdx(idx + 1);
-    else setMode("overview");
+    setMode("overview");
   }
 
   async function saveAndNext() {
