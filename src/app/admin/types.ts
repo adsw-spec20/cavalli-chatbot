@@ -147,7 +147,7 @@ export interface LearnedQA {
   topic?: string;
 }
 
-export type ReservationStatus = "pending" | "approved" | "declined";
+export type ReservationStatus = "pending" | "approved" | "declined" | "cancelled";
 
 export interface Reservation {
   id: string;

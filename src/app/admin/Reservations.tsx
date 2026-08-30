@@ -24,6 +24,9 @@ function approveTemplate(r: Reservation): string {
 function declineTemplate(r: Reservation): string {
   return `היי ${r.name} 🙏 בדקנו ולצערנו אין לנו מקום פנוי ל-${templateDate(r)} בשעה ${r.time}. אפשר לנסות שעה או יום אחרים, או לחייג *8149 או 050-979-8917 ונשמח לעזור למצוא פתרון.`;
 }
+function cancelTemplate(r: Reservation): string {
+  return `היי ${r.name} 🙏 ההזמנה שלך ל-${templateDate(r)} בשעה ${r.time} (${r.people} אנשים) בוטלה. אם מדובר בטעות או שתרצה לקבוע מחדש, אפשר לחייג *8149 או 050-979-8917 ונשמח לעזור.`;
+}
 
 /** מספר ישראלי -> קישור וואטסאפ (wa.me), או null אם לא ניתן לזהות */
 function waLink(phone: string): string | null {
@@ -66,6 +69,7 @@ function weekdayOf(iso?: string): string | null {
 const STATUS_CHIP: Record<string, { label: string; cls: string }> = {
   approved: { label: "נמצא מקום", cls: "bg-emerald-500/15 text-emerald-400" },
   declined: { label: "אין מקום", cls: "bg-red-500/15 text-red-400" },
+  cancelled: { label: "בוטלה", cls: "bg-neutral-500/15 text-neutral-400" },
 };
 
 /** צ'יפ מידע קטן בתוך כרטיס */
@@ -101,6 +105,72 @@ function PhoneActions({ phone }: { phone: string }) {
   );
 }
 
+/** תיבת עריכת ההודעה ללקוח (אישור / דחייה / ביטול) - משותפת לבקשות הממתינות ולהזמנות הקרובות. */
+function ComposeBox({
+  composing,
+  setComposing,
+  onSubmit,
+  onSubmitSilent,
+  busy,
+}: {
+  composing: { id: string; action: "approve" | "decline" | "cancel"; text: string };
+  setComposing: (c: { id: string; action: "approve" | "decline" | "cancel"; text: string } | null) => void;
+  onSubmit: () => void;
+  onSubmitSilent: () => void;
+  busy: boolean;
+}) {
+  const a = composing.action;
+  const header =
+    a === "approve"
+      ? "הודעת האישור שתישלח ללקוח (אפשר לערוך):"
+      : a === "cancel"
+        ? "הודעת הביטול שתישלח ללקוח (אפשר לערוך):"
+        : "הודעת הדחייה שתישלח ללקוח (אפשר לערוך):";
+  const primaryLabel = busy
+    ? "שולח…"
+    : a === "approve"
+      ? "✓ אשר ושלח ללקוח"
+      : a === "cancel"
+        ? "בטל ושלח ללקוח"
+        : "שלח ללקוח";
+  const silentLabel = a === "approve" ? "אשר בלי הודעה" : a === "cancel" ? "בטל בלי הודעה" : "דחה בלי הודעה";
+  const primaryCls =
+    a === "approve"
+      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+      : "bg-red-500/15 text-red-400 border border-red-500/40";
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="text-xs text-[var(--muted)]">{header}</div>
+      <textarea
+        value={composing.text}
+        onChange={(e) => setComposing({ ...composing, text: e.target.value })}
+        rows={3}
+        className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+      />
+      <div className="flex gap-2 flex-wrap">
+        <button
+          onClick={onSubmit}
+          disabled={busy}
+          className={`text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 ${primaryCls}`}
+        >
+          {primaryLabel}
+        </button>
+        <button
+          onClick={onSubmitSilent}
+          disabled={busy}
+          className="text-xs border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] rounded-lg px-3 py-1.5"
+          title="עדכון הסטטוס בלבד - הלקוח לא יקבל שום הודעה"
+        >
+          {silentLabel}
+        </button>
+        <button onClick={() => setComposing(null)} className="text-xs text-[var(--muted)] px-2">
+          סגור
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Reservations({
   token,
   agentName,
@@ -117,7 +187,11 @@ export default function Reservations({
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
   // מצב עריכת הודעה: לאיזה כרטיס, איזו פעולה, ומה הטקסט
-  const [composing, setComposing] = useState<{ id: string; action: "approve" | "decline"; text: string } | null>(null);
+  const [composing, setComposing] = useState<{
+    id: string;
+    action: "approve" | "decline" | "cancel";
+    text: string;
+  } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
 
@@ -314,43 +388,13 @@ export default function Reservations({
                   </div>
 
                   {composing?.id === r.id ? (
-                    <div className="mt-3 space-y-2">
-                      <div className="text-xs text-[var(--muted)]">
-                        {composing.action === "approve"
-                          ? "הודעת האישור שתישלח ללקוח (אפשר לערוך):"
-                          : "הודעת הדחייה שתישלח ללקוח (אפשר לערוך):"}
-                      </div>
-                      <textarea
-                        value={composing.text}
-                        onChange={(e) => setComposing({ ...composing, text: e.target.value })}
-                        rows={3}
-                        className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={submit}
-                          disabled={busy === r.id}
-                          className={`text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 ${
-                            composing.action === "approve"
-                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                              : "bg-red-500/15 text-red-400 border border-red-500/40"
-                          }`}
-                        >
-                          {busy === r.id ? "שולח…" : composing.action === "approve" ? "✓ אשר ושלח ללקוח" : "שלח ללקוח"}
-                        </button>
-                        <button
-                          onClick={submitSilent}
-                          disabled={busy === r.id}
-                          className="text-xs border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] rounded-lg px-3 py-1.5"
-                          title="עדכון הסטטוס בלבד - הלקוח לא יקבל שום הודעה"
-                        >
-                          {composing.action === "approve" ? "אשר בלי הודעה" : "דחה בלי הודעה"}
-                        </button>
-                        <button onClick={() => setComposing(null)} className="text-xs text-[var(--muted)] px-2">
-                          ביטול
-                        </button>
-                      </div>
-                    </div>
+                    <ComposeBox
+                      composing={composing}
+                      setComposing={setComposing}
+                      onSubmit={submit}
+                      onSubmitSilent={submitSilent}
+                      busy={busy === r.id}
+                    />
                   ) : (
                     <div className="flex gap-2 mt-3 flex-wrap">
                       <button
@@ -402,27 +446,47 @@ export default function Reservations({
                   </div>
                   <div className="divide-y divide-[var(--border)]">
                     {items.map((r) => (
-                      <div key={r.id} className="px-3 py-2 flex items-center justify-between gap-2 flex-wrap text-sm">
-                        <span className="flex items-center gap-2 min-w-0">
-                          <b style={{ fontVariantNumeric: "tabular-nums" }}>{r.time}</b>
-                          <span className="truncate">
-                            {r.name} · {r.people} אנשים
-                          </span>
-                          {r.notes && (
-                            <span className="text-[var(--muted)] text-xs truncate" title={r.notes}>
-                              💬 {r.notes.slice(0, 30)}
+                      <div key={r.id} className="px-3 py-2 text-sm">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="flex items-center gap-2 min-w-0">
+                            <b style={{ fontVariantNumeric: "tabular-nums" }}>{r.time}</b>
+                            <span className="truncate">
+                              {r.name} · {r.people} אנשים
                             </span>
-                          )}
-                        </span>
-                        <span className="flex items-center gap-2 shrink-0">
-                          <PhoneActions phone={r.phone} />
-                          <button
-                            onClick={() => onOpenConversation(r.conversationId)}
-                            className="text-xs text-[var(--muted)] hover:text-[var(--text)] underline"
-                          >
-                            לשיחה
-                          </button>
-                        </span>
+                            {r.notes && (
+                              <span className="text-[var(--muted)] text-xs truncate" title={r.notes}>
+                                💬 {r.notes.slice(0, 30)}
+                              </span>
+                            )}
+                          </span>
+                          <span className="flex items-center gap-2 shrink-0">
+                            <PhoneActions phone={r.phone} />
+                            <button
+                              onClick={() => onOpenConversation(r.conversationId)}
+                              className="text-xs text-[var(--muted)] hover:text-[var(--text)] underline"
+                            >
+                              לשיחה
+                            </button>
+                            {composing?.id !== r.id && (
+                              <button
+                                onClick={() => setComposing({ id: r.id, action: "cancel", text: cancelTemplate(r) })}
+                                className="text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg px-2 py-1"
+                                title="ביטול ההזמנה המאושרת"
+                              >
+                                בטל הזמנה
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                        {composing?.id === r.id && (
+                          <ComposeBox
+                            composing={composing}
+                            setComposing={setComposing}
+                            onSubmit={submit}
+                            onSubmitSilent={submitSilent}
+                            busy={busy === r.id}
+                          />
+                        )}
                       </div>
                     ))}
                   </div>

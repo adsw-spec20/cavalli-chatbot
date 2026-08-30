@@ -91,7 +91,7 @@ export function resolveReservationDate(
   return modelFallback;
 }
 
-export type ReservationStatus = "pending" | "approved" | "declined";
+export type ReservationStatus = "pending" | "approved" | "declined" | "cancelled";
 
 export interface Reservation {
   id: string;
@@ -182,7 +182,7 @@ export async function createReservation(
 
 export async function setReservationStatus(
   id: string,
-  status: "approved" | "declined",
+  status: "approved" | "declined" | "cancelled",
   handledBy?: string
 ): Promise<Reservation | null> {
   const list = await loadReservations();

@@ -26,8 +26,9 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * טיפול בבקשה: { id, action: "approve"|"decline", message?, agentName, silent? }
+ * טיפול בבקשה: { id, action: "approve"|"decline"|"cancel", message?, agentName, silent? }
  * מעדכן סטטוס ושולח ללקוח את ההודעה בערוץ שממנו הגיע (דרך מנגנון תשובת נציג).
+ * "cancel" = ביטול הזמנה שכבר אושרה (סטטוס -> cancelled).
  * silent=true: עדכון סטטוס בלבד, בלי לשלוח שום הודעה ללקוח (למשל כשסוגרים
  * מולו בטלפון, או בקשת בדיקה שלא צריכה מענה).
  */
@@ -43,18 +44,15 @@ export async function POST(req: NextRequest) {
     agentName?: string;
     silent?: boolean;
   };
-  if (!id || (action !== "approve" && action !== "decline")) {
-    return NextResponse.json({ error: "id + action (approve/decline) required" }, { status: 400 });
+  if (!id || (action !== "approve" && action !== "decline" && action !== "cancel")) {
+    return NextResponse.json({ error: "id + action (approve/decline/cancel) required" }, { status: 400 });
   }
   if (!silent && !message?.trim()) {
     return NextResponse.json({ error: "message required" }, { status: 400 });
   }
 
-  const updated = await setReservationStatus(
-    id,
-    action === "approve" ? "approved" : "declined",
-    agentName
-  );
+  const status = action === "approve" ? "approved" : action === "cancel" ? "cancelled" : "declined";
+  const updated = await setReservationStatus(id, status, agentName);
   if (!updated) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   if (silent) return NextResponse.json({ updated });

@@ -371,7 +371,9 @@ export async function getCustomerEnrichment(customerId: string): Promise<Custome
 
   const today = israelDateISO();
   const active = myReservations
-    .filter((r) => r.status !== "declined" && (!r.dateISO || r.dateISO >= today))
+    .filter(
+      (r) => (r.status === "pending" || r.status === "approved") && (!r.dateISO || r.dateISO >= today)
+    )
     .sort((a, b) => (a.dateISO ?? "9999").localeCompare(b.dateISO ?? "9999"))[0];
 
   return {
