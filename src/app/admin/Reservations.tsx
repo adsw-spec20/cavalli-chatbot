@@ -186,6 +186,9 @@ export default function Reservations({
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
+  // תצוגה נבחרת: ממתינות / קרובות / היסטוריה (במקום שלוש סקציות מוערמות)
+  const [view, setView] = useState<"pending" | "upcoming" | "handled">("pending");
+  const [showSearch, setShowSearch] = useState(false);
   // מצב עריכת הודעה: לאיזה כרטיס, איזו פעולה, ומה הטקסט
   const [composing, setComposing] = useState<{
     id: string;
@@ -298,237 +301,232 @@ export default function Reservations({
     return handled.filter((r) => (r.handledAt ?? 0) >= start).length;
   }, [handled]);
 
+  const views = [
+    { key: "pending" as const, label: "ממתינות", n: pendingView.length, cls: "bg-amber-500/15 text-amber-500 border-amber-500/40" },
+    { key: "upcoming" as const, label: "קרובות", n: upcomingView.length, cls: "bg-emerald-500/15 text-emerald-500 border-emerald-500/40" },
+    { key: "handled" as const, label: "היסטוריה", n: handledView.length, cls: "bg-[var(--panel2)] text-[var(--muted)] border-[var(--border)]" },
+  ];
+
   return (
-    <div className="space-y-5 max-w-[1700px]">
+    <div className="space-y-3 max-w-[900px]">
       {notice && (
         <div className="bg-[var(--panel)] border border-[var(--accent)]/40 rounded-xl px-3 py-2 text-sm">{notice}</div>
       )}
 
-      {/* ===== כותרת + מדדים ===== */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-[var(--panel)] border border-amber-500/30 rounded-2xl p-3 text-center">
-          <div className="text-2xl font-bold text-amber-300 font-display" style={{ fontVariantNumeric: "tabular-nums" }}>
-            {pending.length}
-          </div>
-          <div className="text-[11px] text-[var(--muted)]">ממתינות לתשובה</div>
-        </div>
-        <div className="bg-[var(--panel)] border border-emerald-500/25 rounded-2xl p-3 text-center">
-          <div className="text-2xl font-bold text-emerald-400 font-display" style={{ fontVariantNumeric: "tabular-nums" }}>
-            {upcoming.length}
-          </div>
-          <div className="text-[11px] text-[var(--muted)]">מאושרות קרובות</div>
-        </div>
-        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-3 text-center">
-          <div className="text-2xl font-bold font-display" style={{ fontVariantNumeric: "tabular-nums" }}>
-            {handledToday}
-          </div>
-          <div className="text-[11px] text-[var(--muted)]">טופלו היום</div>
-        </div>
+      {/* מתג תצוגה + חיפוש מתקפל: שורה אחת במקום שלושה אריחים ותיבת חיפוש קבועה */}
+      <div className="flex gap-1.5 items-center">
+        {views.map((v) => {
+          const on = view === v.key;
+          return (
+            <button
+              key={v.key}
+              onClick={() => setView(v.key)}
+              aria-current={on ? "page" : undefined}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm border transition ${
+                on ? "bg-[var(--accent)] text-[var(--accent-fg)] border-transparent font-semibold" : `${v.cls} hover:opacity-80`
+              }`}
+            >
+              {v.label}
+              <span
+                className={`text-[11px] font-bold rounded-full px-1.5 ${on ? "bg-[var(--accent-fg)]/20" : "bg-[var(--panel)]/60"}`}
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {v.n}
+              </span>
+            </button>
+          );
+        })}
+        <button
+          onClick={() => setShowSearch((x) => !x)}
+          aria-label="חיפוש הזמנות"
+          className={`shrink-0 w-11 h-11 grid place-items-center rounded-xl border transition ${
+            showSearch || query ? "border-[var(--accent)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--muted)]"
+          }`}
+        >
+          🔍
+        </button>
       </div>
-
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="חיפוש לפי שם, טלפון או תאריך…"
-        aria-label="חיפוש הזמנות"
-        className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
-      />
+      {(showSearch || query) && (
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="חיפוש לפי שם, טלפון או תאריך…"
+          aria-label="חיפוש הזמנות"
+          className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+        />
+      )}
 
       {!loaded && <div className="text-sm text-[var(--muted)] p-4">טוען…</div>}
       {loaded && err && <div className="text-sm text-red-400 p-2">⚠ {err}</div>}
 
-      {/* בדסקטופ: הממתינות מימין, האג'נדה וההיסטוריה משמאל.
-          grid-cols-1 חובה: בלעדיו העמודה במובייל מתנפחת לרוחב התוכן וגולשת מהמסך */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
-
-      {/* ===== בקשות ממתינות ===== */}
-      {loaded && !err && (
-        <SectionCard
-          title="בקשות ממתינות"
-          badge={pendingView.length}
-          badgeCls="bg-amber-500/15 text-amber-300"
-          sub="בדקו מקום ביומן/טאביט ואשרו או דחו - הלקוח מקבל את התשובה ישירות בצ'אט. הוותיקה ביותר מוצגת ראשונה."
-        >
+      {/* ===== ממתינות ===== */}
+      {loaded && !err && view === "pending" && (
+        <div className="space-y-2.5">
+          <p className="text-xs text-[var(--muted)] px-0.5">
+            בדקו מקום ביומן/טאביט ואשרו או דחו - הלקוח מקבל את התשובה ישירות בצ&apos;אט. הוותיקה ביותר ראשונה.
+          </p>
           {pendingView.length === 0 && (
-            <div className="p-4 text-center text-sm text-[var(--muted)]">
-              {query ? "אין תוצאות לחיפוש בממתינות" : "אין בקשות ממתינות 🎉"}
+            <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-8 text-center text-sm text-[var(--muted)]">
+              {query ? "אין תוצאות לחיפוש" : "אין בקשות ממתינות 🎉"}
             </div>
           )}
-          <div className="space-y-2.5">
-            {pendingView.map((r) => {
-              const wd = weekdayOf(r.dateISO);
-              return (
-                <div key={r.id} className="bg-[var(--panel2)] border border-amber-500/25 rounded-xl p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Chip icon="👥">{r.people} סועדים</Chip>
-                        <Chip icon="📅">
-                          {r.dateText}
-                          {wd && !r.dateText.includes(wd) ? ` (${wd})` : ""}
-                        </Chip>
-                        <Chip icon="🕐">{r.time}</Chip>
-                      </div>
-                      <div className="text-sm mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-                        על שם <b>{r.name}</b> · <PhoneActions phone={r.phone} />
-                      </div>
-                      {r.notes && (
-                        <div className="text-xs mt-2 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
-                          💬 {r.notes}
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-left shrink-0">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${CHANNELS[r.channel]?.chip ?? ""}`}>
-                        {CHANNELS[r.channel]?.label ?? r.channel}
-                      </span>
-                      <div className="text-[10px] text-[var(--muted)] mt-1">התקבלה {relTime(r.createdAt)}</div>
-                      {r.dateISO && <div className="text-[10px] text-[var(--muted)] mt-0.5">{r.dateISO}</div>}
-                    </div>
-                  </div>
-
-                  {composing?.id === r.id ? (
-                    <ComposeBox
-                      composing={composing}
-                      setComposing={setComposing}
-                      onSubmit={submit}
-                      onSubmitSilent={submitSilent}
-                      busy={busy === r.id}
-                    />
-                  ) : (
-                    <div className="flex gap-2 mt-3 flex-wrap">
-                      <button
-                        onClick={() => setComposing({ id: r.id, action: "approve", text: approveTemplate(r) })}
-                        className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold rounded-lg px-3 py-1.5"
-                      >
-                        ✓ אשר
-                      </button>
-                      <button
-                        onClick={() => setComposing({ id: r.id, action: "decline", text: declineTemplate(r) })}
-                        className="text-xs bg-red-500/15 text-red-400 border border-red-500/40 font-semibold rounded-lg px-3 py-1.5"
-                      >
-                        אין מקום
-                      </button>
-                      <button
-                        onClick={() => onOpenConversation(r.conversationId)}
-                        className="text-xs text-[var(--muted)] hover:text-[var(--text)] underline px-1"
-                      >
-                        לשיחה המלאה
-                      </button>
-                    </div>
-                  )}
+          {pendingView.map((r) => {
+            const wd = weekdayOf(r.dateISO);
+            const dateLabel = r.dateText + (wd && !r.dateText.includes(wd) ? ` (${wd})` : "");
+            return (
+              <div key={r.id} className="bg-[var(--panel)] border border-amber-500/30 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-[15px] font-display" style={{ fontVariantNumeric: "tabular-nums" }}>
+                    {r.people} סועדים · {dateLabel} · {r.time}
+                  </span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full mr-auto shrink-0 ${CHANNELS[r.channel]?.chip ?? ""}`}>
+                    {CHANNELS[r.channel]?.label ?? r.channel}
+                  </span>
                 </div>
-              );
-            })}
-          </div>
-        </SectionCard>
+
+                <div className="text-sm flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <b>{r.name}</b>
+                  <PhoneActions phone={r.phone} />
+                  <span className="text-[11px] text-[var(--muted)] mr-auto">התקבלה {relTime(r.createdAt)}</span>
+                </div>
+
+                {r.notes && (
+                  <div className="text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">💬 {r.notes}</div>
+                )}
+
+                {composing?.id === r.id ? (
+                  <ComposeBox
+                    composing={composing}
+                    setComposing={setComposing}
+                    onSubmit={submit}
+                    onSubmitSilent={submitSilent}
+                    busy={busy === r.id}
+                  />
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => setComposing({ id: r.id, action: "approve", text: approveTemplate(r) })}
+                      className="text-sm bg-emerald-500/20 text-emerald-500 border border-emerald-500/40 font-semibold rounded-xl py-2.5"
+                    >
+                      ✓ יש מקום
+                    </button>
+                    <button
+                      onClick={() => setComposing({ id: r.id, action: "decline", text: declineTemplate(r) })}
+                      className="text-sm bg-red-500/15 text-red-400 border border-red-500/40 font-semibold rounded-xl py-2.5"
+                    >
+                      אין מקום
+                    </button>
+                    <button
+                      onClick={() => onOpenConversation(r.conversationId)}
+                      className="text-sm text-[var(--muted)] border border-[var(--border)] rounded-xl py-2.5 hover:text-[var(--text)]"
+                    >
+                      השיחה
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
 
-      <div className="space-y-5">
-      {/* ===== אג'נדה: הזמנות מאושרות קרובות ===== */}
-      {loaded && !err && (
-        <SectionCard
-          title="הזמנות קרובות"
-          badge={upcomingView.length}
-          badgeCls="bg-emerald-500/15 text-emerald-400"
-          sub="מה מחכה לנו - הזמנות שאושרו, מסודרות לפי יום ושעה."
-        >
+      {/* ===== קרובות (אג'נדה) ===== */}
+      {loaded && !err && view === "upcoming" && (
+        <div className="space-y-2.5">
+          <p className="text-xs text-[var(--muted)] px-0.5">מה מחכה לנו - הזמנות שאושרו, מסודרות לפי יום ושעה.</p>
           {upcomingView.length === 0 ? (
-            <div className="p-4 text-center text-sm text-[var(--muted)]">
-              {query ? "אין תוצאות לחיפוש בקרובות" : "אין הזמנות מאושרות קרובות"}
+            <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-8 text-center text-sm text-[var(--muted)]">
+              {query ? "אין תוצאות לחיפוש" : "אין הזמנות מאושרות קרובות"}
             </div>
           ) : (
-            <div className="space-y-3">
-              {agenda.map(([iso, items]) => (
-                <div key={iso || "no-date"} className="border border-[var(--border)] rounded-xl overflow-hidden">
-                  <div className="px-3 py-2 text-xs font-semibold border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]">
-                    {iso ? dayLabel(iso) : "בלי תאריך מזוהה"}
-                  </div>
-                  <div className="divide-y divide-[var(--border)]">
-                    {items.map((r) => (
-                      <div key={r.id} className="px-3 py-2 text-sm">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span className="flex items-center gap-2 min-w-0">
-                            <b style={{ fontVariantNumeric: "tabular-nums" }}>{r.time}</b>
-                            <span className="truncate">
-                              {r.name} · {r.people} אנשים
-                            </span>
-                            {r.notes && (
-                              <span className="text-[var(--muted)] text-xs truncate" title={r.notes}>
-                                💬 {r.notes.slice(0, 30)}
-                              </span>
-                            )}
+            agenda.map(([iso, items]) => (
+              <div key={iso || "no-date"} className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-hidden">
+                <div className="px-3.5 py-2 text-xs font-semibold border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]">
+                  {iso ? dayLabel(iso) : "בלי תאריך מזוהה"}
+                </div>
+                <div className="divide-y divide-[var(--border)]">
+                  {items.map((r) => (
+                    <div key={r.id} className="px-3.5 py-2.5 text-sm space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <b className="font-display" style={{ fontVariantNumeric: "tabular-nums" }}>
+                          {r.time}
+                        </b>
+                        <span className="truncate">
+                          {r.name} · {r.people} אנשים
+                        </span>
+                        {r.notes && (
+                          <span className="text-[var(--muted)] text-xs truncate" title={r.notes}>
+                            💬 {r.notes.slice(0, 30)}
                           </span>
-                          <span className="flex items-center gap-2 shrink-0">
-                            <PhoneActions phone={r.phone} />
-                            <button
-                              onClick={() => onOpenConversation(r.conversationId)}
-                              className="text-xs text-[var(--muted)] hover:text-[var(--text)] underline"
-                            >
-                              לשיחה
-                            </button>
-                            {composing?.id !== r.id && (
-                              <button
-                                onClick={() => setComposing({ id: r.id, action: "cancel", text: cancelTemplate(r) })}
-                                className="text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg px-2 py-1"
-                                title="ביטול ההזמנה המאושרת"
-                              >
-                                בטל הזמנה
-                              </button>
-                            )}
-                          </span>
-                        </div>
-                        {composing?.id === r.id && (
-                          <ComposeBox
-                            composing={composing}
-                            setComposing={setComposing}
-                            onSubmit={submit}
-                            onSubmitSilent={submitSilent}
-                            busy={busy === r.id}
-                          />
                         )}
                       </div>
-                    ))}
-                  </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <PhoneActions phone={r.phone} />
+                        <button
+                          onClick={() => onOpenConversation(r.conversationId)}
+                          className="text-xs text-[var(--muted)] hover:text-[var(--text)] underline"
+                        >
+                          השיחה
+                        </button>
+                        {composing?.id !== r.id && (
+                          <button
+                            onClick={() => setComposing({ id: r.id, action: "cancel", text: cancelTemplate(r) })}
+                            className="text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg px-2 py-1 mr-auto"
+                            title="ביטול ההזמנה המאושרת"
+                          >
+                            בטל הזמנה
+                          </button>
+                        )}
+                      </div>
+                      {composing?.id === r.id && (
+                        <ComposeBox
+                          composing={composing}
+                          setComposing={setComposing}
+                          onSubmit={submit}
+                          onSubmitSilent={submitSilent}
+                          busy={busy === r.id}
+                        />
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))
           )}
-        </SectionCard>
+        </div>
       )}
 
-      {/* ===== טופלו לאחרונה ===== */}
-      {loaded && !err && handledView.length > 0 && (
-        <SectionCard title="טופלו לאחרונה" badge={handledView.length}>
-          <div className="space-y-1.5">
-            {handledView.map((r) => (
-              <div
-                key={r.id}
-                className="bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm flex items-center justify-between gap-2 flex-wrap"
-              >
-                <button
-                  onClick={() => onOpenConversation(r.conversationId)}
-                  className="text-right hover:underline min-w-0 truncate"
-                  title="פתח את השיחה"
-                >
-                  {r.name} · {r.people} אנשים · {r.dateText} {r.time}
-                </button>
-                <span className="flex items-center gap-2 text-xs shrink-0">
-                  <span className={`px-2 py-0.5 rounded-full ${STATUS_CHIP[r.status]?.cls ?? ""}`}>
-                    {STATUS_CHIP[r.status]?.label ?? r.status}
-                  </span>
-                  <span className="text-[var(--muted)]">
-                    {r.handledBy ? `ע"י ${r.handledBy} · ` : ""}
-                    {r.handledAt ? relTime(r.handledAt) : ""}
-                  </span>
+      {/* ===== היסטוריה ===== */}
+      {loaded && !err && view === "handled" && (
+        <div className="space-y-1.5">
+          <p className="text-xs text-[var(--muted)] px-0.5">בקשות שכבר טופלו. לחיצה פותחת את השיחה.</p>
+          {handledView.length === 0 && (
+            <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-8 text-center text-sm text-[var(--muted)]">
+              אין היסטוריה להצגה
+            </div>
+          )}
+          {handledView.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => onOpenConversation(r.conversationId)}
+              className="w-full text-right bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2.5 text-sm flex items-center justify-between gap-2 flex-wrap hover:border-[var(--accent)]"
+            >
+              <span className="min-w-0 truncate">
+                {r.name} · {r.people} אנשים · {r.dateText} {r.time}
+              </span>
+              <span className="flex items-center gap-2 text-xs shrink-0">
+                <span className={`px-2 py-0.5 rounded-full ${STATUS_CHIP[r.status]?.cls ?? ""}`}>
+                  {STATUS_CHIP[r.status]?.label ?? r.status}
                 </span>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
+                <span className="text-[var(--muted)]">
+                  {r.handledBy ? `ע"י ${r.handledBy} · ` : ""}
+                  {r.handledAt ? relTime(r.handledAt) : ""}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
       )}
-      </div>
-      </div>
     </div>
   );
 }

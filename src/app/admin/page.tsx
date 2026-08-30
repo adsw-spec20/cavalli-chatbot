@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import dynamic from "next/dynamic";
-import { Heebo, Frank_Ruhl_Libre } from "next/font/google";
+import { Heebo, Rubik } from "next/font/google";
 import { api, type ConvItem, type QuickReply, type PanelSettings } from "./types";
 import { unsavedChanges, setUnsaved } from "./dirty";
 import Inbox, { type InboxFilterIntent } from "./Inbox";
@@ -22,9 +22,12 @@ const Questionnaire = dynamic(() => import("./Questionnaire"), { loading: lazyLo
 const TeamQuestions = dynamic(() => import("./TeamQuestions"), { loading: lazyLoading });
 const TestChat = dynamic(() => import("./TestChat"), { loading: lazyLoading });
 
-// טיפוגרפיה: Heebo לגוף (קריא ונקי בעברית), Frank Ruhl Libre לכותרות ומספרים (תחושת מסעדה יוקרתית)
+// טיפוגרפיה (שונה 30.8): Heebo לגוף, ו-Rubik לכותרות ולמספרים.
+// קודם הייתה כאן Frank Ruhl Libre (סריפית) - היא נראתה מיושנת בממשק ניהול,
+// ובעברית באותיות גדולות היא בלטה לרעה. Rubik מודרנית, מעט מעוגלת וקריאה מאוד,
+// ונותנת ניגוד עדין מול Heebo בלי להרגיש כמו שני עולמות.
 const fontBody = Heebo({ subsets: ["hebrew", "latin"], weight: ["400", "500", "600", "700"] });
-const fontDisplay = Frank_Ruhl_Libre({ subsets: ["hebrew", "latin"], weight: ["500", "700"] });
+const fontDisplay = Rubik({ subsets: ["hebrew", "latin"], weight: ["500", "600", "700"] });
 
 /**
  * מערכת העיצוב: גווני אבן חמים + מבטא זהב (אווירת קוואלי), צל רך לכל כרטיס,
@@ -73,7 +76,7 @@ button,a,[role="button"]{touch-action:manipulation}
    נשאר מוגדל ו"נגרר" הצידה גם אחרי הסגירה (גלילה שבורה, קפיצות). 16px בשדות
    במובייל מבטל את הזום האוטומטי; זום ידני של המשתמש נשאר אפשרי. */
 @media (max-width:767px){input,textarea,select{font-size:16px}}
-.font-display{font-family:var(--font-display),'Frank Ruhl Libre',serif}
+.font-display{font-family:var(--font-display),'Rubik',system-ui,sans-serif;letter-spacing:-.01em}
 *{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-track{background:transparent}

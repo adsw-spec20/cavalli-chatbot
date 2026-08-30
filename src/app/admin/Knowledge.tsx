@@ -75,6 +75,8 @@ export default function Knowledge({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  // תצוגה נבחרת: העבודה (שאלות פתוחות) מול העיון (מה שהבוט כבר יודע)
+  const [view, setView] = useState<"open" | "learned">("open");
   const [editing, setEditing] = useState<string | null>(null);
   const [editQ, setEditQ] = useState("");
   const [editA, setEditA] = useState("");
@@ -218,8 +220,37 @@ export default function Knowledge({
   }
 
   return (
-    <div className="max-w-[1700px] grid grid-cols-1 gap-6 xl:grid-cols-2 items-start">
+    <div className="max-w-[900px] space-y-3">
+      {/* מתג: העבודה מול העיון - במקום שתי סקציות ארוכות זו על זו */}
+      <div className="flex gap-1.5">
+        {([
+          { key: "open" as const, label: "ממתינות לתשובה", n: open.length, cls: "bg-amber-500/15 text-amber-500 border-amber-500/40" },
+          { key: "learned" as const, label: "מה שהבוט יודע", n: answered.length, cls: "bg-[var(--panel2)] text-[var(--muted)] border-[var(--border)]" },
+        ]).map((v) => {
+          const on = view === v.key;
+          return (
+            <button
+              key={v.key}
+              onClick={() => setView(v.key)}
+              aria-current={on ? "page" : undefined}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-sm border transition ${
+                on ? "bg-[var(--accent)] text-[var(--accent-fg)] border-transparent font-semibold" : `${v.cls} hover:opacity-80`
+              }`}
+            >
+              {v.label}
+              <span
+                className={`text-[11px] font-bold rounded-full px-1.5 ${on ? "bg-[var(--accent-fg)]/20" : "bg-[var(--panel)]/60"}`}
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {v.n}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* ===== שאלות פתוחות ===== */}
+      {view === "open" && (
       <SectionCard
         title="שאלות שהבוט לא ידע לענות"
         badge={open.length}
@@ -307,8 +338,10 @@ export default function Knowledge({
           ))}
         </div>
       </SectionCard>
+      )}
 
       {/* ===== מה שהבוט למד ===== */}
+      {view === "learned" && (
       <SectionCard
         title="מה שהבוט כבר למד"
         badge={answered.length}
@@ -463,6 +496,7 @@ export default function Knowledge({
           ))}
         </div>
       </SectionCard>
+      )}
     </div>
   );
 }
