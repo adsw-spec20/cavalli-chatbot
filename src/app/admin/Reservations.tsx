@@ -189,9 +189,11 @@ export default function Reservations({
   // תצוגה נבחרת: ממתינות / קרובות / היסטוריה (במקום שלוש סקציות מוערמות)
   const [view, setView] = useState<"pending" | "upcoming" | "handled">("pending");
   const [showSearch, setShowSearch] = useState(false);
-  // תזכורת אחרי אישור: המארחות אישרו ושכחו לשלוח את קישור התשלום (דווח 31.8),
-  // והלקוח נשאר מחכה להודעה שהובטחה לו. חוסם עד שמאשרים במפורש.
-  const [linkReminder, setLinkReminder] = useState<Reservation | null>(null);
+  // שער לפני אישור: המארחות אישרו ושכחו לשלוח את קישור התשלום (דווח 31.8),
+  // והלקוח נשאר מחכה להודעה שהובטחה לו. ההודעה יוצאת רק אחרי "שלחתי";
+  // "לא שלחתי" משאיר את ההזמנה ממתינה כדי שהיא לא תיפול בין הכיסאות.
+  // הערך מציין לאיזו פעולה השער נפתח (עם הודעה / בלי).
+  const [linkGate, setLinkGate] = useState<"send" | "silent" | null>(null);
   // מצב עריכת הודעה: לאיזה כרטיס, איזו פעולה, ומה הטקסט
   const [composing, setComposing] = useState<{
     id: string;
@@ -223,10 +225,23 @@ export default function Reservations({
     return () => clearInterval(t);
   }, [load]);
 
-  async function submit() {
+  // submit/submitSilent מחוברים ישירות ל-onClick, כך שהן מקבלות את אירוע
+  // הלחיצה כארגומנט - לכן השער הוא פונקציה נפרדת ולא פרמטר עם ברירת מחדל.
+  function submit() {
+    if (!composing || !composing.text.trim()) return;
+    if (composing.action === "approve") return setLinkGate("send");
+    doSubmit();
+  }
+
+  function submitSilent() {
+    if (!composing) return;
+    if (composing.action === "approve") return setLinkGate("silent");
+    doSubmitSilent();
+  }
+
+  async function doSubmit() {
     if (!composing || !composing.text.trim()) return;
     setBusy(composing.id);
-    const approved = [...pending, ...upcoming].find((x) => x.id === composing.id);
     try {
       const res = await api<{ updated: Reservation; warning?: string }>(token, "/reservations", {
         method: "POST",
@@ -239,7 +254,6 @@ export default function Reservations({
       });
       setNotice(res.warning ? `⚠ ${res.warning}` : "הלקוח קיבל את התשובה בצ'אט ✓");
       setTimeout(() => setNotice(""), 5000);
-      if (composing.action === "approve") setLinkReminder(approved ?? null);
       setComposing(null);
       await load();
     } catch (e) {
@@ -250,10 +264,9 @@ export default function Reservations({
   }
 
   /** עדכון סטטוס בלבד, בלי לשלוח שום הודעה ללקוח (למשל כשסגרתם מולו בטלפון) */
-  async function submitSilent() {
+  async function doSubmitSilent() {
     if (!composing) return;
     setBusy(composing.id);
-    const approved = [...pending, ...upcoming].find((x) => x.id === composing.id);
     try {
       await api(token, "/reservations", {
         method: "POST",
@@ -261,7 +274,6 @@ export default function Reservations({
       });
       setNotice("הסטטוס עודכן - לא נשלחה הודעה ללקוח ✓");
       setTimeout(() => setNotice(""), 5000);
-      if (composing.action === "approve") setLinkReminder(approved ?? null);
       setComposing(null);
       await load();
     } catch (e) {
@@ -535,42 +547,40 @@ export default function Reservations({
         </div>
       )}
 
-      {/* תזכורת קישור התשלום - נסגרת רק בלחיצה מפורשת */}
-      {linkReminder && (
+      {/* שער קישור התשלום: האישור יוצא רק אחרי "שלחתי" */}
+      {linkGate && (
         <div
           className="fixed inset-0 z-50 bg-black/50 grid place-items-center p-4"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="link-reminder-title"
+          aria-labelledby="link-gate-title"
         >
-          <div className="bg-[var(--panel)] border border-[var(--accent)]/40 rounded-2xl p-5 max-w-sm w-full space-y-3 shadow-2xl">
-            <h3 id="link-reminder-title" className="font-semibold text-base font-display">
-              נשאר שלב אחד 👇
+          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-5 max-w-xs w-full space-y-4 shadow-2xl">
+            <h3 id="link-gate-title" className="font-semibold text-base font-display text-center">
+              שלחת ללקוח את קישור התשלום?
             </h3>
-            <p className="text-sm leading-relaxed">
-              {linkReminder.name} קיבל הודעה שיש מקום, ושתכף יגיע קישור להשלמת ההזמנה.
-              <br />
-              <b>שלחו לו עכשיו את קישור הטאביט לתשלום הפיקדון (100 ש&quot;ח).</b>
-            </p>
-            <p className="text-xs text-[var(--muted)]">בלי הקישור ההזמנה לא סופית, והלקוח ממתין להודעה שלא תגיע.</p>
-            <div className="grid grid-cols-2 gap-2 pt-1">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => {
-                  const id = linkReminder.conversationId;
-                  setLinkReminder(null);
-                  onOpenConversation(id);
+                  const mode = linkGate;
+                  setLinkGate(null);
+                  if (mode === "send") doSubmit();
+                  else doSubmitSilent();
                 }}
                 className="text-sm bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-xl py-2.5"
               >
-                פתח את השיחה
+                שלחתי
               </button>
               <button
-                onClick={() => setLinkReminder(null)}
-                className="text-sm border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] rounded-xl py-2.5"
+                onClick={() => setLinkGate(null)}
+                className="text-sm border border-[var(--border)] rounded-xl py-2.5 hover:bg-[var(--panel2)]"
               >
-                שלחתי ✓
+                לא שלחתי
               </button>
             </div>
+            <p className="text-xs text-[var(--muted)] text-center">
+              בלי הקישור ההזמנה נשארת ממתינה ולא נשלחת הודעה ללקוח.
+            </p>
           </div>
         </div>
       )}
