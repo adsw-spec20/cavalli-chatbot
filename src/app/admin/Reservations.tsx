@@ -189,6 +189,9 @@ export default function Reservations({
   // תצוגה נבחרת: ממתינות / קרובות / היסטוריה (במקום שלוש סקציות מוערמות)
   const [view, setView] = useState<"pending" | "upcoming" | "handled">("pending");
   const [showSearch, setShowSearch] = useState(false);
+  // תזכורת אחרי אישור: המארחות אישרו ושכחו לשלוח את קישור התשלום (דווח 31.8),
+  // והלקוח נשאר מחכה להודעה שהובטחה לו. חוסם עד שמאשרים במפורש.
+  const [linkReminder, setLinkReminder] = useState<Reservation | null>(null);
   // מצב עריכת הודעה: לאיזה כרטיס, איזו פעולה, ומה הטקסט
   const [composing, setComposing] = useState<{
     id: string;
@@ -223,6 +226,7 @@ export default function Reservations({
   async function submit() {
     if (!composing || !composing.text.trim()) return;
     setBusy(composing.id);
+    const approved = [...pending, ...upcoming].find((x) => x.id === composing.id);
     try {
       const res = await api<{ updated: Reservation; warning?: string }>(token, "/reservations", {
         method: "POST",
@@ -235,6 +239,7 @@ export default function Reservations({
       });
       setNotice(res.warning ? `⚠ ${res.warning}` : "הלקוח קיבל את התשובה בצ'אט ✓");
       setTimeout(() => setNotice(""), 5000);
+      if (composing.action === "approve") setLinkReminder(approved ?? null);
       setComposing(null);
       await load();
     } catch (e) {
@@ -248,6 +253,7 @@ export default function Reservations({
   async function submitSilent() {
     if (!composing) return;
     setBusy(composing.id);
+    const approved = [...pending, ...upcoming].find((x) => x.id === composing.id);
     try {
       await api(token, "/reservations", {
         method: "POST",
@@ -255,6 +261,7 @@ export default function Reservations({
       });
       setNotice("הסטטוס עודכן - לא נשלחה הודעה ללקוח ✓");
       setTimeout(() => setNotice(""), 5000);
+      if (composing.action === "approve") setLinkReminder(approved ?? null);
       setComposing(null);
       await load();
     } catch (e) {
@@ -525,6 +532,46 @@ export default function Reservations({
               </span>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* תזכורת קישור התשלום - נסגרת רק בלחיצה מפורשת */}
+      {linkReminder && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 grid place-items-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="link-reminder-title"
+        >
+          <div className="bg-[var(--panel)] border border-[var(--accent)]/40 rounded-2xl p-5 max-w-sm w-full space-y-3 shadow-2xl">
+            <h3 id="link-reminder-title" className="font-semibold text-base font-display">
+              נשאר שלב אחד 👇
+            </h3>
+            <p className="text-sm leading-relaxed">
+              {linkReminder.name} קיבל הודעה שיש מקום, ושתכף יגיע קישור להשלמת ההזמנה.
+              <br />
+              <b>שלחו לו עכשיו את קישור הטאביט לתשלום הפיקדון (100 ש&quot;ח).</b>
+            </p>
+            <p className="text-xs text-[var(--muted)]">בלי הקישור ההזמנה לא סופית, והלקוח ממתין להודעה שלא תגיע.</p>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                onClick={() => {
+                  const id = linkReminder.conversationId;
+                  setLinkReminder(null);
+                  onOpenConversation(id);
+                }}
+                className="text-sm bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-xl py-2.5"
+              >
+                פתח את השיחה
+              </button>
+              <button
+                onClick={() => setLinkReminder(null)}
+                className="text-sm border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] rounded-xl py-2.5"
+              >
+                שלחתי ✓
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

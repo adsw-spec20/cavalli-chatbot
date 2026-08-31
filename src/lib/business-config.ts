@@ -644,7 +644,7 @@ export const businessConfig: BusinessConfig = {
     },
     {
       question: "יש האפי האוור?",
-      answer: "כרגע אין האפי האוור.",
+      answer: "כן 🙂 בין 15:00 ל-17:00 כל תפריט הקוקטיילים 1+1.",
     },
   ],
 
