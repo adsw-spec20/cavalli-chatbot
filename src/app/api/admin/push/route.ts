@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdminAuthorized } from "@/lib/admin-auth";
+import { isAdminAuthorized, isMasterAuthorized } from "@/lib/admin-auth";
 import {
   addSubscription,
+  listSubscriptionsForPanel,
   pushConfigured,
   removeSubscription,
   sendTeamPush,
@@ -15,10 +16,15 @@ export const runtime = "nodejs";
 
 const unauthorized = () => NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-/** המפתח הציבורי שהדפדפן צריך בשביל להירשם. */
+/**
+ * המפתח הציבורי שהדפדפן צריך בשביל להירשם. למנהל מצורפת גם רשימת המכשירים
+ * הרשומים - בלעדיה אי אפשר לדעת אם התראה לא הגיעה בגלל תקלה או בגלל
+ * שהמארחת פשוט לא נרשמה.
+ */
 export async function GET(req: NextRequest) {
   if (!(await isAdminAuthorized(req))) return unauthorized();
-  return NextResponse.json({ configured: pushConfigured(), publicKey: vapidPublicKey() });
+  const devices = isMasterAuthorized(req) ? await listSubscriptionsForPanel() : undefined;
+  return NextResponse.json({ configured: pushConfigured(), publicKey: vapidPublicKey(), devices });
 }
 
 /**

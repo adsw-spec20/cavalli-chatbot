@@ -12,6 +12,9 @@ import {
   type TeamMemberInfo,
 } from "./types";
 
+/** מכשיר רשום להתראות פוש, כפי שהשרת מחזיר אותו למנהל (בלי מפתחות). */
+type PushDevice = { id: string; name?: string; createdAt: number };
+
 export default function Settings({
   token,
   isMaster,
@@ -48,6 +51,9 @@ export default function Settings({
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState("");
   const [pushErr, setPushErr] = useState("");
+  // מנהל בלבד: אילו מכשירים בכלל רשומים. "לא קיבלתי התראה" זה כמעט תמיד
+  // מארחת שלא נרשמה, ובלי הרשימה הזאת אין דרך להבדיל בין זה לבין תקלה.
+  const [pushDevices, setPushDevices] = useState<PushDevice[] | null>(null);
 
   // --- מנהל בלבד: התראות מייל + ניהול צוות ---
   const [alertEmail, setAlertEmail] = useState("");
@@ -98,8 +104,19 @@ export default function Settings({
         })
         .catch(() => {});
       api<TeamMemberInfo[]>(token, "/team").then(setTeam).catch(() => {});
+      loadDevices();
     }
   }, [token, isMaster]);
+
+  /** רשימת המכשירים הרשומים לפוש (מנהל בלבד). */
+  async function loadDevices() {
+    try {
+      const info = await api<{ devices?: PushDevice[] }>(token, "/push");
+      setPushDevices(info.devices ?? []);
+    } catch {
+      setPushDevices(null);
+    }
+  }
 
   /** המרת מפתח VAPID ציבורי לפורמט ש-subscribe דורש */
   function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
@@ -136,6 +153,7 @@ export default function Settings({
       });
       setPushState("on");
       setPushMsg("ההתראות הופעלו במכשיר הזה ✓ שווה לשלוח ניסיון לוודא");
+      if (isMaster) loadDevices();
     } catch (e) {
       setPushErr(e instanceof Error ? e.message : "ההפעלה נכשלה, נסו שוב");
     } finally {
@@ -158,6 +176,7 @@ export default function Settings({
       }
       setPushState("off");
       setPushMsg("ההתראות כובו במכשיר הזה");
+      if (isMaster) loadDevices();
     } catch {
       setPushErr("הכיבוי נכשל, נסו שוב");
     } finally {
@@ -662,6 +681,43 @@ export default function Settings({
           )}
           {pushMsg && <p className="text-xs text-emerald-400">{pushMsg}</p>}
           {pushErr && <p className="text-xs text-red-400">⚠ {pushErr}</p>}
+
+          {/* מנהל: מי בכלל רשומה. אין רשומות = אף התראה לא מגיעה לאף אחד */}
+          {isMaster && pushDevices && (
+            <div className="border-t border-[var(--border)] pt-2 mt-1 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-xs font-semibold">
+                  מכשירים שרשומים להתראות ({pushDevices.length})
+                </h4>
+                <button
+                  onClick={loadDevices}
+                  className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] rounded-lg px-2 py-1"
+                >
+                  רענן
+                </button>
+              </div>
+              {pushDevices.length === 0 ? (
+                <p className="text-xs text-red-400 leading-relaxed">
+                  ⚠ אף מכשיר לא רשום - אף אחת לא מקבלת התראות. כל מארחת צריכה להיכנס
+                  לפאנל מהטלפון שלה וללחוץ &quot;הפעל&quot; כאן למעלה.
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {pushDevices.map((d) => (
+                    <li
+                      key={d.id}
+                      className="flex items-center justify-between gap-2 text-xs bg-[var(--panel2)] rounded-lg px-2.5 py-1.5"
+                    >
+                      <span className="truncate">{d.name || "ללא שם"}</span>
+                      <span className="shrink-0 text-[11px] text-[var(--muted)]">
+                        נרשם {relTime(d.createdAt)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between border-t border-[var(--border)] pt-3">

@@ -29,7 +29,10 @@ export function escapeHtml(s: string): string {
 /** יעדי ההתראות: ההגדרה מהפאנל (מותר כמה כתובות בפסיקים), אחרת משתנה הסביבה. */
 async function getAlertTarget(): Promise<{ key: string; to: string[] } | null> {
   const key = process.env.RESEND_API_KEY;
-  if (!key) return null;
+  if (!key) {
+    console.error("[alerts] RESEND_API_KEY לא מוגדר - שום מייל התראה לא נשלח");
+    return null;
+  }
   let raw = "";
   try {
     raw = (await getRepo().getSetting("alert_email")) ?? "";
@@ -41,7 +44,11 @@ async function getAlertTarget(): Promise<{ key: string; to: string[] } | null> {
     .split(/[,;\s]+/)
     .map((e) => e.trim())
     .filter((e) => e.includes("@"));
-  return to.length ? { key, to } : null;
+  if (!to.length) {
+    console.error("[alerts] לא הוגדרה כתובת יעד (הגדרות > התראות) - המייל לא נשלח");
+    return null;
+  }
+  return { key, to };
 }
 
 /** שליחת מייל התראה כללי. שקט בכשל (התראה היא לא סיבה להפיל את הזרימה). */
@@ -95,15 +102,21 @@ async function getAlertPhones(): Promise<string[]> {
  * שליחת התראת וואטסאפ לכל אנשי הצוות שהוגדרו בפאנל. שקט בכשל.
  * מגבלת תבניות: הפרמטר חייב להיות שורה אחת - שורות חדשות מוחלפות ברווח.
  */
-export async function sendTeamWhatsAppAlert(text: string): Promise<void> {
+export async function sendTeamWhatsAppAlert(text: string): Promise<number> {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  if (!phoneNumberId || !accessToken) return;
+  if (!phoneNumberId || !accessToken) {
+    console.error("[alerts] וואטסאפ לא מוגדר בסביבה - התראת הצוות לא נשלחה");
+    return 0;
+  }
   const phones = await getAlertPhones();
-  if (!phones.length) return;
+  if (!phones.length) {
+    console.error("[alerts] לא הוגדרו מספרי צוות (הגדרות > התראות) - התראת הוואטסאפ לא נשלחה");
+    return 0;
+  }
   const clean = text.replace(/\s+/g, " ").trim().slice(0, 500);
-  if (!clean) return;
-  await Promise.all(
+  if (!clean) return 0;
+  const results = await Promise.all(
     phones.map(async (to) => {
       try {
         const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
@@ -123,12 +136,16 @@ export async function sendTeamWhatsAppAlert(text: string): Promise<void> {
         });
         if (!res.ok) {
           console.error(`[alerts] וואטסאפ לצוות (${to}) נכשל (${res.status}):`, (await res.text()).slice(0, 300));
+          return false;
         }
+        return true;
       } catch (err) {
         console.error("[alerts] וואטסאפ לצוות נכשל:", err);
+        return false;
       }
     })
   );
+  return results.filter(Boolean).length;
 }
 
 // אזעקת מערכת (המודל נפל / קרדיטים): לכל היותר התראה אחת לשעה, שלא נציף בתקלה מתמשכת
@@ -138,15 +155,18 @@ export async function sendSystemAlarmWhatsApp(reason: string): Promise<void> {
     const repo = getRepo();
     const last = Number((await repo.getSetting("last_alarm_wa_ts")) ?? 0);
     if (Date.now() - last < ALARM_WA_THROTTLE_MS) return;
-    await repo.setSetting("last_alarm_wa_ts", String(Date.now()));
     const alarmText =
       reason === "credit"
         ? "🚨 תקלה: נגמרו הקרדיטים של הבוט! לקוחות מקבלים הודעת תקלה. יש להטעין קרדיטים ב-console.anthropic.com בהקדם"
         : "🚨 תקלת מערכת: הבוט לא מצליח לענות ללקוחות כרגע. בדקו את הפאנל";
-    await Promise.all([
+    const [wa, push] = await Promise.all([
       sendTeamWhatsAppAlert(alarmText),
       sendTeamPush({ title: "🚨 תקלת מערכת - הבוט", body: alarmText, tag: "system-alarm" }),
     ]);
+    // החותמת נרשמת רק אחרי שמשהו באמת יצא. אחרת שליחה שנכשלה הייתה
+    // חוסמת את הניסיון הבא לשעה שלמה - בדיוק כשהמערכת למטה.
+    if (wa + push > 0) await repo.setSetting("last_alarm_wa_ts", String(Date.now()));
+    else console.error("[alerts] אזעקת מערכת לא הגיעה לאף יעד");
   } catch (err) {
     console.error("[alerts] התראת אזעקה בוואטסאפ נכשלה:", err);
   }
@@ -217,7 +237,6 @@ export async function sendKnowledgeGapEmail(question: string): Promise<void> {
     const repo = getRepo();
     const last = Number((await repo.getSetting("last_gap_alert_ts")) ?? 0);
     if (Date.now() - last < GAP_ALERT_THROTTLE_MS) return;
-    await repo.setSetting("last_gap_alert_ts", String(Date.now()));
 
     const html = `
       <div style="font-family:sans-serif;direction:rtl">
@@ -227,7 +246,10 @@ export async function sendKnowledgeGapEmail(question: string): Promise<void> {
         <p><a href="${PANEL_URL}">פתיחת הפאנל</a></p>
         <p style="color:#888;font-size:12px">כדי לא להציף, נשלחת התראה כזו לכל היותר פעם בשעה. שאלות נוספות מרוכזות בדוח היומי.</p>
       </div>`;
-    await sendAlertEmail("🧠 שאלה חדשה לבוט - קפה קוואלי", html);
+    // כמו באזעקה: מוויסתים רק אחרי שליחה שהצליחה
+    if (await sendAlertEmail("🧠 שאלה חדשה לבוט - קפה קוואלי", html)) {
+      await repo.setSetting("last_gap_alert_ts", String(Date.now()));
+    }
   } catch (err) {
     console.error("[alerts] התראת פער ידע נכשלה:", err);
   }

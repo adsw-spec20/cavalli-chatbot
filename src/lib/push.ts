@@ -68,8 +68,9 @@ export async function addSubscription(rec: PushSubscriptionRecord): Promise<numb
   const subs = await loadSubscriptions();
   const next = subs.filter((s) => s.endpoint !== rec.endpoint);
   next.push(rec);
-  await saveSubscriptions(next.slice(-MAX_SUBSCRIPTIONS));
-  return next.length;
+  const stored = next.slice(-MAX_SUBSCRIPTIONS);
+  await saveSubscriptions(stored);
+  return stored.length;
 }
 
 /** הסרת מכשיר לפי endpoint. */
@@ -78,6 +79,23 @@ export async function removeSubscription(endpoint: string): Promise<number> {
   const next = subs.filter((s) => s.endpoint !== endpoint);
   if (next.length !== subs.length) await saveSubscriptions(next);
   return next.length;
+}
+
+/**
+ * המכשירים הרשומים לתצוגה בפאנל, בלי מפתחות ההצפנה. הצוות התלונן שהתראות
+ * "לא תמיד מגיעות", ובלי הרשימה הזאת אי אפשר היה לדעת מי בכלל רשומה - זה
+ * בדיוק ההבדל בין תקלה לבין מארחת שמעולם לא הדליקה את הפעמון.
+ */
+export async function listSubscriptionsForPanel(): Promise<
+  { id: string; name?: string; createdAt: number }[]
+> {
+  const subs = await loadSubscriptions();
+  return subs.map((s) => ({
+    // סיומת ה-endpoint מזהה מכשיר בלי לחשוף אותו (הוא סוד - מי שמחזיק בו יכול לשלוח)
+    id: s.endpoint.slice(-8),
+    name: s.name,
+    createdAt: s.createdAt,
+  }));
 }
 
 export interface TeamPushArgs {
@@ -96,10 +114,17 @@ export interface TeamPushArgs {
  * להפיל את זרימת הבוט. מחזיר כמה נשלחו בהצלחה.
  */
 export async function sendTeamPush(args: TeamPushArgs): Promise<number> {
-  if (!ensureVapid()) return 0;
+  if (!ensureVapid()) {
+    console.error("[push] VAPID לא מוגדר - ההתראה לא נשלחה:", args.title);
+    return 0;
+  }
   let subs = await loadSubscriptions();
   if (args.onlyEndpoint) subs = subs.filter((s) => s.endpoint === args.onlyEndpoint);
-  if (!subs.length) return 0;
+  if (!subs.length) {
+    // בלי לוג כאן, "אף אחד לא רשום" נראה בדיוק כמו "נשלח בהצלחה"
+    console.error("[push] אין מכשירים רשומים - ההתראה לא הגיעה לאף אחד:", args.title);
+    return 0;
+  }
 
   const payload = JSON.stringify({
     title: args.title,
