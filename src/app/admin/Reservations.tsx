@@ -578,9 +578,6 @@ export default function Reservations({
                 לא שלחתי
               </button>
             </div>
-            <p className="text-xs text-[var(--muted)] text-center">
-              בלי הקישור ההזמנה נשארת ממתינה ולא נשלחת הודעה ללקוח.
-            </p>
           </div>
         </div>
       )}
