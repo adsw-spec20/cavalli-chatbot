@@ -108,21 +108,6 @@ function PhoneActions({ phone, wa = true }: { phone: string; wa?: boolean }) {
   );
 }
 
-function TabitLink({ url }: { url?: string | null }) {
-  if (!url) return null;
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      title="פתח את ההזמנה בטאביט"
-      className="text-[10px] bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-full px-2 py-0.5"
-    >
-      פתח בטאביט ↗
-    </a>
-  );
-}
-
 /** אריח מדד ליום הנבחר */
 function StatTile({ label, value, tone }: { label: string; value: ReactNode; tone?: "danger" | "accent" }) {
   const valueCls = tone === "danger" ? "text-red-400" : tone === "accent" ? "text-[var(--accent)]" : "text-[var(--text)]";
@@ -336,7 +321,6 @@ export default function Tabit({ token }: { token: string }) {
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <PhoneActions phone={r.phone} />
-                      <TabitLink url={r.manageUrl} />
                     </div>
                     {r.notes && <NotesLine notes={r.notes} />}
                   </div>
@@ -423,7 +407,6 @@ export default function Tabit({ token }: { token: string }) {
                       </div>
                       <div className="flex items-center gap-2 flex-wrap ps-14">
                         <PhoneActions phone={r.phone} />
-                        <TabitLink url={r.manageUrl} />
                         {r.notes && <NotesLine notes={r.notes} />}
                       </div>
                     </div>
