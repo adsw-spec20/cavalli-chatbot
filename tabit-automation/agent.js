@@ -424,11 +424,20 @@ function cleanLocks() {
 }
 
 // נעילת מופע-יחיד: מונע שני סוכנים על אותו פרופיל (הסיבה ל"Target crashed").
+// בודקת אם התהליך שרשום בנעילה *באמת חי* (לפי PID), לא רק לפי זמן - כך
+// שסגירה ופתיחה מיד של החלון עובדות (התהליך הישן מת -> הנעילה לא חוסמת).
 const LOCK = path.join(__dirname, "agent.lock");
-function anotherAgentAlive() {
-  try { const t = Number(fs.readFileSync(LOCK, "utf8")); return Number.isFinite(t) && Date.now() - t < 15000; } catch (_) { return false; }
+function pidAlive(pid) {
+  if (!pid || pid === process.pid) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
 }
-function touchLock() { try { fs.writeFileSync(LOCK, String(Date.now())); } catch (_) {} }
+function anotherAgentAlive() {
+  let l;
+  try { l = JSON.parse(fs.readFileSync(LOCK, "utf8")); } catch (_) { return false; }
+  if (l && typeof l === "object") return pidAlive(l.pid);
+  return false;
+}
+function touchLock() { try { fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch (_) {} }
 
 const isCrash = (m) => /crash|target closed|target crashed|has been closed|session closed|disconnected|execution context/i.test(m || "");
 
