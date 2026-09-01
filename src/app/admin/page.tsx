@@ -18,6 +18,7 @@ const BusinessEditor = dynamic(() => import("./BusinessEditor"), { loading: lazy
 const Settings = dynamic(() => import("./Settings"), { loading: lazyLoading });
 const Media = dynamic(() => import("./Media"), { loading: lazyLoading });
 const Reservations = dynamic(() => import("./Reservations"), { loading: lazyLoading });
+const Tabit = dynamic(() => import("./Tabit"), { loading: lazyLoading });
 const Questionnaire = dynamic(() => import("./Questionnaire"), { loading: lazyLoading });
 const TeamQuestions = dynamic(() => import("./TeamQuestions"), { loading: lazyLoading });
 const TestChat = dynamic(() => import("./TestChat"), { loading: lazyLoading });
@@ -100,11 +101,12 @@ input:focus,textarea:focus,select:focus{box-shadow:0 0 0 3px color-mix(in srgb,v
 .no-scrollbar::-webkit-scrollbar{display:none}.no-scrollbar{scrollbar-width:none}
 `;
 
-type Tab = "inbox" | "reservations" | "knowledge" | "questionnaire" | "teamq" | "dashboard" | "business" | "media" | "test" | "settings";
+type Tab = "inbox" | "reservations" | "tabit" | "knowledge" | "questionnaire" | "teamq" | "dashboard" | "business" | "media" | "test" | "settings";
 // הסדר לפי תדירות שימוש: פניות -> לימוד הבוט -> נתונים -> תחזוקה
 const TABS: { key: Tab; label: string }[] = [
   { key: "inbox", label: "תיבת פניות" },
   { key: "reservations", label: "הזמנות" },
+  { key: "tabit", label: "טאביט" },
   { key: "knowledge", label: "ידע" },
   { key: "questionnaire", label: "שאלון" },
   { key: "teamq", label: "שאלות לצוות" },
@@ -120,6 +122,7 @@ const BOTTOM_TABS: Tab[] = ["inbox", "knowledge", "reservations"];
 /** כותרת + תת-כותרת אחידה לכל עמוד (בדסקטופ) - נותן לכל מסך עוגן מסודר */
 const TAB_META: Record<Exclude<Tab, "inbox">, { title: string; subtitle: string }> = {
   reservations: { title: "הזמנות מקום", subtitle: "אישור בקשות, אג'נדת ההזמנות הקרובות והיסטוריה - הלקוח מקבל כל תשובה ישירות בצ'אט" },
+  tabit: { title: "טאביט - שולחנות והזמנות", subtitle: "תמונה חיה מטאביט (קריאה בלבד, מנהל בלבד): פיקדונות שלא נשלחו ושולחנות גדולים ליום נבחר" },
   knowledge: { title: "ניהול ידע", subtitle: "שאלות שהבוט לא ידע לענות עליהן, והידע שכבר נלמד - כל תשובה שנשמרת נכנסת לתוקף מיד" },
   questionnaire: { title: "שאלון הידע", subtitle: "234 שאלות שנבנו מניתוח כל השיחות - כל תשובה נשמרת מיד ומוטמעת לבוט" },
   teamq: { title: "שאלות לצוות", subtitle: "הרשימה של אדיר לצוות קוואלי - שאלה אחת בכל פעם, בקצב שלכם. כל תשובה נשמרת מיד" },
@@ -145,6 +148,14 @@ const ICON_PATHS: Record<Tab, ReactNode> = {
       <rect x="3" y="4" width="18" height="18" rx="2" />
       <path d="M3 10h18" />
       <path d="m9 16 2 2 4-4" />
+    </>
+  ),
+  tabit: (
+    <>
+      <path d="M3 11h18" />
+      <path d="M12 11v10" />
+      <path d="M7 21h10" />
+      <path d="M5 11a7 7 0 0 1 14 0" />
     </>
   ),
   knowledge: (
@@ -866,7 +877,10 @@ export default function AdminPage() {
           בלבול עם "שאלות לצוות"); מוסתר גם כשהושלם */}
       {TABS.filter(
         (t) => !(t.key === "questionnaire" && (quizComplete || role !== "master"))
-      ).map((t) => {
+      )
+        // טאביט הוא כלי של המנהל הראשי בלבד (מידע הזמנות רגיש) - מוסתר לצוות
+        .filter((t) => !(t.key === "tabit" && role !== "master"))
+        .map((t) => {
         const active = tab === t.key;
         return (
           <button
@@ -1064,6 +1078,7 @@ export default function AdminPage() {
           {tab === "reservations" && (
             <Reservations token={token} agentName={agentName} onOpenConversation={openConversation} />
           )}
+          {tab === "tabit" && role === "master" && <Tabit token={token} />}
           {tab === "knowledge" && (
             <Knowledge token={token} onMutate={loadConversations} onTest={openTest} onOpenConversation={openConversation} agentName={agentName} />
           )}

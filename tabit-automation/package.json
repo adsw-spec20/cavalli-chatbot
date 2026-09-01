@@ -1,0 +1,14 @@
+{
+  "name": "tabit-automation",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local browser automation for Tabit TGM (isolated from the main chatbot app)",
+  "type": "commonjs",
+  "scripts": {
+    "login": "node login.js",
+    "read": "node read-tomorrow.js"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}

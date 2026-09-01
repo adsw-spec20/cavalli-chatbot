@@ -1,0 +1,7 @@
+# Never commit the login session or captured tokens/data
+tabit-profile/
+out/
+node_modules/
+*.log
+# Holds the ingest URL + shared secret - must never be committed
+sync-config.json

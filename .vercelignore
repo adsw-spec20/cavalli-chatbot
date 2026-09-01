@@ -1,0 +1,7 @@
+# The Tabit bridge runs only locally - it holds the Tabit login session and
+# the sync secret, which must never leave this machine. Not needed on Vercel.
+tabit-automation
+
+# Not part of the app build
+backups
+TAKALA.mp4

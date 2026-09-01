@@ -29,6 +29,10 @@ const PUBLIC_PATHS = [
   "/api/admin/login",
   "/api/admin/logout",
   "/api/admin/media/upload",
+  // הגשר של טאביט (סקריפט מקומי, בלי עוגייה) שולח לכאן snapshot; מאומת
+  // בנפרד עם TABIT_SYNC_SECRET בתוך ה-route. הגשה למנהל (/api/admin/tabit)
+  // נשארת מאחורי השער - רק הקליטה פתוחה.
+  "/api/admin/tabit/ingest",
   "/login",
   "/privacy",
   "/data-deletion",
