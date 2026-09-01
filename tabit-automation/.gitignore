@@ -3,5 +3,6 @@ tabit-profile/
 out/
 node_modules/
 *.log
+agent.lock
 # Holds the ingest URL + shared secret - must never be committed
 sync-config.json

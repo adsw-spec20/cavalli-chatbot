@@ -295,33 +295,56 @@ async function run(page, cmd, me) {
   }
 }
 
-(async () => {
-  const cfg = loadConfig();
-  if (!cfg.agentUrl || !cfg.secret) { console.error("חסר TABIT_SYNC_URL / TABIT_SYNC_SECRET (או sync-config.json)"); process.exit(1); }
-  console.log("agent polling:", cfg.agentUrl);
-
+function cleanLocks() {
   try { for (const f of fs.readdirSync(PROFILE_DIR)) if (f.startsWith("Singleton")) try { fs.unlinkSync(path.join(PROFILE_DIR, f)); } catch (_) {} } catch (_) {}
+}
+
+// נעילת מופע-יחיד: מונע שני סוכנים על אותו פרופיל (הסיבה ל"Target crashed").
+const LOCK = path.join(__dirname, "agent.lock");
+function anotherAgentAlive() {
+  try { const t = Number(fs.readFileSync(LOCK, "utf8")); return Number.isFinite(t) && Date.now() - t < 15000; } catch (_) { return false; }
+}
+function touchLock() { try { fs.writeFileSync(LOCK, String(Date.now())); } catch (_) {} }
+
+const isCrash = (m) => /crash|target closed|target crashed|has been closed|session closed|disconnected|execution context/i.test(m || "");
+
+async function launchBrowser() {
+  cleanLocks();
   const ctx = await chromium.launchPersistentContext(PROFILE_DIR, { headless: true, viewport: { width: 1280, height: 800 } });
   const page = ctx.pages()[0] || (await ctx.newPage());
   await page.goto(APP_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
   await page.waitForTimeout(3000);
-
-  // מי אני (created_by) - לשדות היצירה
   let me = { id: null, name: "בדיקה" };
   try {
     const cur = await apiFetch(page, "GET", `/users/current?organization=${ORG_ID}`);
     if (cur.status === 200 && cur.body) me = { id: cur.body._id, name: [cur.body.firstName, cur.body.lastName].filter(Boolean).join(" ") || "בדיקה" };
   } catch (_) {}
   console.log("ready as:", me.name, me.id);
+  return { ctx, page, me };
+}
+
+(async () => {
+  const cfg = loadConfig();
+  if (!cfg.agentUrl || !cfg.secret) { console.error("חסר TABIT_SYNC_URL / TABIT_SYNC_SECRET (או sync-config.json)"); process.exit(1); }
+  if (anotherAgentAlive()) { console.error("סוכן אחר כבר רץ (agent.lock טרי). סגור אותו קודם. יוצא."); process.exit(1); }
+  console.log("agent polling:", cfg.agentUrl);
+
+  let b = await launchBrowser();
+  async function recover(e) {
+    console.error("  browser crashed - relaunching:", e && e.message);
+    try { await b.ctx.close(); } catch (_) {}
+    await new Promise((s) => setTimeout(s, 1500));
+    b = await launchBrowser();
+  }
 
   const SNAPSHOT_MS = 5 * 60 * 1000;
   let lastSnap = 0;
 
   for (;;) {
-    // snapshot תקופתי לפאנל הקריאה (מחליף את משימת sync המתוזמנת)
+    touchLock();
     if (Date.now() - lastSnap > SNAPSHOT_MS) {
       lastSnap = Date.now();
-      try { await pushSnapshot(page, cfg); } catch (e) { console.error("[snapshot] failed:", e.message); }
+      try { await pushSnapshot(b.page, cfg); } catch (e) { if (isCrash(e.message)) await recover(e); else console.error("[snapshot] failed:", e.message); }
     }
 
     let cmd = null;
@@ -333,8 +356,11 @@ async function run(page, cmd, me) {
 
     console.log(`> ${cmd.action}`, JSON.stringify(cmd.params || {}));
     let status = "done", result = null, error = null;
-    try { result = await run(page, cmd, me); }
-    catch (e) { status = "error"; error = e instanceof Error ? e.message : String(e); console.error("  error:", error); }
+    try { result = await run(b.page, cmd, b.me); }
+    catch (e) {
+      status = "error"; error = e instanceof Error ? e.message : String(e); console.error("  error:", error);
+      if (isCrash(error)) await recover(e);
+    }
 
     try {
       await fetch(cfg.agentUrl, {
