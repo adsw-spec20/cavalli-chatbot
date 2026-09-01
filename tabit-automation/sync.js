@@ -64,6 +64,16 @@ function waitForJson(page, matcher, timeoutMs = 45000) {
 }
 
 async function readTabit() {
+  // ריצה אוטומטית: אם ריצה קודמת השאירה נעילת פרופיל, ננקה אותה כדי שהגשר
+  // לא ייתקע (אחרת launchPersistentContext ייכשל על "profile in use").
+  try {
+    for (const f of fs.readdirSync(PROFILE_DIR)) {
+      if (f.startsWith("Singleton")) {
+        try { fs.unlinkSync(path.join(PROFILE_DIR, f)); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: true,
     viewport: { width: 1280, height: 800 },
@@ -97,6 +107,8 @@ function normalize({ reservations, tables }) {
         state: r.state || "",
         type: r.type || "",
         deposit: depositStatus(r),
+        notes: ((d.notes || "") + (d.personal_message ? ` | ${d.personal_message}` : "")).trim(),
+        manageUrl: (r.links && r.links.management) || null,
       };
     })
     .filter((r) => r.fromISO); // חייב תאריך כדי להיות שימושי
