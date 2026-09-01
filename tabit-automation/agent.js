@@ -152,13 +152,15 @@ async function actReadDay(page, params) {
     .map((r) => mapReservation(r, tableNum))
     .filter((r) => r.day === day)
     .sort((a, b) => (a.time < b.time ? -1 : 1));
-  return { day, count: rows.length, reservations: rows };
+  // covers מחושב בקוד (דטרמיניסטי) - הבוט לא מחבר בעצמו (מקור אי-דיוקים)
+  const covers = rows.reduce((s, r) => s + (r.seats || 0), 0);
+  return { day, count: rows.length, covers, reservations: rows };
 }
 async function actDepositSummary(page, params) {
-  const { day, reservations } = await actReadDay(page, params);
+  const { day, covers, reservations } = await actReadDay(page, params);
   const missing = reservations.filter((r) => r.deposit === "missing");
   const secured = reservations.filter((r) => r.deposit === "secured").length;
-  return { day, total: reservations.length, secured, missing: missing.length, missingList: missing.map((r) => ({ id: r.id, name: r.name, seats: r.seats, time: r.time })) };
+  return { day, total: reservations.length, covers, secured, missing: missing.length, missingList: missing.map((r) => ({ id: r.id, name: r.name, seats: r.seats, time: r.time })) };
 }
 async function actGetDepositLink(page, params) {
   for (let i = 0; i < 4; i++) {
@@ -173,17 +175,50 @@ async function actGetDepositLink(page, params) {
   return { id: params.reservationId, deposit_link: null, note: "קישור פיקדון עדיין לא נוצר, או ההזמנה לא נמצאה" };
 }
 
+/**
+ * שיוך שולחן חכם ומודע-זמינות: מחזיר שולחן בודד (הקטן שמתאים) או צירוף
+ * שולחנות לקבוצה גדולה - אך ורק מתוך שולחנות שפנויים בחלון הזמן הזה (לא
+ * תפוסים ע"י הזמנה קיימת חופפת). כך לעולם לא "דורסים" הזמנה קיימת.
+ */
+function pickTables(tables, allReservations, fromISO, untilISO, party) {
+  const fromT = new Date(fromISO).getTime();
+  const untilT = new Date(untilISO).getTime();
+  const occupied = new Set();
+  for (const r of allReservations) {
+    const d = r.reservation_details || {};
+    if (!d.reserved_from || r.state === "cancelled") continue;
+    const rf = new Date(d.reserved_from).getTime();
+    const ru = d.reserved_until ? new Date(d.reserved_until).getTime() : rf + 120 * 60000;
+    if (rf < untilT && ru > fromT) (d.reserved_tables_ids || []).forEach((id) => occupied.add(id));
+  }
+  const free = tables.filter((t) => !t.disabled && !occupied.has(t._id));
+  // שולחן בודד: הקטן ביותר שמכיל את הקבוצה
+  const singles = free.filter((t) => (t.seats || 0) >= party).sort((a, b) => a.seats - b.seats);
+  if (singles.length) return { ids: [singles[0]._id], numbers: [singles[0].number] };
+  // צירוף לקבוצה גדולה: מהגדול לקטן, מאותו אזור אם אפשר, עד שמגיעים לגודל
+  const byArea = new Map();
+  for (const t of free) { const a = (t.area && t.area.name) || ""; if (!byArea.has(a)) byArea.set(a, []); byArea.get(a).push(t); }
+  let best = null;
+  for (const group of [...byArea.values(), free]) {
+    const sorted = [...group].sort((a, b) => b.seats - a.seats);
+    const chosen = []; let sum = 0;
+    for (const t of sorted) { chosen.push(t); sum += t.seats || 0; if (sum >= party) break; }
+    if (sum >= party && (!best || chosen.length < best.chosen.length)) best = { chosen, sum };
+  }
+  if (best) return { ids: best.chosen.map((t) => t._id), numbers: best.chosen.map((t) => t.number) };
+  return { ids: [], numbers: [] };
+}
+
 async function actCreateReservation(page, params, me) {
-  const { name, phone, date, time, seats } = params;
+  const { name, phone, date, time, seats, send_deposit_link } = params;
   if (!name || !phone || !date || !time || !seats) throw new Error("חסרים פרטים: שם, טלפון, תאריך, שעה, סועדים");
   const from = ilToUtcISO(date, time);
   const until = new Date(new Date(from).getTime() + 120 * 60000).toISOString();
 
-  // בחר שולחן פנוי בגודל מתאים (כמו שהאפליקציה ממליצה) - להעלאת סיכוי ההצלחה
-  const tables = await getTables(page);
-  const cand = tables.filter((t) => !t.disabled && (t.seats || 0) >= Number(seats)).sort((a, b) => a.seats - b.seats);
-  const avail = cand.find((t) => t.status === "available") || cand[0];
-  const tableIds = avail ? [avail._id] : [];
+  // שיוך שולחן חכם מתוך השולחנות הפנויים בחלון הזמן הזה
+  const [tables, allRes] = [await getTables(page), await getReservations(page)];
+  const picked = pickTables(tables, allRes, from, until, Number(seats));
+  const tableIds = picked.ids;
 
   const localId = Math.random().toString(36).slice(2, 18);
   const body = {
@@ -218,8 +253,9 @@ async function actCreateReservation(page, params, me) {
     // חד-פעמית (לא חוזרת)
     recurring_reservation: { interval: { weeks: 0 }, weekdays: [], end_date: null },
     standby_flexible_time: { from: "", to: "" },
-    // לא שולחים SMS ללקוח בזמן בדיקות - שולפים את הקישור ומציגים בצ'אט
-    send_notification: { event_type: "deposit", by_sms: false, by_email: false },
+    // שליחת SMS ללקוח רק אם התבקש במפורש (send_deposit_link). אחרת שולפים
+    // את הקישור ומציגים בצ'אט בלי להטריד את הלקוח.
+    send_notification: { event_type: "deposit", by_sms: !!send_deposit_link, by_email: false },
     local_reservation: true,
     created_by_name_dup: me.name,
     local_id: localId,
@@ -238,9 +274,13 @@ async function actCreateReservation(page, params, me) {
     seats: Number(seats),
     day: dayFmt.format(new Date(from)),
     time: timeFmt.format(new Date(from)),
-    table: avail ? avail.number : null,
+    tables: picked.numbers,
+    tables_note: picked.numbers.length ? `שולחן ${picked.numbers.join(", ")}` : "לא נמצא שולחן פנוי מתאים - נוצר בלי שולחן",
     deposit_link: link.deposit_link,
-    note: link.deposit_link ? "נוצר בהצלחה" : "נוצר, אבל קישור הפיקדון עדיין לא זמין - נסה שוב עוד רגע",
+    deposit_sms_sent: !!send_deposit_link,
+    note: link.deposit_link
+      ? (send_deposit_link ? "נוצר, וקישור הפיקדון נשלח ללקוח ב-SMS" : "נוצר. הקישור לא נשלח ללקוח (לא התבקש) - הנה הוא")
+      : "נוצר, אבל קישור הפיקדון עדיין לא זמין - נסה שוב עוד רגע",
   };
 }
 

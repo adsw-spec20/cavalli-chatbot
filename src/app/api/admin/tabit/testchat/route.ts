@@ -29,7 +29,7 @@ const TOOLS: Anthropic.Tool[] = [
   { name: "tabit_read_day", description: "קרא את ההזמנות של יום מסוים מטאביט. day = \"today\" | \"tomorrow\" | \"YYYY-MM-DD\".", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
   { name: "tabit_deposit_summary", description: "סיכום פיקדונות ליום: כמה מובטחים וכמה חסרים, ורשימת החסרים. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
   { name: "tabit_get_deposit_link", description: "שלוף את קישור הפיקדון של הזמנה לפי reservationId.", input_schema: { type: "object", properties: { reservationId: { type: "string" } }, required: ["reservationId"] } },
-  { name: "tabit_create_reservation", description: "צור הזמנה חדשה בטאביט. הוספה בלבד - לעולם לא נוגע בהזמנות קיימות. אסוף שם, טלפון, תאריך (YYYY-MM-DD), שעה (HH:MM) ומספר סועדים, והצג סיכום לאישור לפני היצירה. מחזיר מזהה הזמנה וקישור פיקדון.", input_schema: { type: "object", properties: { name: { type: "string" }, phone: { type: "string" }, date: { type: "string" }, time: { type: "string" }, seats: { type: "number" } }, required: ["name", "phone", "date", "time", "seats"] } },
+  { name: "tabit_create_reservation", description: "צור הזמנה חדשה בטאביט. הוספה בלבד - לעולם לא נוגע בהזמנות קיימות. שיוך השולחן נעשה אוטומטית וחכם (לפי מספר הסועדים ומה שפנוי באותה שעה, כולל צירוף שולחנות לקבוצה גדולה). send_deposit_link=true שולח ללקוח SMS עם קישור הפיקדון; false (ברירת מחדל) רק יוצר את הקישור ומחזיר אותו בלי לשלוח. מחזיר מזהה, שולחנות משויכים וקישור פיקדון.", input_schema: { type: "object", properties: { name: { type: "string" }, phone: { type: "string" }, date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string", description: "HH:MM" }, seats: { type: "number" }, send_deposit_link: { type: "boolean", description: "האם לשלוח ללקוח SMS עם קישור הפיקדון" } }, required: ["name", "phone", "date", "time", "seats", "send_deposit_link"] } },
 ];
 
 const TOOL_TO_ACTION: Record<string, TabitAction> = {
@@ -52,11 +52,12 @@ const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למע
 
 כללים קשיחים:
 1. אין לך שום כלי לשינוי, ביטול או מחיקה של הזמנות - ואסור לך להבטיח פעולות כאלה. אתה יכול רק לקרוא וליצור חדשות.
-2. לפני יצירת הזמנה: ודא שיש שם, טלפון, תאריך, שעה ומספר סועדים, והצג למשתמש סיכום קצר לאישור. צור רק אחרי אישור מפורש.
+2. יצירת הזמנה - אסוף חמישה פרטים: שם, טלפון, מספר סועדים, תאריך, שעה, ובנוסף שאל **האם לשלוח ללקוח קישור פיקדון** (send_deposit_link). הצג סיכום קצר של כל אלה, וצור רק אחרי אישור מפורש. אל תשאל על שולחן - השיוך אוטומטי וחכם.
 3. כשכלי נכשל - דווח בבירור מה נכשל ומה השגיאה. זו כל המטרה של סביבת הבדיקה.
 4. ענה תמציתי וברור, בעברית.
 5. שלמות הנתונים מעל הכל - אתה כלי בדיקה, לא תקציר שיווקי. כשמציגים רשימה, הצג את **כולה** ואל תקצר בשקט. "הזמנות גדולות" בלי מספר מפורש = 8+ סועדים כברירת מחדל; רשום את כל ההזמנות שעומדות בסף, ואם יש הרבה - אמור כמה יש ואל תשמיט.
-6. פיקדון הוא מידע קריטי: בכל רשימת הזמנות, סמן במפורש אילו **חסרות פיקדון**, ואם יש ולו אחת חסרה - אמור זאת בבירור בסיכום (אל תיתן רושם שהכל מכוסה כשלא). כשמבקשים "הזמנות גדולות", בלוט את החסרות פיקדון.
+6. פיקדון הוא מידע קריטי: בכל רשימת הזמנות, סמן במפורש אילו **חסרות פיקדון**, ואם יש ולו אחת חסרה - אמור זאת בבירור בסיכום (אל תיתן רושם שהכל מכוסה כשלא).
+7. **לעולם אל תחשב או תסכם מספרים בעצמך** (סה"כ סועדים, כמה מובטחים וכו') - זה מקור לטעויות. השתמש אך ורק בשדות המחושבים שהכלי מחזיר: count (מספר הזמנות), covers (סה"כ סועדים), secured, missing. אם צריך סה"כ סועדים - קרא ל-tabit_read_day או tabit_deposit_summary וקח את covers משם כמו שהוא.
 
 השעה בישראל כעת: ${israelNow()}.`;
 
