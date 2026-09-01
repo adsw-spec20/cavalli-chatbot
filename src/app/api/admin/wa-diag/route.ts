@@ -188,15 +188,16 @@ export async function POST(req: NextRequest) {
     const { getBusinessConfig } = await import("@/lib/admin-service");
     const cfg = await getBusinessConfig();
     const waze = cfg.contact.navigationUrl ?? "";
+    // v3 = הוספת שורת השער (בחירת בעל העסק 1.9). אי אפשר לערוך תבנית מאושרת
+    // והטוקן לא מורשה למחוק, לכן כל שינוי נוסח = שם חדש.
+    const name = (body as { templateName?: string }).templateName || "parking_directions_v3";
     const r = await fetch(
       `https://graph.facebook.com/${V}/${body.wabaId}/message_templates?access_token=${encodeURIComponent(token)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          // v2: הגרסה עם הקישור הממותג (המקורית עם קישור האחסון תקועה ב-PENDING
-          // ואי אפשר למחוק אותה עם הטוקן הנוכחי - שם חדש עוקף את ההתנגשות)
-          name: "parking_directions_v2",
+          name,
           language: "he",
           category: "UTILITY",
           components: [
@@ -206,6 +207,7 @@ export async function POST(req: NextRequest) {
                 `היי! כאן קפה קוואלי 🙂 כמה פרטים שיעזרו לכם להגיע אלינו:\n\n` +
                 `📍 המלאכה 6, חולון\n${waze ? `ניווט ב-Waze: ${waze}\n` : ""}\n` +
                 `🅿️ יש חניה חינמית גדולה צמודה למסעדה. הכניסה אליה קצת מוסתרת, אז הכנו סרטון קצר שמראה בדיוק איך מגיעים:\nhttps://caffecavalli.com/parking\n\n` +
+                `🚧 בדרך יש שער לבן. אם הוא סגור, כתבו לנו כאן ונפתח לכם מיד.\n\n` +
                 `נתראה בקרוב! ☕`,
             },
           ],

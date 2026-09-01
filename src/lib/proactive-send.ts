@@ -20,7 +20,9 @@ export interface ProactiveTemplate {
 
 export const PROACTIVE_TEMPLATES = {
   parking: {
-    template: "parking_directions_v2",
+    // v3 = הנוסח עם שורת השער (1.9). גרסאות קודמות נשארות מאושרות במטא
+    // כי הטוקן לא מורשה למחוק תבניות - שום דבר לא מפנה אליהן.
+    template: "parking_directions_v3",
     logText: "📍 נשלחו ללקוח הוראות הגעה וחניה בוואטסאפ (שליחה יזומה)",
   },
   payment: {
