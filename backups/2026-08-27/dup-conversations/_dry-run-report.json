@@ -1,0 +1,1285 @@
+﻿[
+    {
+        "customerId":  "messenger:27779702331729816",
+        "kept":  "f90fbef8-d36e-4a76-9043-91d5613dfcc7",
+        "merged":  [
+                       "3c91bf09-2869-4964-bf60-c9d26ecc2f83"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27277475708554598",
+        "kept":  "e44df214-7a06-4330-9107-0ec567349198",
+        "merged":  [
+                       "d4189295-dac4-4d37-a5d4-3ea6c62c87cb",
+                       "964164f2-b456-4980-800f-add8f9bb6744"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28021732584149259",
+        "kept":  "39487035-38c1-4478-bd26-a73ba601befe",
+        "merged":  [
+                       "2aa5d4a0-200a-4a63-9012-3751d905e09f"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28531173863154093",
+        "kept":  "c91a3c22-cb4c-4208-9c02-b758d8883f2d",
+        "merged":  [
+                       "78c0dbfa-57b7-42ea-a885-0d55c816d490"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28278338041800980",
+        "kept":  "8ff4ed53-2d7a-4b2d-aedd-d3575ea4bc8a",
+        "merged":  [
+                       "fbbe8a39-0d81-42bc-b9f7-a132e7ef8787"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27114013111606957",
+        "kept":  "2b1ca3c9-628a-4c97-a0f0-2d7ef82d9909",
+        "merged":  [
+                       "31ca1cf4-e913-4a61-aec5-1b099e2d396d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972504222947",
+        "kept":  "4853c5bd-e510-48c6-a0fb-29b9a1e83d17",
+        "merged":  [
+                       "b6260705-6875-44d7-aa55-34af72cd38b7"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27743557025345527",
+        "kept":  "38382313-33e5-4b5e-bf76-c4ec0f3484c9",
+        "merged":  [
+                       "a25ce67c-386f-4f8b-b5d2-b54b81e816dc"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972524442041",
+        "kept":  "a3aefffa-f2b4-494c-b028-ec352dc2ec34",
+        "merged":  [
+                       "05c704c1-32d4-4464-b6b6-ca237fa0e4a2"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972549108019",
+        "kept":  "a09ee5d5-a7dd-4e26-bf17-78f1abfbf291",
+        "merged":  [
+                       "66cd7c15-5583-4c3c-a37d-3dacd1cda949",
+                       "91690710-f448-48e4-bc13-993ba0cf6412",
+                       "e6f35ae9-2c4f-4f94-88de-133fa5e8f3fb"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972507354939",
+        "kept":  "54a87a99-1f8a-46d4-8f20-1b6fe2627a0c",
+        "merged":  [
+                       "15284076-b060-41ae-abd1-e3b0122edadf"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27976022292049239",
+        "kept":  "eb2ce37f-8462-4cf7-908d-6dcfb0b02fb4",
+        "merged":  [
+                       "e32c2798-8294-4ddb-a971-7a78bd9bb4d6",
+                       "093986f8-d571-40fb-ba40-0e584dce6d0f"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28100708682913755",
+        "kept":  "f7f9733f-4404-44a5-9386-ec5f8556bf97",
+        "merged":  [
+                       "c8ea4656-13b3-4384-86e5-ea5947ae526a"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27718180454437396",
+        "kept":  "a54a66a2-8327-46d0-aa52-28020c084fdc",
+        "merged":  [
+                       "818154ad-84c2-43c2-95d3-b8f98ae44761"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:26455352990827753",
+        "kept":  "52e4ac2e-6cef-484a-bf5d-1fdccbed252c",
+        "merged":  [
+                       "1bdbbe52-ae9b-4c54-b23d-96c485e468e5"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:29232443836355497",
+        "kept":  "6a4605f3-5fd0-4d3c-9850-62014283c4d3",
+        "merged":  [
+                       "c63b11b5-e179-4e0e-8a8e-3a11f9926cc9"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:25732369636438975",
+        "kept":  "8a8128ac-e92f-4b0b-ab6e-cee2b79b02e4",
+        "merged":  [
+                       "5ef6412a-df95-4df3-b502-eecf7a4ed56b"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28469118649361706",
+        "kept":  "5b6ed950-f4fe-4ad1-8147-55f2e15ad376",
+        "merged":  [
+                       "0cd1267a-6815-4d7e-b332-9e29a3441148"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28385784734372730",
+        "kept":  "da7aeb3f-be91-452e-9fa3-17e0b21bce44",
+        "merged":  [
+                       "a72f4490-7307-47e0-99a0-bc962ad3b4dd"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28415629534716646",
+        "kept":  "0edd0f07-bde3-4265-bec7-21d9c60fe54a",
+        "merged":  [
+                       "56e133e3-e214-457f-af86-1d63c27eb341"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28257040393908270",
+        "kept":  "5433244d-cdda-4992-94ca-f08cae4785ee",
+        "merged":  [
+                       "03f76943-a4bd-4ef1-aa4b-88d74c935a68",
+                       "bb9d52c7-af1f-42d2-8d7e-d3241574efd9"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:25832541323085912",
+        "kept":  "0a59ee83-5e77-4081-a9ef-8be1e4a9acf7",
+        "merged":  [
+                       "ca66c44f-1181-4f67-8542-4231552bb9ab"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37894037900243907",
+        "kept":  "16efb4f7-bb29-48ca-964f-ce686f1cb1d2",
+        "merged":  [
+                       "b7f593a6-5835-4c6a-9423-078c183270fd",
+                       "6680bff5-c73b-47cc-8473-a3d692282939"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27234160329533832",
+        "kept":  "c07a374a-58d6-4dfb-a874-e54b01b14b81",
+        "merged":  [
+                       "1a5faccc-5198-4f3e-939b-1549de45c954"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27794756426850416",
+        "kept":  "298588e0-1105-43ea-8e91-b8af94837572",
+        "merged":  [
+                       "551f7cb9-3e9b-4cd9-8d1f-1ce060c2e92b"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37760000753614223",
+        "kept":  "ab0e6772-cb63-42c9-8a90-eb61a4145ac3",
+        "merged":  [
+                       "5811384e-f732-4605-918a-8daffb3e5d44"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37781872208094511",
+        "kept":  "d91ce615-57f3-4171-ae79-f84c03d42777",
+        "merged":  [
+                       "ef62a842-8835-466b-9917-90257d0e90f7"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28901497736120063",
+        "kept":  "f03e5e49-a708-4854-b183-ab39a3ecc070",
+        "merged":  [
+                       "afe2a313-f7d4-4470-8076-eff4bcedd478"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28537274985865499",
+        "kept":  "97a76bb2-ce54-46c1-870b-f3946b527102",
+        "merged":  [
+                       "c48d9aac-b843-4edc-8ca9-83d734f9dea1"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27240500645571133",
+        "kept":  "6a393705-8c8f-46cc-815a-5177d9e7f73a",
+        "merged":  [
+                       "da1c7d3e-32c3-48fe-9733-fde3a2cc02c8"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27761692410092857",
+        "kept":  "7637f8b3-674f-47b2-9ed7-0dbefa59ba91",
+        "merged":  [
+                       "2dccda2f-be6a-4a38-842a-697f9d19e3bc"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28280250931570028",
+        "kept":  "2256cf3a-ee9e-4a25-8221-2e7d03527ff5",
+        "merged":  [
+                       "1bf51dfd-d327-4437-942b-478f372d3358"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28545290851761051",
+        "kept":  "017c1012-00cd-42bb-b90a-4beaa73ef474",
+        "merged":  [
+                       "d314c092-a2b2-4583-8485-0ad25bdde640"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28028600356756470",
+        "kept":  "0accfb91-6a47-413b-8c35-2d27aab3a5e9",
+        "merged":  [
+                       "33d01cda-c882-4c0f-a5ff-d4d01cbd3494"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:29089698790619796",
+        "kept":  "383b1739-4105-4a14-8e22-d312b5e1e0bf",
+        "merged":  [
+                       "8173f870-9bc8-4177-9464-b0dd7baf10d3"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:29184091614513345",
+        "kept":  "86509655-dd76-4814-9277-c1aa0d42aca6",
+        "merged":  [
+                       "8f01b190-11d1-4574-a9c6-3586c0c7aa7c"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27537180229297199",
+        "kept":  "2012d0a9-fc88-42ea-a313-5b339a8c7708",
+        "merged":  [
+                       "a53362ad-dbe8-4560-b973-7f50846776fe"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28545696275028131",
+        "kept":  "5912ee11-e991-4b1d-b8e8-b814eb436402",
+        "merged":  [
+                       "4c9facaf-99e9-499c-9a1f-f2bcdcea1b6f"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972586327443",
+        "kept":  "5122eb5f-ab65-4949-9c39-7605ed7a0cdc",
+        "merged":  [
+                       "11b1eea4-8f2f-45d4-9fa9-19d51ff8094b"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972509120153",
+        "kept":  "8ea5209a-c302-499b-bcf8-07e3a16d2b45",
+        "merged":  [
+                       "afe6f204-5cc3-4e02-b352-2a902c6aedb0"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "instagram:1652864253073243",
+        "kept":  "9697973e-fbe3-4ee8-9c06-de5fa202e876",
+        "merged":  [
+                       "e1a3376c-5103-42b5-b8d0-767ac4aa2597"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27715604358111557",
+        "kept":  "4bb20c2d-e52f-481c-b720-ad54d6b9ae9c",
+        "merged":  [
+                       "fc2cf553-6893-456d-a64a-b263ca7dd9cb"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972587333349",
+        "kept":  "7bacbccd-73fc-460a-b38a-35e1d4690770",
+        "merged":  [
+                       "cf431951-5bc7-455e-a8d2-008b7e6d8efe"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27900562679572700",
+        "kept":  "05b6b699-304e-433c-8787-2df71149b8df",
+        "merged":  [
+                       "db38db0f-e26f-4860-8751-c84782f809b4"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28433635942907762",
+        "kept":  "492e7f50-ec31-4c6b-9e8c-c1adff418551",
+        "merged":  [
+                       "2b2de615-8ae2-4b07-ae59-493459be4504"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972509777719",
+        "kept":  "47bb0356-e178-4a33-b4fc-8ee0d7cdecc1",
+        "merged":  [
+                       "3a81f569-6a4c-45cb-a31e-ec28cc5e9ac3"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37684815231165168",
+        "kept":  "e3168303-e93f-4c3a-904b-c22493d80f98",
+        "merged":  [
+                       "7e4d72bc-c351-4088-9372-11e86149b10d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28010196255288310",
+        "kept":  "5101e1c3-a6a4-48f8-936d-22e983557146",
+        "merged":  [
+                       "150d2afc-828b-4119-99a5-a261745e4a0e"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28827825966818266",
+        "kept":  "0e509eba-bebe-4f3b-989b-336ea63f91a7",
+        "merged":  [
+                       "d53ac996-0e41-4d46-a9c6-549ed2a632f3"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28151451127828033",
+        "kept":  "70fc7be5-f3b3-4c57-aec5-b7928bd5bdba",
+        "merged":  [
+                       "970413fc-4012-4b3c-aca0-e519ea3920ab"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:38139219295661497",
+        "kept":  "437d4b88-6f19-4c4e-8bc3-8e5914947f02",
+        "merged":  [
+                       "fe19c8cd-8efd-4b58-9074-749b87388872"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28256369703988358",
+        "kept":  "4af2ddff-fa74-4bec-a5b0-c006ff129805",
+        "merged":  [
+                       "8b86f80e-cef1-4808-b7ce-490210d7bc47"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27015564821428417",
+        "kept":  "35ba7307-e4a7-491b-ac39-05d96a01b18f",
+        "merged":  [
+                       "6f1472c4-828a-4516-972a-95f86ae4db49"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972502042701",
+        "kept":  "69574653-e9ab-4ed2-98a6-7e3d60ecf03e",
+        "merged":  [
+                       "47bfe390-f5ae-427d-b0d1-d98e62165740"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28030920479903236",
+        "kept":  "d3e9409d-dbf3-4c2c-9a6b-03f01c6f3df5",
+        "merged":  [
+                       "a5613eae-5325-46b7-9163-77db6aef7155"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27231926399757246",
+        "kept":  "a83e221d-51ac-4632-92b1-f209247dee20",
+        "merged":  [
+                       "e962402b-6c58-429e-a2c3-13d2d5ff2c80"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "instagram:1366797595622709",
+        "kept":  "02a415a7-6097-48e1-89b8-b3e79046a9d4",
+        "merged":  [
+                       "1660efc6-32fe-4794-b995-2a4f2e4bbea3"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27492707930409334",
+        "kept":  "a27af4c0-bc51-4b0b-a775-16faf48685b7",
+        "merged":  [
+                       "70441a47-a99b-4024-abf6-5dc34aad7194"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28173349889022826",
+        "kept":  "a02f25bf-dc6e-489a-b0e1-1f11afd70c4e",
+        "merged":  [
+                       "775f0b67-6818-43c0-a4d4-593d315b2071"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28239175959033281",
+        "kept":  "27983270-cc2e-4a35-ab48-bdb59a9ffa2a",
+        "merged":  [
+                       "28ca68a3-6bfd-47c7-99a3-257562961b63"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27659471483754431",
+        "kept":  "3d9e4145-717d-401c-9a59-e4f72156ffa4",
+        "merged":  [
+                       "54178676-2319-4842-891a-cf539cd70e9a"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972504081489",
+        "kept":  "9bc872e2-5bc7-4fa3-aefd-9355531e0b1f",
+        "merged":  [
+                       "458c2ffa-ce3f-484c-8242-f1083ad8f963"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "whatsapp:972525100181",
+        "kept":  "7850a168-7e68-410e-a182-c28399c0a7c4",
+        "merged":  [
+                       "0c867228-8f14-4eee-9e32-20050cb4e1e4"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27877038025256265",
+        "kept":  "3165f116-b951-4e30-86f1-464cbc306398",
+        "merged":  [
+                       "112e15aa-c1c9-46d1-92c5-f8a73883db27"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "instagram:1977645469610361",
+        "kept":  "c8851aa7-5b03-4fc9-ae0a-bdec4454d612",
+        "merged":  [
+                       "10ac56d4-7f8b-4bf1-ace3-77711b8389f5"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27108838298789264",
+        "kept":  "5e085b51-60c2-4ca3-b7b7-2463140ada49",
+        "merged":  [
+                       "f9eb0382-a577-4303-9be9-b3c5f52d37b3"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "instagram:4202011303357139",
+        "kept":  "5d5ac6e1-56cd-4e5a-92a9-297be294deeb",
+        "merged":  [
+                       "be508a8f-7854-449b-a7b1-4a3764e7f417"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28055868097430180",
+        "kept":  "496be458-4c44-401e-9470-e49925c4bc77",
+        "merged":  [
+                       "75705d85-231b-40f5-96a2-a74f295e4adb",
+                       "bbcbc149-b7e3-43f6-ab5b-fa783c723d37",
+                       "eea5b1b5-bbc2-4479-b1e8-dc34bbd3fe20"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27395733536775346",
+        "kept":  "59032f36-bb0c-45d4-ba16-b860080ab520",
+        "merged":  [
+                       "848c23d2-4c21-45cd-8f5c-58a87870d040"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27122865320724254",
+        "kept":  "1625c6af-f13f-4b80-8aca-d18f8a2a8f0e",
+        "merged":  [
+                       "472517f7-1f5a-42cc-93ca-7d636efc9445"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28487597990826553",
+        "kept":  "e8182514-5010-4bf4-a198-69b091903b50",
+        "merged":  [
+                       "d0aa5313-2868-4533-832a-fcac820985e5"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28777368231850198",
+        "kept":  "162e6e46-1d2c-4b92-9a61-0753320229ac",
+        "merged":  [
+                       "11ba0b22-1d3a-4519-b008-e896a4fc152e"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28311210681837058",
+        "kept":  "e474c7dc-71e5-431b-bd48-768af6cfdbc3",
+        "merged":  [
+                       "b8844a3a-b333-4b52-b2a5-047428880b76"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27866425789683459",
+        "kept":  "d26c1701-a147-4376-a6ae-565e9ae83dd4",
+        "merged":  [
+                       "0c02d730-5094-4ce1-80f7-208f7f0241d7"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27478607441819079",
+        "kept":  "e5c8640d-eed5-4866-87c7-049f3c4ed03b",
+        "merged":  [
+                       "ef7e0867-7e6f-4eaf-99b2-4a4e02ec3568"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28786521980934822",
+        "kept":  "45d1dd06-cfec-4854-9899-afae3b7a1207",
+        "merged":  [
+                       "b8fef852-83d9-4214-b0f6-17a119198dfa",
+                       "6d523252-1890-4680-b6cc-dae8a135dc61"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27526374977064729",
+        "kept":  "5d2659b4-d551-4906-a692-8210c679dd88",
+        "merged":  [
+                       "959c6579-2c82-4483-b28b-70ba42cb13e2"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28771618139105787",
+        "kept":  "86561829-4129-4218-8c4f-73781e7b7f6f",
+        "merged":  [
+                       "de1c0e49-127b-4a66-a2ea-45e4132033f7"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28370240352593273",
+        "kept":  "fb73b86e-dd3f-4171-be97-bebfdd62d014",
+        "merged":  [
+                       "c4f88f2b-8fdc-4866-a8db-f0876ae71271",
+                       "dfc8c2b4-0e6b-4a75-98df-abb7f2bc5546"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27907705848880825",
+        "kept":  "adef5a78-143c-497d-83f5-08bcfba2a107",
+        "merged":  [
+                       "b27a8933-3ab2-4f7c-b092-1814de12bcdb"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:38243222175276348",
+        "kept":  "e1da6174-c622-4b7f-99d5-9299f2719baf",
+        "merged":  [
+                       "4160c7a4-6785-4cc9-bfac-da96baf83ecb"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27691189053877655",
+        "kept":  "c7751efc-5b3f-4d69-8663-065e79bb3ed8",
+        "merged":  [
+                       "f08d4bc5-8c2f-426b-b114-baf399d454f8"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "playground:65d02c8f-c358-414b-94a3-955549c69fde",
+        "kept":  "e85e7dc1-59d7-4b3c-b101-98f03a21428c",
+        "merged":  [
+                       "f0d74562-4b2a-4b97-b60b-780bcc97bdfb"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27936091662723216",
+        "kept":  "dae7a121-4bba-4cab-bb8b-a2fd6653bc7d",
+        "merged":  [
+                       "d390180f-9887-42f8-818b-e20ab7488918"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27885240911134451",
+        "kept":  "ff271b05-aa38-4ace-bc56-39559fc10a63",
+        "merged":  [
+                       "85148a0e-8e3d-4cf2-8bf6-ed9297896153",
+                       "16bca7cd-db2f-43c4-9821-87aab39c6096"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27782218444778340",
+        "kept":  "115664d2-8467-4334-aefd-4e0ce66cf94d",
+        "merged":  [
+                       "0de9988c-f07b-4700-8ac0-05bd366ffceb"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27316473581323605",
+        "kept":  "463a0bc2-66d4-4b9b-a95d-0b5205760785",
+        "merged":  [
+                       "86e88707-a867-4f91-8298-feb0bc1a7b9f",
+                       "f342339e-6e0a-463c-9304-73f4f090e82d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:26799022059753678",
+        "kept":  "f2089634-b466-4d1e-94f4-55afe98114d0",
+        "merged":  [
+                       "1f0dd41a-a257-4b2c-a4f1-329a9ee10322"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27471064485928325",
+        "kept":  "dc5b945c-f43f-4497-861c-422c822a63a9",
+        "merged":  [
+                       "d19657db-e2b9-4aab-8f9d-3b2d170104f8"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27631878796481279",
+        "kept":  "05bb1651-29f6-4a67-a367-52de4f3f39a8",
+        "merged":  [
+                       "5415b387-81a8-443d-b54c-469f765e1c61"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27873914395601166",
+        "kept":  "abdc0e78-514b-4815-b07a-d294c29c52be",
+        "merged":  [
+                       "e89e71ee-95ed-4a04-833b-65a03691e729"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37876242741989356",
+        "kept":  "0b0d5b7b-958c-48a3-b82c-e145f0363d62",
+        "merged":  [
+                       "d24c3a54-a9e2-43c4-af20-de63f4756ed4"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27787277784271136",
+        "kept":  "143e91ee-8fa1-4518-ac0d-04d1d419eff1",
+        "merged":  [
+                       "fa85f36b-bc59-4345-a0ec-4de671524bf3"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:29140844395507911",
+        "kept":  "1c623f2d-c427-4112-91a1-93f5deb6415d",
+        "merged":  [
+                       "7150c522-6580-4997-b75e-f9375a78217d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27798667643120151",
+        "kept":  "15273547-afbc-4c4c-b3f5-2277908c0e88",
+        "merged":  [
+                       "8252cc66-3fda-4404-9b40-983b07e0e10e"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27974351618872736",
+        "kept":  "d7a87e3a-1b0d-455f-bcd1-548bdaa8f80a",
+        "merged":  [
+                       "852671ff-db6a-4d36-9b13-a16584d7a370"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27837468489207241",
+        "kept":  "e552c78e-d859-48f1-ab59-1e7b9f6f36f9",
+        "merged":  [
+                       "a706bcea-63b7-48fc-b078-ea85287245de"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27669721162656045",
+        "kept":  "eff6ae4b-abdc-4f00-891b-37088346e4f6",
+        "merged":  [
+                       "185ea595-6402-41a9-99a0-3f4ccd01be6e"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27782736431337414",
+        "kept":  "826c5f52-8292-4555-aaa3-d823b766b284",
+        "merged":  [
+                       "3a9eb67d-201a-48b8-ad0f-4efd54ca8b6d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37390393810606134",
+        "kept":  "c53bf060-fca9-4ae6-ae8a-9a63eccad4f5",
+        "merged":  [
+                       "3b9741b5-1a2e-41a6-8452-e5a475f5241a"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37476125242034211",
+        "kept":  "b56b2a31-58c6-494f-8c17-60aeb279a499",
+        "merged":  [
+                       "cdcae4f6-1e5d-4a9d-97f0-3f9db077395e",
+                       "bd6022c9-8854-4b78-adb5-d107aa76a88b"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27713363771658252",
+        "kept":  "1e24ea20-1d00-4491-983c-e3b85367111f",
+        "merged":  [
+                       "79a57038-8038-456f-8af2-bab494be8058",
+                       "c8cac8c6-78ae-46b8-8fc0-deba3d4aab18"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27772142599113429",
+        "kept":  "32d43dec-fc93-4c49-8507-c67891b121de",
+        "merged":  [
+                       "353d9e05-118d-4b25-adb7-38b13012ad4d",
+                       "e2f7e44d-e4ec-4d68-88e5-bb398e5781ea"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27863381029991874",
+        "kept":  "9f7281c9-b54a-4095-876f-9d726f5898ae",
+        "merged":  [
+                       "d4b006dd-867f-4a3a-ad0a-a32c8fcd497d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27727636323573319",
+        "kept":  "59beef72-1c0b-4197-9bdc-760f55067c6c",
+        "merged":  [
+                       "9d8e5057-a0d2-4bcb-a2e3-84c9c5d6e021"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "instagram:851651348002583",
+        "kept":  "6bbdfe36-7b22-4133-b316-126d0efa8e04",
+        "merged":  [
+                       "b79d4dac-9d65-46a8-bd33-38bdf6c6e401",
+                       "efa5374d-e03e-4b86-9f10-e961292083ee",
+                       "07924b61-5d10-46e4-8a8f-4d69230f9b26",
+                       "4b3209d7-d618-451c-ae61-4bf684fdf5a6",
+                       "75e6ad6d-2246-44d2-8f00-09de103c6a03",
+                       "8516c574-dbd8-46c9-b5ea-e9ab0598f28a"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28242453058678074",
+        "kept":  "7ffc0bf2-bf0e-4440-97fb-60be1a9fb2b3",
+        "merged":  [
+                       "4fa688ea-c6b7-463f-aa02-6ec7bfe8c7d5"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:26829205233421748",
+        "kept":  "bd73939d-a2c2-4a2b-a35f-2b75b9b47cf4",
+        "merged":  [
+                       "611767c6-f4f8-42b8-9d0e-bd0d6b02de28"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27404252252519281",
+        "kept":  "4e626e62-1fb1-4e8b-8924-e1fa762cd335",
+        "merged":  [
+                       "b15bf690-a3d1-412e-a59a-d230b80cdf02"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27815807901411521",
+        "kept":  "a0df82d4-e7fe-4681-a0a6-f36049bbba4f",
+        "merged":  [
+                       "0f237035-7a91-48c3-bd8e-eb9912131ca6",
+                       "035ac8c5-fef9-459b-a1fa-f312739cda1c"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27732718213044511",
+        "kept":  "2b75e4a1-a9fc-4eb7-a710-c235953ad270",
+        "merged":  [
+                       "fd43fd78-4720-44af-ade2-7d35367058b9",
+                       "b6bc7ccc-742a-4462-b989-456ee2536048"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27699560543039054",
+        "kept":  "bd8e6586-82e4-417a-a5ad-167b34aec3e3",
+        "merged":  [
+                       "f2c9aade-e595-424f-9e2a-d6dc1cb30fd0"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27932167966423147",
+        "kept":  "b2399ac1-3cf0-44f4-b14d-19097c19c850",
+        "merged":  [
+                       "b480146b-28f7-4bb5-9c69-d271c74c6b39"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27666627353001026",
+        "kept":  "cf7f606a-53fb-498a-8f8f-beb38d0b429d",
+        "merged":  [
+                       "8bb088ce-6c4d-45c8-ac7c-bc51a7ef20f9"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27678653138461029",
+        "kept":  "e6974b52-8610-486b-ad5f-2eb2b06500c4",
+        "merged":  [
+                       "1b2fa7ed-8e96-4c10-a058-113a2427fed7"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27269499002736557",
+        "kept":  "b4e8f872-3715-45d6-87a8-61e0dc628253",
+        "merged":  [
+                       "46c7c5b4-02a6-48ed-be5b-e350fbfd1141"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27253417134342184",
+        "kept":  "9b7df08a-d002-4429-9502-d3f262e19fb9",
+        "merged":  [
+                       "8b660d22-ef27-4d4d-aee4-f8297f3bdca3"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27256336817355168",
+        "kept":  "ed7eb60f-20d5-4564-bf26-b515189ab657",
+        "merged":  [
+                       "ace4a8cb-3ec5-4a80-a943-99277e18eec0"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:26367217746314416",
+        "kept":  "bfcf676c-8995-4c36-97d8-4fcf6a9c2a9c",
+        "merged":  [
+                       "0bdf902f-73d2-4971-9261-f9d0ae9bd45f"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27593194603683923",
+        "kept":  "ae064383-e099-4c5b-8be0-c07455b0f41a",
+        "merged":  [
+                       "e4b46e7d-91e1-4c0c-85c6-827cdd6fca83"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27934177779602846",
+        "kept":  "c7643b56-fc7b-4cd8-b4ce-454d3b83fc9c",
+        "merged":  [
+                       "ab2bb2e7-7955-4c12-a054-7a5eccc52286"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:26522845297413981",
+        "kept":  "89960469-de29-4e97-b0ac-f1d84c655162",
+        "merged":  [
+                       "530eda25-5ab1-4859-aace-96bee8b7e16a"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27670166495972990",
+        "kept":  "6b13fd9a-c0b0-42b4-b0a5-954df266fb5c",
+        "merged":  [
+                       "43dbaf4c-5660-43e5-b14d-fc1beee019b6"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28920338750889654",
+        "kept":  "c9cbd43f-bbfe-4faa-b522-9fa572ef9c45",
+        "merged":  [
+                       "b1a6ad47-5bb5-459e-b6a4-2537984aa855"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:36677844085164346",
+        "kept":  "85ba2b08-d6ef-49e8-a370-0fd84f79a269",
+        "merged":  [
+                       "058b039d-a1a5-4a6a-a515-a0cf3bc52546"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28363882099884168",
+        "kept":  "1a810f12-5bd2-44a2-87e6-391788b24745",
+        "merged":  [
+                       "f326fa12-cc43-464c-bfd0-7a9141eeff7d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27667016569607475",
+        "kept":  "bd5b5ae2-af31-4f2c-8054-14f97f6587c8",
+        "merged":  [
+                       "71aa8a8a-5818-4a87-b3d1-8749a0a9761f"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28258025947218148",
+        "kept":  "dcccecb7-0688-4905-99d7-0fdfd473ffad",
+        "merged":  [
+                       "3d00b49c-f39f-489e-85fe-a7cef93b13ab",
+                       "9f0d980e-4eb5-4493-bf18-f5a8b7ad586a"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27664007276592154",
+        "kept":  "b090786c-cd87-4fb7-bca8-28e730061a3d",
+        "merged":  [
+                       "7c2daa76-6cbc-43c4-8479-2df2fa78dd0b"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37234771216170140",
+        "kept":  "284e0f66-e2b5-4acd-99a2-91c4115d8d78",
+        "merged":  [
+                       "5ac369b9-389a-4436-a143-b7415e0e7946",
+                       "c0b9cebf-a39f-4ae1-8763-9a96e328eb30"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27993584566909835",
+        "kept":  "e984cfed-a4c7-4964-afd8-95bc9d6422be",
+        "merged":  [
+                       "6a65e85a-8cb7-4862-8284-6040c37d3867"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27590931493908855",
+        "kept":  "e7e40421-03f9-4b67-8bb7-21b5e0d69f33",
+        "merged":  [
+                       "600e4b07-eb9e-4301-b50d-68d2e5607dc6"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28074773335491624",
+        "kept":  "ca4c2bb2-69f7-42cf-93e8-1ec7d9bf40c7",
+        "merged":  [
+                       "0ee48e7a-affa-4432-a636-dcbccb753234"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:26867402112896715",
+        "kept":  "9a93bdcb-dd2c-482c-8454-d1af15169ae7",
+        "merged":  [
+                       "dd9e2512-cfff-405f-9a3a-e9886e2cd5e3",
+                       "c37fcb4c-11bb-41d1-8101-e1351e06214a",
+                       "e8eb8589-e603-4630-bb8f-a91575f67246",
+                       "6a230513-b9b3-4dc8-b393-abdfeb1f172b",
+                       "2d6c6d08-9ae8-4bf4-b923-98831b0cd8c4",
+                       "41d658fe-d1be-4526-bec3-53cad57de560",
+                       "e07ace6e-7524-47bc-91e9-032121aaad0d",
+                       "8f4a0650-def9-44fc-a67c-2826950579ef",
+                       "b5a7f9bf-6172-408b-9a75-f13b2d49d650",
+                       "d05da240-2e39-4bc4-ad5d-89e0937d46d8"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37630310063283247",
+        "kept":  "d75bcb25-7cad-4839-9954-8f6688b6d86a",
+        "merged":  [
+                       "a3410d1d-c5b9-4a92-8d99-0846b29c390b"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27481795058179596",
+        "kept":  "fd90f7d8-b944-434b-80ad-0eeadf1850df",
+        "merged":  [
+                       "19b60785-7ef3-4252-9ca9-6c00a893a7c4"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27333054233042992",
+        "kept":  "2699aff2-a6f7-40d9-aaf1-77f07b9a9924",
+        "merged":  [
+                       "b8ab4d4e-799f-42dd-b1b6-5f7f0e3b5cd2",
+                       "814da793-1d27-47b8-b71f-ec2533a7173a"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27061342843515129",
+        "kept":  "7ea31d57-97a4-4f45-85a6-592072c2b7c3",
+        "merged":  [
+                       "d4ad9af2-e749-46fb-87c4-fc984acd8f61",
+                       "235da0df-1cc2-45ba-a547-99806a75e51c",
+                       "37d403cc-e0bf-49ee-9c5b-a41fca481765",
+                       "21809a5d-be31-4b95-8e03-6cfc7e81fb5b",
+                       "362602dc-5d2d-4eb4-af07-5b40796eae43",
+                       "169fd8fc-1812-44d0-9a57-d48d2d0c9621",
+                       "a50626e9-6393-4dc1-82d8-e5adfec9a993",
+                       "baf6f112-1d77-4dc2-adb6-c1b66ed00a7c",
+                       "7bae369f-124f-426c-8a0d-732ee245525d",
+                       "d7f3dd21-0dfd-4ac0-bd1f-31fae3020e29",
+                       "75759e64-5db9-44b4-b3b9-536046e1d955",
+                       "6ec8eb22-4fed-402d-94ef-0f08db2a24a5",
+                       "7282af6f-d0cc-40cc-8822-cfa596b7c046",
+                       "8325d936-8249-43c2-9d05-4a15b2bb9ce2",
+                       "5ecf1026-dc4a-43d7-8f6f-f50254d61cd9",
+                       "b3f85e23-7858-4991-93e7-681167e4dca3",
+                       "edb86461-3fd9-43b0-b9ae-2036e06153a3",
+                       "76600546-f0a9-4f07-b8b1-61687b0a5325",
+                       "ec255139-ce52-4d04-acb6-66ccad05b94e",
+                       "ca1ef0fb-0570-4b07-a002-b045e2fe2b81",
+                       "39ef95ad-75d4-417e-bc6c-aa686cc72e42",
+                       "dd727c80-72b7-46cd-82c1-3686947f0db1",
+                       "9d4bccd5-77b5-4d1f-8720-0ef9e0d5e1ca"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27424386763900435",
+        "kept":  "e783eebd-52f0-4765-a5da-131244f3bc44",
+        "merged":  [
+                       "fe251ec5-c86a-430c-8d96-63f72f9c7948",
+                       "d4c4f4bd-47b7-409d-bb29-25212e6bd15c"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37057728963873936",
+        "kept":  "3586c31b-9059-47b6-9f68-f4af972b9994",
+        "merged":  [
+                       "0b0d971a-f3b9-487b-8017-8ccf229fc05c"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37780752621522953",
+        "kept":  "7ce002e9-ead5-4873-8d70-ca7ab0fe2778",
+        "merged":  [
+                       "32340156-fc83-4220-866e-fb6df51ae1c9"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27619398781052823",
+        "kept":  "31f07c4c-aea2-4be5-be37-6d73fbd7ad32",
+        "merged":  [
+                       "38bd7ded-fb93-4a93-9795-4b542a791873"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27471168295911694",
+        "kept":  "e5b34599-20bd-4988-a4f5-77c4056a7d1a",
+        "merged":  [
+                       "4a43e6b3-436b-4dc6-b70e-61d0f0dab52e"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37005944329052019",
+        "kept":  "2aa71d1c-194e-449d-a776-ce1b46c0e79f",
+        "merged":  [
+                       "0aa9bba0-f6a0-45b7-a7dd-dd6c526c3b93"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27415401844783392",
+        "kept":  "154d6bf6-8682-41ea-b3fd-80a25424a904",
+        "merged":  [
+                       "4976f32f-965e-48c9-bdaa-205333b57d07",
+                       "92ea63ad-c005-4e03-9179-a9190f39932a"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:37063608059949335",
+        "kept":  "b7517654-cc87-4208-86e4-7a3b4a2ce797",
+        "merged":  [
+                       "7a0c5de7-98f1-4281-94fd-65e6acbde089"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28808218732099312",
+        "kept":  "831b8d49-0e63-4098-8109-4e9d881649f1",
+        "merged":  [
+                       "565dabea-2b0b-4649-8771-c4a706ef40d6"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27542082252065570",
+        "kept":  "d90c6dbf-3799-49ff-85ad-8cb86e972ba3",
+        "merged":  [
+                       "8486930b-c03a-4aec-bf06-2c5f53cdb541"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:26738011055825698",
+        "kept":  "07aaf94b-a63b-4bb5-83dc-528242edffb1",
+        "merged":  [
+                       "3c39da98-7739-4c38-8e7f-9b53dcf31438"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28234278326180397",
+        "kept":  "a0a4b4c8-9cbb-4fe4-8eff-af083f086dfd",
+        "merged":  [
+                       "922215e6-e0cb-4aa8-a8cb-2cd90e4d4d11",
+                       "d34621ea-385d-4717-a969-321a5a9f313e"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:28028086630137216",
+        "kept":  "55955179-ff28-4c73-b228-cc0192277fc4",
+        "merged":  [
+                       "3aaedb3a-92d4-48c7-b4c7-e238b8d9a94d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:26449612548051644",
+        "kept":  "6db9fa71-3d98-40ad-8831-c1b38c461849",
+        "merged":  [
+                       "348ad820-911c-4ac5-8628-6dc19c9e831d"
+                   ],
+        "dedupedMids":  0
+    },
+    {
+        "customerId":  "messenger:27275577632098252",
+        "kept":  "fdb39b4c-ce34-43bc-b18a-94390daf37f7",
+        "merged":  [
+                       "96cca5e9-1c0a-46a4-bbdb-4fed8da8ba87"
+                   ],
+        "dedupedMids":  0
+    }
+]

@@ -71,6 +71,11 @@ export async function POST(req: NextRequest) {
   }
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   const body = (await req.json().catch(() => ({}))) as { action?: string; wabaId?: string; to?: string };
+  // ה-WABA שנקלט מה-webhook משמש כברירת מחדל, כדי שלא צריך להעביר אותו בכל קריאה
+  if (!body.wabaId) {
+    const { getRepo } = await import("@/lib/db");
+    body.wabaId = (await getRepo().getSetting("waba_id")) ?? undefined;
+  }
 
   // בדיקת שליחת סרטון החניה למספר נתון (דרך אותו מסלול קוד שמשרת לקוחות אמיתיים)
   if (body.action === "sendVideo") {

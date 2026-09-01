@@ -17,6 +17,7 @@ import {
 import { handleIncomingMessage } from "@/lib/conversation-service";
 import { maybeUpdateCustomerMemory } from "@/lib/customer-memory";
 import { verifyMetaSignature } from "@/lib/meta-signature";
+import { getRepo } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -53,8 +54,22 @@ export async function POST(req: NextRequest) {
 
   const incoming = parseIncoming(payload);
 
+  // מטא שולחת את מזהה ה-WABA בכל webhook (entry[].id). הטוקן שלנו לא מורשה
+  // לחפש אותו דרך Graph, והוא נדרש לניהול תבניות - אז קולטים אותו מכאן פעם אחת.
+  const wabaId = (payload as { entry?: { id?: string }[] })?.entry?.[0]?.id;
+
   // מחזירים 200 מיד ומעבדים ברקע (after) - כדי שמטא לא תשלח את ה-webhook שוב (retry).
   after(async () => {
+    if (wabaId && /^\d+$/.test(wabaId)) {
+      try {
+        const repo = getRepo();
+        if ((await repo.getSetting("waba_id")) !== wabaId) {
+          await repo.setSetting("waba_id", wabaId);
+        }
+      } catch {
+        /* מזהה נוח לניהול תבניות, לא קריטי לזרימת ההודעה */
+      }
+    }
     await Promise.all(
       incoming.map(async (msg) => {
         try {
