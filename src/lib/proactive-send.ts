@@ -24,7 +24,9 @@ export const PROACTIVE_TEMPLATES = {
     logText: "📍 נשלחו ללקוח הוראות הגעה וחניה בוואטסאפ (שליחה יזומה)",
   },
   payment: {
-    template: "payment_reminder",
+    // v2 = הנוסח של בעל העסק (1.9). הגרסה הראשונה אושרה עם נוסח זמני
+    // ואי אפשר למחוק אותה עם הטוקן הנוכחי, לכן שם חדש ולא עדכון.
+    template: "payment_reminder_v2",
     logText: "💳 נשלחה ללקוח תזכורת להשלמת תשלום הפיקדון בוואטסאפ (שליחה יזומה)",
   },
 } satisfies Record<string, ProactiveTemplate>;
