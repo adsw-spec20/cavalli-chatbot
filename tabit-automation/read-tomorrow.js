@@ -32,10 +32,13 @@ function targetDateStr(which) {
 }
 
 function depositStatus(r) {
-  const hasLink = !!(r.links && r.links.deposit);
-  if (!hasLink) return 'אין פיקדון';
-  if (r.notified_deposit) return 'נשלח ✓';
-  return 'לא נשלח ✗';
+  if (r.deposit_removed) return 'ללא פיקדון';
+  const st = r.cc_deposit_state && r.cc_deposit_state.state;
+  const dead = ['refunded', 'canceled', 'cancelled', 'voided', 'removed', 'expired'];
+  const secured = !!r.cc_deposit && !(st && dead.includes(st));
+  if (secured) return 'מובטח ✓';
+  const required = !!(r.links && r.links.deposit);
+  return required ? 'חסר פיקדון ✗' : 'ללא פיקדון';
 }
 
 function waitForJson(page, matcher, timeoutMs = 45000) {

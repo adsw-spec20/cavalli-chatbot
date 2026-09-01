@@ -16,7 +16,8 @@ import { SectionCard } from "./ui";
 
 const WEEKDAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
-type Deposit = "sent" | "not_sent" | "none";
+// מצב הפיקדון, תואם לטאביט: מובטח / חסר / ללא. נקבע לפי cc_deposit בגשר.
+type Deposit = "secured" | "missing" | "none";
 
 interface TabitReservation {
   id: string;
@@ -69,10 +70,11 @@ function chipLabel(iso: string): string {
 }
 
 const DEPOSIT_CHIP: Record<Deposit, { label: string; cls: string }> = {
-  sent: { label: "פיקדון נשלח ✓", cls: "bg-emerald-500/15 text-emerald-400" },
-  not_sent: { label: "פיקדון לא נשלח", cls: "bg-red-500/15 text-red-400" },
+  secured: { label: "פיקדון מובטח ✓", cls: "bg-emerald-500/15 text-emerald-400" },
+  missing: { label: "חסר פיקדון", cls: "bg-red-500/15 text-red-400" },
   none: { label: "ללא פיקדון", cls: "bg-[var(--panel2)] text-[var(--muted)]" },
 };
+const FALLBACK_CHIP = { label: "—", cls: "bg-[var(--panel2)] text-[var(--muted)]" };
 
 const THRESHOLDS = [6, 8, 10, 12];
 
@@ -86,7 +88,7 @@ function PhoneLink({ phone }: { phone: string }) {
 }
 
 function ReservationRow({ r }: { r: TabitReservation }) {
-  const chip = DEPOSIT_CHIP[r.deposit];
+  const chip = DEPOSIT_CHIP[r.deposit] ?? FALLBACK_CHIP;
   return (
     <div className="px-3.5 py-2.5 text-sm space-y-1.5">
       <div className="flex items-center gap-2 flex-wrap">
@@ -153,11 +155,11 @@ export default function Tabit({ token }: { token: string }) {
     setSelectedDay(upcomingDays.includes(tomorrow) ? tomorrow : upcomingDays[0]);
   }, [upcomingDays, selectedDay]);
 
-  /** פיקדונות שלא נשלחו, בכל הימים הקרובים - מהדחוף לרחוק */
+  /** חסרי פיקדון (דורש פיקדון אך לא מובטח), בכל הימים הקרובים - מהדחוף לרחוק */
   const missingDeposits = useMemo(() => {
     const today = todayIL();
     return reservations
-      .filter((r) => r.deposit === "not_sent" && r.day >= today && r.state !== "cancelled")
+      .filter((r) => r.deposit === "missing" && r.day >= today && r.state !== "cancelled")
       .sort((a, b) => (a.day === b.day ? b.seats - a.seats : a.day < b.day ? -1 : 1));
   }, [reservations]);
 
@@ -206,13 +208,13 @@ export default function Tabit({ token }: { token: string }) {
 
       {/* ===== פיקדונות חסרים - הכאב של ברק ===== */}
       <SectionCard
-        title="פיקדונות שלא נשלחו"
+        title="חסר פיקדון"
         badge={missingDeposits.length}
         badgeCls={missingDeposits.length > 0 ? "bg-red-500/15 text-red-400" : "bg-emerald-500/15 text-emerald-400"}
-        sub="הזמנות קרובות שיש להן קישור פיקדון בטאביט אבל הוא עדיין לא נשלח ללקוח"
+        sub="הזמנות קרובות שדורשות פיקדון אבל הוא עדיין לא מובטח בטאביט (זה מה שטאביט מסמן 'חסר פיקדון')"
       >
         {missingDeposits.length === 0 ? (
-          <div className="text-sm text-[var(--muted)] text-center py-4">הכל שלח 🎉 אין פיקדונות תלויים.</div>
+          <div className="text-sm text-[var(--muted)] text-center py-4">אין הזמנות קרובות בלי פיקדון 🎉</div>
         ) : (
           <div className="rounded-xl border border-red-500/25 overflow-hidden divide-y divide-[var(--border)]">
             {missingDeposits.map((r) => (

@@ -32,10 +32,20 @@ function loadConfig() {
   return cfg;
 }
 
+// מצב הפיקדון כפי שטאביט מציג אותו:
+//  secured = הפיקדון מובטח (נתפס כרטיס אשראי) -> יש cc_deposit. טאביט: תקין.
+//  missing = דורש פיקדון (יש קישור פיקדון) אבל לא מובטח -> טאביט מסמן "חסר פיקדון".
+//  none    = לא מעורב פיקדון בכלל.
+// חשוב: notified_deposit ("נשלח קישור") הוא לא הסימן - הזמנה יכולה לקבל קישור
+// ולא לשלם. הסימן האמיתי הוא cc_deposit (ראה deposit-debug מול נתוני אמת).
 function depositStatus(r) {
-  const hasLink = !!(r.links && r.links.deposit);
-  if (!hasLink || r.deposit_removed) return "none";
-  return r.notified_deposit ? "sent" : "not_sent";
+  if (r.deposit_removed) return "none";
+  const st = r.cc_deposit_state && r.cc_deposit_state.state;
+  const dead = ["refunded", "canceled", "cancelled", "voided", "removed", "expired"];
+  const secured = !!r.cc_deposit && !(st && dead.includes(st));
+  if (secured) return "secured";
+  const required = !!(r.links && r.links.deposit);
+  return required ? "missing" : "none";
 }
 
 function waitForJson(page, matcher, timeoutMs = 45000) {
@@ -104,8 +114,8 @@ function normalize({ reservations, tables }) {
   const normalized = normalize(raw);
   const snapshot = { generatedAt: Date.now(), reservations: normalized };
 
-  const missing = normalized.filter((r) => r.deposit === "not_sent").length;
-  console.log(`נקראו ${raw.reservations.length} הזמנות, אחרי סינון: ${normalized.length}. פיקדונות שלא נשלחו: ${missing}.`);
+  const missing = normalized.filter((r) => r.deposit === "missing").length;
+  console.log(`נקראו ${raw.reservations.length} הזמנות, אחרי סינון: ${normalized.length}. חסרי פיקדון: ${missing}.`);
 
   if (dry || !cfg.url || !cfg.secret) {
     if (!dry) console.error("\n(אין TABIT_SYNC_URL/SECRET - מצב הדגמה בלבד, לא נשלח לשרת)");
