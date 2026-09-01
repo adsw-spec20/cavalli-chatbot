@@ -91,6 +91,12 @@ export async function sendProactiveTemplate(args: {
     return { ok: false, status: 502, error, detail: errText };
   }
 
+  // מזהה ההודעה אצל מטא - הוא המפתח לקשר בין השליחה לבין דיווח כשל המסירה
+  // שמגיע אחר כך ב-webhook (200 כאן לא אומר שההודעה הגיעה).
+  const sent = (await res.json().catch(() => ({}))) as { messages?: { id?: string }[] };
+  const wamid = sent.messages?.[0]?.id;
+  console.log(`[proactive:${args.kind}] נשלח ל-${to}, wamid=${wamid ?? "?"}`);
+
   // תיעוד בפאנל: שיחה ללקוח הזה (קיימת או חדשה) + רישום הפעולה
   try {
     const repo = getRepo();
@@ -123,7 +129,7 @@ export async function sendProactiveTemplate(args: {
       role: "agent",
       content: logText,
       ts: Date.now(),
-      meta: { proactive: true, agentName: args.agentName || "הצוות" },
+      meta: { proactive: true, agentName: args.agentName || "הצוות", wamid },
     });
   } catch (err) {
     console.error(`[proactive:${args.kind}] תיעוד בפאנל נכשל (ההודעה כן נשלחה):`, err);

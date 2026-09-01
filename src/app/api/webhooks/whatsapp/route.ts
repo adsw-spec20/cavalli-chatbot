@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import {
   parseIncoming,
+  parseStatuses,
   whatsappAdapter,
   transcribeWhatsAppAudio,
 } from "@/lib/channels/whatsapp";
@@ -68,6 +69,31 @@ export async function POST(req: NextRequest) {
         }
       } catch {
         /* מזהה נוח לניהול תבניות, לא קריטי לזרימת ההודעה */
+      }
+    }
+
+    // כישלון מסירה: מטא מחזירה 200 על השליחה ורק אחר כך מדווחת שההודעה נכשלה.
+    // בלי זה הפאנל מציג "נשלח" והלקוח לא קיבל כלום (קרה 1.9 בשליחת חניה).
+    for (const st of parseStatuses(payload)) {
+      if (st.status !== "failed") continue;
+      const reason = st.error || "מטא לא פירטה סיבה";
+      console.error(`[whatsapp] מסירה נכשלה ל-${st.recipientId ?? "?"}: ${reason}`);
+      try {
+        const repo = getRepo();
+        const customerId = `whatsapp:${st.recipientId}`;
+        const mine = (await repo.listConversations()).filter((c) => c.customerId === customerId);
+        const conv = mine.find((c) => c.status !== "closed") ?? mine[0];
+        if (conv) {
+          await repo.addMessage({
+            conversationId: conv.id,
+            role: "system",
+            content: `❌ ההודעה לא נמסרה ללקוח. סיבה: ${reason}`,
+            ts: st.timestamp,
+            meta: { activity: true, deliveryFailed: true, wamid: st.messageId },
+          });
+        }
+      } catch (err) {
+        console.error("[whatsapp] רישום כשל מסירה נכשל:", err);
       }
     }
     await Promise.all(

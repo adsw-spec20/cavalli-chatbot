@@ -182,7 +182,61 @@ interface WhatsAppWebhookBody {
           text?: { body: string };
           audio?: { id: string; mime_type?: string; voice?: boolean };
         }>;
+        statuses?: Array<{
+          id: string;
+          recipient_id?: string;
+          status?: string;
+          timestamp?: string;
+          errors?: Array<{ code?: number; title?: string; message?: string; error_data?: { details?: string } }>;
+        }>;
       };
     }>;
   }>;
+}
+
+/** סטטוס מסירה של הודעה שאנחנו שלחנו (מטא שולחת אותו ב-webhook נפרד). */
+export interface DeliveryStatus {
+  /** מזהה ההודעה שנשלחה (wamid) */
+  messageId: string;
+  /** למי נשלחה */
+  recipientId?: string;
+  /** sent / delivered / read / failed */
+  status: string;
+  /** תיאור התקלה כשהסטטוס failed */
+  error?: string;
+  timestamp: number;
+}
+
+/**
+ * חילוץ סטטוסי מסירה. בלי זה הודעה יוצאת שמטא קיבלה (200) אבל לא הצליחה
+ * למסור נעלמת בשקט - הפאנל מציג "נשלח" והלקוח לא קיבל כלום.
+ */
+export function parseStatuses(payload: unknown): DeliveryStatus[] {
+  const out: DeliveryStatus[] = [];
+  try {
+    const body = payload as WhatsAppWebhookBody;
+    for (const entry of body.entry ?? []) {
+      for (const change of entry.changes ?? []) {
+        for (const s of change.value?.statuses ?? []) {
+          if (!s.id || !s.status) continue;
+          const e = s.errors?.[0];
+          out.push({
+            messageId: s.id,
+            recipientId: s.recipient_id,
+            status: s.status,
+            error: e
+              ? [e.code ? `[${e.code}]` : "", e.title, e.message, e.error_data?.details]
+                  .filter(Boolean)
+                  .join(" ")
+                  .trim()
+              : undefined,
+            timestamp: s.timestamp ? parseInt(s.timestamp, 10) * 1000 : Date.now(),
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[whatsapp] failed to parse statuses:", err);
+  }
+  return out;
 }
