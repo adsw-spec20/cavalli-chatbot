@@ -19,6 +19,7 @@ const Settings = dynamic(() => import("./Settings"), { loading: lazyLoading });
 const Media = dynamic(() => import("./Media"), { loading: lazyLoading });
 const Reservations = dynamic(() => import("./Reservations"), { loading: lazyLoading });
 const Tabit = dynamic(() => import("./Tabit"), { loading: lazyLoading });
+const TabitTestChat = dynamic(() => import("./TabitTestChat"), { loading: lazyLoading });
 const Questionnaire = dynamic(() => import("./Questionnaire"), { loading: lazyLoading });
 const TeamQuestions = dynamic(() => import("./TeamQuestions"), { loading: lazyLoading });
 const TestChat = dynamic(() => import("./TestChat"), { loading: lazyLoading });
@@ -101,12 +102,13 @@ input:focus,textarea:focus,select:focus{box-shadow:0 0 0 3px color-mix(in srgb,v
 .no-scrollbar::-webkit-scrollbar{display:none}.no-scrollbar{scrollbar-width:none}
 `;
 
-type Tab = "inbox" | "reservations" | "tabit" | "knowledge" | "questionnaire" | "teamq" | "dashboard" | "business" | "media" | "test" | "settings";
+type Tab = "inbox" | "reservations" | "tabit" | "tabitlab" | "knowledge" | "questionnaire" | "teamq" | "dashboard" | "business" | "media" | "test" | "settings";
 // הסדר לפי תדירות שימוש: פניות -> לימוד הבוט -> נתונים -> תחזוקה
 const TABS: { key: Tab; label: string }[] = [
   { key: "inbox", label: "תיבת פניות" },
   { key: "reservations", label: "הזמנות" },
   { key: "tabit", label: "טאביט" },
+  { key: "tabitlab", label: "מעבדת טאביט" },
   { key: "knowledge", label: "ידע" },
   { key: "questionnaire", label: "שאלון" },
   { key: "teamq", label: "שאלות לצוות" },
@@ -123,6 +125,7 @@ const BOTTOM_TABS: Tab[] = ["inbox", "knowledge", "reservations"];
 const TAB_META: Record<Exclude<Tab, "inbox">, { title: string; subtitle: string }> = {
   reservations: { title: "הזמנות מקום", subtitle: "אישור בקשות, אג'נדת ההזמנות הקרובות והיסטוריה - הלקוח מקבל כל תשובה ישירות בצ'אט" },
   tabit: { title: "טאביט - שולחנות והזמנות", subtitle: "תמונה חיה מטאביט (קריאה בלבד, מנהל בלבד): פיקדונות שלא נשלחו ושולחנות גדולים ליום נבחר" },
+  tabitlab: { title: "מעבדת טאביט", subtitle: "צ'אט בדיקות מבודד (מנהל בלבד) - קרא ויצור הזמנות מול טאביט ובדוק מה עובד, בלי קשר לבוט הציבורי" },
   knowledge: { title: "ניהול ידע", subtitle: "שאלות שהבוט לא ידע לענות עליהן, והידע שכבר נלמד - כל תשובה שנשמרת נכנסת לתוקף מיד" },
   questionnaire: { title: "שאלון הידע", subtitle: "234 שאלות שנבנו מניתוח כל השיחות - כל תשובה נשמרת מיד ומוטמעת לבוט" },
   teamq: { title: "שאלות לצוות", subtitle: "הרשימה של אדיר לצוות קוואלי - שאלה אחת בכל פעם, בקצב שלכם. כל תשובה נשמרת מיד" },
@@ -156,6 +159,15 @@ const ICON_PATHS: Record<Tab, ReactNode> = {
       <path d="M12 11v10" />
       <path d="M7 21h10" />
       <path d="M5 11a7 7 0 0 1 14 0" />
+    </>
+  ),
+  tabitlab: (
+    <>
+      <path d="M10 2v7.31" />
+      <path d="M14 9.3V2" />
+      <path d="M8.5 2h7" />
+      <path d="M14 9.3a6.5 6.5 0 1 1-4 0" />
+      <path d="M5.52 16h12.96" />
     </>
   ),
   knowledge: (
@@ -878,8 +890,8 @@ export default function AdminPage() {
       {TABS.filter(
         (t) => !(t.key === "questionnaire" && (quizComplete || role !== "master"))
       )
-        // טאביט הוא כלי של המנהל הראשי בלבד (מידע הזמנות רגיש) - מוסתר לצוות
-        .filter((t) => !(t.key === "tabit" && role !== "master"))
+        // טאביט + מעבדת טאביט הם כלים של המנהל הראשי בלבד (מידע רגיש) - מוסתרים לצוות
+        .filter((t) => !((t.key === "tabit" || t.key === "tabitlab") && role !== "master"))
         .map((t) => {
         const active = tab === t.key;
         return (
@@ -1079,6 +1091,7 @@ export default function AdminPage() {
             <Reservations token={token} agentName={agentName} onOpenConversation={openConversation} />
           )}
           {tab === "tabit" && role === "master" && <Tabit token={token} />}
+          {tab === "tabitlab" && role === "master" && <TabitTestChat token={token} />}
           {tab === "knowledge" && (
             <Knowledge token={token} onMutate={loadConversations} onTest={openTest} onOpenConversation={openConversation} agentName={agentName} />
           )}

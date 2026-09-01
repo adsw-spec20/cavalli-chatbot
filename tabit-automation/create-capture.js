@@ -9,7 +9,7 @@ const path = require("path");
 const fs = require("fs");
 
 const PROFILE_DIR = path.join(__dirname, "tabit-profile");
-const URL = "https://tgm-app.tabit.cloud/";
+const APP_URL = "https://tgm-app.tabit.cloud/"; // NB: don't shadow the global URL constructor
 const OUT = path.join(__dirname, "out");
 fs.mkdirSync(OUT, { recursive: true });
 const LOG = path.join(OUT, "writes.json");
@@ -50,7 +50,7 @@ const LINKS = path.join(OUT, "deposit-links.txt");
     }
   });
 
-  await page.goto(URL, { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.goto(APP_URL, { waitUntil: "domcontentloaded" }).catch(() => {});
   for (let i = 0; i < 6; i++) { try { await page.bringToFront(); } catch (_) {} await page.waitForTimeout(1500); }
 
   console.log("\n==================================================");

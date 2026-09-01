@@ -33,6 +33,8 @@ const PUBLIC_PATHS = [
   // בנפרד עם TABIT_SYNC_SECRET בתוך ה-route. הגשה למנהל (/api/admin/tabit)
   // נשארת מאחורי השער - רק הקליטה פתוחה.
   "/api/admin/tabit/ingest",
+  // הסוכן המקומי של מעבדת טאביט מושך/מחזיר פקודות כאן; מאומת בסוד ב-route.
+  "/api/admin/tabit/agent",
   "/login",
   "/privacy",
   "/data-deletion",

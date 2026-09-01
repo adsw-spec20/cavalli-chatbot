@@ -1,0 +1,109 @@
+import { NextRequest, NextResponse } from "next/server";
+import Anthropic from "@anthropic-ai/sdk";
+import { isMasterAuthorized } from "@/lib/admin-auth";
+import { runCommand, type TabitAction } from "@/lib/tabit-queue";
+
+/**
+ * צ'אט בדיקות מבודד לטאביט - למנהל הראשי בלבד.
+ *
+ * מבודד לחלוטין מהצ'אטבוט הציבורי: system prompt נפרד, אין קשר לערוצים,
+ * לא נשמר בשיחות ה-DB, לא משתמש ב-business config. הכלים ניגשים לטאביט דרך
+ * תור הפקודות (הסוכן המקומי מבצע). כלי היצירה הוא הוספה בלבד - אין שום כלי
+ * לשינוי/ביטול/מחיקה של הזמנות קיימות.
+ */
+
+export const runtime = "nodejs";
+export const maxDuration = 200;
+
+const MODEL = process.env.CHATBOT_MODEL ?? "claude-sonnet-4-6";
+
+function israelNow(): string {
+  return new Intl.DateTimeFormat("he-IL", {
+    timeZone: "Asia/Jerusalem", weekday: "long", year: "numeric", month: "long",
+    day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date());
+}
+
+const TOOLS: Anthropic.Tool[] = [
+  { name: "tabit_health", description: "בדוק את החיבור לטאביט: טוען נתונים ומחזיר כמה הזמנות נטענו וגרסת שרת. השתמש כשמבקשים לוודא שהחיבור עובד.", input_schema: { type: "object", properties: {} } },
+  { name: "tabit_read_day", description: "קרא את ההזמנות של יום מסוים מטאביט. day = \"today\" | \"tomorrow\" | \"YYYY-MM-DD\".", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
+  { name: "tabit_deposit_summary", description: "סיכום פיקדונות ליום: כמה מובטחים וכמה חסרים, ורשימת החסרים. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
+  { name: "tabit_get_deposit_link", description: "שלוף את קישור הפיקדון של הזמנה לפי reservationId.", input_schema: { type: "object", properties: { reservationId: { type: "string" } }, required: ["reservationId"] } },
+  { name: "tabit_create_reservation", description: "צור הזמנה חדשה בטאביט. הוספה בלבד - לעולם לא נוגע בהזמנות קיימות. אסוף שם, טלפון, תאריך (YYYY-MM-DD), שעה (HH:MM) ומספר סועדים, והצג סיכום לאישור לפני היצירה. מחזיר מזהה הזמנה וקישור פיקדון.", input_schema: { type: "object", properties: { name: { type: "string" }, phone: { type: "string" }, date: { type: "string" }, time: { type: "string" }, seats: { type: "number" } }, required: ["name", "phone", "date", "time", "seats"] } },
+];
+
+const TOOL_TO_ACTION: Record<string, TabitAction> = {
+  tabit_health: "health",
+  tabit_read_day: "read_day",
+  tabit_deposit_summary: "deposit_summary",
+  tabit_get_deposit_link: "get_deposit_link",
+  tabit_create_reservation: "create_reservation",
+};
+
+const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למערכת ההזמנות טאביט, עבור מסעדת "קפה קוואלי".
+
+זו סביבה מבודדת לגמרי: אף לקוח לא רואה את השיחה הזאת, והיא לא קשורה לצ'אטבוט הציבורי שבערוצים. המטרה: לעזור למנהל לבדוק מה עובד ומה לא מול טאביט.
+
+הכלים שלך:
+- tabit_health: בדיקת חיבור.
+- tabit_read_day / tabit_deposit_summary: קריאת הזמנות וסטטוס פיקדונות ליום.
+- tabit_get_deposit_link: קישור פיקדון להזמנה.
+- tabit_create_reservation: יצירת הזמנה חדשה (הוספה בלבד).
+
+כללים קשיחים:
+1. אין לך שום כלי לשינוי, ביטול או מחיקה של הזמנות - ואסור לך להבטיח פעולות כאלה. אתה יכול רק לקרוא וליצור חדשות.
+2. לפני יצירת הזמנה: ודא שיש שם, טלפון, תאריך, שעה ומספר סועדים, והצג למשתמש סיכום קצר לאישור. צור רק אחרי אישור מפורש.
+3. כשכלי נכשל - דווח בבירור מה נכשל ומה השגיאה. זו כל המטרה של סביבת הבדיקה.
+4. ענה תמציתי וברור, בעברית.
+
+השעה בישראל כעת: ${israelNow()}.`;
+
+async function dispatch(name: string, input: Record<string, unknown>): Promise<unknown> {
+  const action = TOOL_TO_ACTION[name];
+  if (!action) throw new Error(`כלי לא מוכר: ${name}`);
+  // יצירת הזמנה מקבלת timeout ארוך יותר (יצירה + שליפת הקישור לוקחת רגע)
+  const timeout = action === "create_reservation" ? 45_000 : 25_000;
+  return runCommand(action, input, timeout);
+}
+
+export async function POST(req: NextRequest) {
+  if (!isMasterAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!process.env.ANTHROPIC_API_KEY) return NextResponse.json({ error: "missing ANTHROPIC_API_KEY" }, { status: 503 });
+
+  let body: { messages?: { role: "user" | "assistant"; content: string }[] } = {};
+  try { body = await req.json(); } catch { return NextResponse.json({ error: "invalid json" }, { status: 400 }); }
+  const history = Array.isArray(body.messages) ? body.messages : [];
+  if (!history.length) return NextResponse.json({ error: "no messages" }, { status: 400 });
+
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 60_000 });
+  const msgs: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
+  const toolLog: { tool: string; params: unknown; ok: boolean; result?: unknown; error?: string }[] = [];
+
+  for (let i = 0; i < 5; i++) {
+    const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages: msgs });
+    const toolUses = resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    msgs.push({ role: "assistant", content: resp.content });
+
+    if (!toolUses.length) {
+      const text = resp.content.filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlock).text).join("\n").trim();
+      return NextResponse.json({ reply: text || "(אין תשובה)", toolLog });
+    }
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const tu of toolUses) {
+      let ok = true;
+      let out: unknown;
+      try {
+        out = await dispatch(tu.name, (tu.input as Record<string, unknown>) || {});
+      } catch (e) {
+        ok = false;
+        out = { error: e instanceof Error ? e.message : "שגיאה" };
+      }
+      toolLog.push({ tool: tu.name, params: tu.input, ok, result: ok ? out : undefined, error: ok ? undefined : (out as { error: string }).error });
+      toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 6000), is_error: !ok });
+    }
+    msgs.push({ role: "user", content: toolResults });
+  }
+
+  return NextResponse.json({ reply: "(עצרתי אחרי כמה סבבי כלים - נסה שוב או פשט את הבקשה)", toolLog });
+}
