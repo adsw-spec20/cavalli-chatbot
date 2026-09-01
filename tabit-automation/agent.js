@@ -286,12 +286,27 @@ async function actCreateReservation(page, params, me) {
 
 // ===== קבוצה א': קריאה וניתוח מתקדם =====
 
-async function getArchived(page, fromISO) {
-  const q = fromISO ? `?from=${encodeURIComponent(fromISO)}&tgmv=${Date.now()}` : `?tgmv=${Date.now()}`;
-  const r = await apiFetch(page, "GET", `/reservations-archived${q}`);
-  if (r.status !== 200 || !Array.isArray(r.body)) throw new Error(`קריאת ארכיון נכשלה (status ${r.status}) - ייתכן שה-session פג`);
-  return r.body;
+// הארכיון של טאביט דוחה טווח 'from' רחוק מדי (400 - האפליקציה מבקשת רק מתחילת
+// היום). מנסים את הטווח המבוקש ואז חלונות קצרים יותר עד שמתקבל 200. מחזיר את
+// הפריטים ואת הטווח שבאמת התקבל, כדי שהכלים ידווחו כיסוי אמיתי.
+async function getArchived(page, requestedFromISO) {
+  const now = Date.now();
+  const startOfTodayUTC = () => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); return d.toISOString(); };
+  const cands = [];
+  if (requestedFromISO) cands.push(requestedFromISO);
+  for (const days of [14, 7, 3, 1]) cands.push(new Date(now - days * 86400000).toISOString());
+  cands.push(startOfTodayUTC());
+  let last = null;
+  for (const iso of cands) {
+    const r = await apiFetch(page, "GET", `/reservations-archived?from=${encodeURIComponent(iso)}&tgmv=${Date.now()}`);
+    last = r;
+    if (r.status === 200 && Array.isArray(r.body)) return { items: r.body, from: iso };
+    if (r.status === 401) throw new Error("ה-session מול טאביט פג - הרץ login.js");
+    // 400/אחר: ננסה חלון קצר יותר
+  }
+  throw new Error(`קריאת ארכיון נכשלה (status ${last && last.status})`);
 }
+function coveredDays(fromISO) { return Math.max(1, Math.round((Date.now() - new Date(fromISO).getTime()) / 86400000)); }
 
 // ביטול אמיתי (לא ניקוי-מערכת של הזמנה זמנית שפגה)
 const REAL_CANCEL = new Set(["customer_cancelled", "cancelled", "אחר"]);
@@ -314,8 +329,9 @@ function samePhone(a, b) {
 
 async function actNoShowSummary(page, params) {
   const days = Number(params.days) || 30;
-  const fromISO = new Date(Date.now() - days * 86400000).toISOString();
-  const list = await getArchived(page, fromISO);
+  const requested = new Date(Date.now() - days * 86400000).toISOString();
+  const { items: list, from } = await getArchived(page, requested);
+  const covered = coveredDays(from);
   let noShow = 0, cancelled = 0, completed = 0;
   const byPhone = new Map();
   for (const r of list) {
@@ -330,13 +346,21 @@ async function actNoShowSummary(page, params) {
   }
   const total = noShow + cancelled + completed;
   const repeat = [...byPhone.entries()].filter(([, v]) => v.n >= 2).map(([phone, v]) => ({ phone, name: v.name, no_shows: v.n }));
-  return { period_days: days, total, no_show: noShow, cancelled, completed, no_show_rate_pct: total ? Math.round((noShow / total) * 1000) / 10 : 0, repeat_no_show_customers: repeat };
+  return {
+    period_days_requested: days,
+    period_days_covered: covered,
+    coverage_note: covered < days ? "טאביט החזיר חלון ארכיון קצר מהמבוקש; המספרים מכסים את הימים שהתקבלו בפועל" : undefined,
+    total, no_show: noShow, cancelled, completed,
+    no_show_rate_pct: total ? Math.round((noShow / total) * 1000) / 10 : 0,
+    repeat_no_show_customers: repeat,
+  };
 }
 
 async function actBookingSources(page, params) {
   const days = Number(params.days) || 30;
-  const fromISO = new Date(Date.now() - days * 86400000).toISOString();
-  const list = await getArchived(page, fromISO);
+  const requested = new Date(Date.now() - days * 86400000).toISOString();
+  const { items: list, from } = await getArchived(page, requested);
+  const covered = coveredDays(from);
   const counts = {};
   for (const r of list) {
     if (r.archived_reason === "idle-temp-reservation") continue;
@@ -345,7 +369,12 @@ async function actBookingSources(page, params) {
   }
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const breakdown = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([source, count]) => ({ source, count, pct: total ? Math.round((count / total) * 1000) / 10 : 0 }));
-  return { period_days: days, total, breakdown };
+  return {
+    period_days_requested: days,
+    period_days_covered: covered,
+    coverage_note: covered < days ? "טאביט החזיר חלון ארכיון קצר מהמבוקש" : undefined,
+    total, breakdown,
+  };
 }
 
 const TABLE_STATUS_HE = { available: "פנוי", occupied: "תפוס", reserved: "שמור", dirty: "מלוכלך", seated: "תפוס", cleaning: "בניקוי" };
@@ -362,8 +391,7 @@ async function actTablesStatus(page) {
 async function actCustomerLookup(page, params) {
   const { phone, name } = params;
   if (!phone && !name) throw new Error("צריך טלפון או שם לחיפוש");
-  const fromISO = new Date(Date.now() - 365 * 86400000).toISOString();
-  const [upcoming, archived, tables] = [await getReservations(page), await getArchived(page, fromISO), await getTables(page)];
+  const [upcoming, tables] = [await getReservations(page), await getTables(page)];
   const tableNum = new Map(tables.map((t) => [t._id, t.number]));
   const match = (r) => {
     const c = (r.reservation_details && r.reservation_details.customer) || {};
@@ -371,20 +399,28 @@ async function actCustomerLookup(page, params) {
     if (name && c.name && c.name.includes(name)) return true;
     return false;
   };
-  const up = upcoming.filter((r) => r.type !== "walked_in" && r.state !== "cancelled").filter(match).map((r) => mapReservation(r, tableNum));
-  const past = archived.filter(match);
-  const visits = past.filter((r) => !r.archived_reason || r.archived_reason === "").length;
-  const noShows = past.filter((r) => r.archived_reason === "no_show").length;
-  const cancels = past.filter((r) => REAL_CANCEL.has(r.archived_reason)).length;
-  const found = up[0] || past[0];
-  const c = found && found.reservation_details && found.reservation_details.customer;
+  const upRes = upcoming.filter((r) => r.type !== "walked_in" && r.state !== "cancelled").filter(match);
+  const up = upRes.map((r) => mapReservation(r, tableNum));
+
+  // היסטוריית עבר - לא קריטית. אם הארכיון לא זמין, מחזירים בכל זאת את ההזמנות
+  // הקרובות (זו התשובה העיקרית ל"יש לו הזמנה?").
+  let past_visits = null, no_shows = null, cancellations = null, history_note;
+  try {
+    const { items: archived } = await getArchived(page, new Date(Date.now() - 90 * 86400000).toISOString());
+    const past = archived.filter(match);
+    past_visits = past.filter((r) => !r.archived_reason || r.archived_reason === "").length;
+    no_shows = past.filter((r) => r.archived_reason === "no_show").length;
+    cancellations = past.filter((r) => REAL_CANCEL.has(r.archived_reason)).length;
+  } catch (_) { history_note = "היסטוריית עבר לא זמינה כרגע (הארכיון לא הגיב) - ההזמנות הקרובות למטה מדויקות"; }
+
+  const c = upRes[0] && upRes[0].reservation_details && upRes[0].reservation_details.customer;
   return {
-    name: (found && (found.name || (c && c.name))) || name || "",
+    name: (c && c.name) || name || "",
     phone: (c && c.phone) || phone || "",
+    has_upcoming: up.length > 0,
     upcoming: up.map((r) => ({ day: r.day, time: r.time, seats: r.seats, tables: r.tables, deposit: r.deposit })),
-    past_visits: visits,
-    no_shows: noShows,
-    cancellations: cancels,
+    past_visits, no_shows, cancellations,
+    ...(history_note ? { history_note } : {}),
   };
 }
 
