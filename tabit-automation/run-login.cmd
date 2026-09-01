@@ -5,3 +5,6 @@ REM screen, then close the window. IMPORTANT: close the agent window first.
 cd /d "%~dp0"
 set NODE_OPTIONS=--use-system-ca
 "C:\Program Files\nodejs\node.exe" login.js
+echo.
+echo [ההתחברות נסגרה. אפשר לסגור חלון זה ולהריץ את run-agent.]
+pause
