@@ -148,6 +148,32 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // בריאות החשבון: מגבלות שליחה, מצב בדיקה, ואיכות המספר. אלה הדברים
+  // שגורמים ל"מטא החזירה 200 אבל ההודעה לא נמסרה".
+  if (body.action === "health" && body.wabaId && token) {
+    const get = async (path: string) => {
+      const res = await fetch(
+        `https://graph.facebook.com/${V}${path}&access_token=${encodeURIComponent(token)}`
+      );
+      return { status: res.status, body: await res.json().catch(() => ({})) };
+    };
+    const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    return NextResponse.json({
+      waba: await get(
+        `/${body.wabaId}?fields=id,name,account_review_status,business_verification_status,country,ownership_type`
+      ),
+      phone: phoneId
+        ? await get(
+            `/${phoneId}?fields=display_phone_number,verified_name,quality_rating,` +
+              `code_verification_status,name_status,status,messaging_limit_tier,throughput`
+          )
+        : null,
+      phones: await get(
+        `/${body.wabaId}/phone_numbers?fields=display_phone_number,quality_rating,status,messaging_limit_tier`
+      ),
+    });
+  }
+
   // שליחת התראת בדיקה לצוות (למספרים שהוגדרו בפאנל) - לאימות אחרי חיבור תשלום
   if (body.action === "testAlert") {
     const { sendTeamWhatsAppAlert } = await import("@/lib/alerts");
