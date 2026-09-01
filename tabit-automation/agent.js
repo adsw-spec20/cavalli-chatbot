@@ -180,7 +180,7 @@ async function actGetDepositLink(page, params) {
  * שולחנות לקבוצה גדולה - אך ורק מתוך שולחנות שפנויים בחלון הזמן הזה (לא
  * תפוסים ע"י הזמנה קיימת חופפת). כך לעולם לא "דורסים" הזמנה קיימת.
  */
-function pickTables(tables, allReservations, fromISO, untilISO, party) {
+function pickTables(tables, allReservations, fromISO, untilISO, party, areaNames) {
   const fromT = new Date(fromISO).getTime();
   const untilT = new Date(untilISO).getTime();
   const occupied = new Set();
@@ -191,7 +191,9 @@ function pickTables(tables, allReservations, fromISO, untilISO, party) {
     const ru = d.reserved_until ? new Date(d.reserved_until).getTime() : rf + 120 * 60000;
     if (rf < untilT && ru > fromT) (d.reserved_tables_ids || []).forEach((id) => occupied.add(id));
   }
-  const free = tables.filter((t) => !t.disabled && !occupied.has(t._id));
+  let free = tables.filter((t) => !t.disabled && !occupied.has(t._id));
+  // הגבלה לאזור מבוקש (פנים / חוץ), לפי area.name של השולחן
+  if (areaNames && areaNames.length) free = free.filter((t) => areaNames.includes((t.area && t.area.name) || ""));
   // שולחן בודד: הקטן ביותר שמכיל את הקבוצה
   const singles = free.filter((t) => (t.seats || 0) >= party).sort((a, b) => a.seats - b.seats);
   if (singles.length) return { ids: [singles[0]._id], numbers: [singles[0].number] };
@@ -210,14 +212,24 @@ function pickTables(tables, allReservations, fromISO, untilISO, party) {
 }
 
 async function actCreateReservation(page, params, me) {
-  const { name, phone, date, time, seats, send_deposit_link } = params;
+  const { name, phone, date, time, seats, send_deposit_link, seating } = params;
   if (!name || !phone || !date || !time || !seats) throw new Error("חסרים פרטים: שם, טלפון, תאריך, שעה, סועדים");
   const from = ilToUtcISO(date, time);
   const until = new Date(new Date(from).getTime() + 120 * 60000).toISOString();
 
-  // שיוך שולחן חכם מתוך השולחנות הפנויים בחלון הזמן הזה
+  // אזור: פנים / חוץ. "בחוץ" = הגרלה בין כניסה ראשית (outside) למול המסך (screen).
+  // "בר" לא נתמך כרגע. אזור נקבע ע"י בחירת שולחנות מאותו אזור.
+  let areaNames = null, areaLabel = null;
+  if (seating === "inside") { areaNames = ["inside"]; areaLabel = "פנים"; }
+  else if (seating === "outside") {
+    const pick = Math.random() < 0.5 ? "outside" : "screen";
+    areaNames = [pick];
+    areaLabel = pick === "outside" ? "חוץ - כניסה ראשית" : "חוץ - מול המסך";
+  }
+
+  // שיוך שולחן חכם מתוך השולחנות הפנויים בחלון הזמן הזה (ובאזור המבוקש)
   const [tables, allRes] = [await getTables(page), await getReservations(page)];
-  const picked = pickTables(tables, allRes, from, until, Number(seats));
+  const picked = pickTables(tables, allRes, from, until, Number(seats), areaNames);
   const tableIds = picked.ids;
 
   const localId = Math.random().toString(36).slice(2, 18);
@@ -274,8 +286,11 @@ async function actCreateReservation(page, params, me) {
     seats: Number(seats),
     day: dayFmt.format(new Date(from)),
     time: timeFmt.format(new Date(from)),
+    area: areaLabel,
     tables: picked.numbers,
-    tables_note: picked.numbers.length ? `שולחן ${picked.numbers.join(", ")}` : "לא נמצא שולחן פנוי מתאים - נוצר בלי שולחן",
+    tables_note: picked.numbers.length
+      ? `שולחן ${picked.numbers.join(", ")}${areaLabel ? ` (${areaLabel})` : ""}`
+      : (areaLabel ? `לא נמצא שולחן פנוי ב${areaLabel} - נוצר בלי שולחן` : "לא נמצא שולחן פנוי מתאים - נוצר בלי שולחן"),
     deposit_link: link.deposit_link,
     deposit_sms_sent: !!send_deposit_link,
     note: link.deposit_link
