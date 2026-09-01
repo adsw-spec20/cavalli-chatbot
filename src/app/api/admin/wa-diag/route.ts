@@ -87,6 +87,29 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // גילוי ה-WABA שהטוקן מורשה עליו (debug_token מחזיר target_ids לכל הרשאה),
+  // כדי שלא נצטרך להעתיק את המזהה ידנית מ-Business Manager בכל בדיקה
+  if (body.action === "discover" && token) {
+    const appSecret = process.env.META_APP_SECRET;
+    if (!appSecret) return NextResponse.json({ error: "META_APP_SECRET חסר" }, { status: 500 });
+    const r = await fetch(
+      `https://graph.facebook.com/${V}/debug_token?input_token=${encodeURIComponent(token)}` +
+        `&access_token=${APP_ID}|${encodeURIComponent(appSecret)}`
+    );
+    const d = (await r.json().catch(() => ({}))) as {
+      data?: { granular_scopes?: { scope: string; target_ids?: string[] }[]; expires_at?: number };
+    };
+    const scopes = d.data?.granular_scopes ?? [];
+    const wabaIds = [
+      ...new Set(
+        scopes
+          .filter((s) => s.scope.startsWith("whatsapp_business"))
+          .flatMap((s) => s.target_ids ?? [])
+      ),
+    ];
+    return NextResponse.json({ status: r.status, wabaIds, expiresAt: d.data?.expires_at ?? null, scopes });
+  }
+
   // שליחת התראת בדיקה לצוות (למספרים שהוגדרו בפאנל) - לאימות אחרי חיבור תשלום
   if (body.action === "testAlert") {
     const { sendTeamWhatsAppAlert } = await import("@/lib/alerts");
