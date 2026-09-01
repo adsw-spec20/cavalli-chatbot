@@ -212,6 +212,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: r.status, body: await r.json().catch(() => ({})) });
   }
 
+  // יצירת תבנית "תזכורת תשלום" לשליחה יזומה - חד-פעמי.
+  // בלי משתנים בכוונה: המארחת מזינה רק מספר טלפון, והקישור הספציפי
+  // כבר נשלח ללקוח כשההזמנה אושרה (החלטת בעל העסק 1.9).
+  if (body.action === "createPaymentTemplate" && body.wabaId && token) {
+    const r = await fetch(
+      `https://graph.facebook.com/${V}/${body.wabaId}/message_templates?access_token=${encodeURIComponent(token)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "payment_reminder",
+          language: "he",
+          category: "UTILITY",
+          components: [
+            {
+              type: "BODY",
+              text:
+                "היי! כאן קפה קוואלי 🙂\n\n" +
+                "רצינו להזכיר שההזמנה שלכם עדיין ממתינה להשלמת התשלום - " +
+                'פיקדון של 100 ש"ח, בקישור ששלחנו לכם קודם.\n\n' +
+                "ברגע שהתשלום מתקבל ההזמנה מאושרת סופית.\n\n" +
+                "מחכים לכם! ☕",
+            },
+          ],
+        }),
+      }
+    );
+    return NextResponse.json({ status: r.status, body: await r.json().catch(() => ({})) });
+  }
+
   // מחיקת תבנית לפי שם (לעדכון תוכן: מוחקים ויוצרים מחדש)
   if (body.action === "deleteTemplate" && body.wabaId && token) {
     const name = (body as { templateName?: string }).templateName;

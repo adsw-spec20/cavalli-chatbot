@@ -6,8 +6,8 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 /**
- * שליחה יזומה של הוראות הגעה וחניה ללקוח בוואטסאפ.
- * הלוגיקה עצמה משותפת עם תזכורת התשלום - ראה lib/proactive-send.ts.
+ * תזכורת יזומה ללקוח שההזמנה שלו ממתינה להשלמת תשלום הפיקדון.
+ * הלוגיקה עצמה משותפת עם שליחת החניה - ראה lib/proactive-send.ts.
  */
 export async function POST(req: NextRequest) {
   if (!(await isAdminAuthorized(req))) {
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   }
   const body = (await req.json().catch(() => ({}))) as { phone?: string; agentName?: string };
   const r = await sendProactiveTemplate({
-    kind: "parking",
+    kind: "payment",
     phone: body.phone ?? "",
     agentName: body.agentName,
   });

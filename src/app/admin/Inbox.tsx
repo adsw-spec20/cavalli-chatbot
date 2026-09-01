@@ -16,6 +16,28 @@ import { parseMemory } from "@/lib/customer-memory-format";
 
 /* ============================== עזרים ============================== */
 
+/**
+ * שליחות יזומות ללקוח שהתקשר: כפתור -> שדה טלפון -> שלח.
+ * שתיהן נשלחות כתבנית מאושרת של מטא, כי הלקוח לא בהכרח כתב לנו ב-24 השעות
+ * האחרונות. שמות התבניות עצמן יושבים בשרת (lib/proactive-send.ts).
+ */
+const PROACTIVE = {
+  parking: {
+    endpoint: "/send-parking",
+    label: "📍 שלח חניה",
+    title: "שליחת הוראות הגעה וחניה בוואטסאפ ללקוח שהתקשר",
+    hint: "הלקוח יקבל בוואטסאפ את הכתובת, ניווט ב-Waze וסרטון הדרך לחניה - והשיחה תתועד כאן בפאנל.",
+  },
+  payment: {
+    endpoint: "/send-payment-reminder",
+    label: "💳 תזכורת תשלום",
+    title: "תזכורת בוואטסאפ ללקוח שההזמנה שלו ממתינה להשלמת הפיקדון",
+    hint: 'הלקוח יקבל תזכורת שההזמנה ממתינה להשלמת פיקדון של 100 ש"ח בקישור ששלחתם לו קודם.',
+  },
+} as const;
+
+type ProactiveKind = keyof typeof PROACTIVE;
+
 function initials(name?: string, fallback = "?"): string {
   if (!name) return fallback;
   const parts = name.trim().split(/\s+/);
@@ -414,32 +436,38 @@ export default function Inbox({
     [setSelectedId]
   );
 
-  // שליחה יזומה של הוראות חניה (לקוח שהתקשר וביקש מהמארחת "שלחי לי בוואטסאפ")
-  const [parkingOpen, setParkingOpen] = useState(false);
-  const [parkingPhone, setParkingPhone] = useState("");
-  const [parkingBusy, setParkingBusy] = useState(false);
-  const [parkingMsg, setParkingMsg] = useState("");
-  async function sendParking() {
-    if (!parkingPhone.trim() || parkingBusy) return;
-    setParkingBusy(true);
-    setParkingMsg("");
+  // שליחה יזומה ללקוח שהתקשר וביקש מהמארחת "שלחי לי בוואטסאפ".
+  // שתי התבניות עובדות אותו דבר: כפתור -> שדה טלפון -> שלח.
+  const [proactive, setProactive] = useState<ProactiveKind | null>(null);
+  const [proactivePhone, setProactivePhone] = useState("");
+  const [proactiveBusy, setProactiveBusy] = useState(false);
+  const [proactiveMsg, setProactiveMsg] = useState("");
+  async function sendProactive() {
+    if (!proactive || !proactivePhone.trim() || proactiveBusy) return;
+    setProactiveBusy(true);
+    setProactiveMsg("");
     try {
-      await api(token, "/send-parking", {
+      await api(token, PROACTIVE[proactive].endpoint, {
         method: "POST",
-        body: JSON.stringify({ phone: parkingPhone, agentName }),
+        body: JSON.stringify({ phone: proactivePhone, agentName }),
       });
-      setParkingMsg("✅ נשלח! ההודעה בדרך ללקוח");
-      setParkingPhone("");
+      setProactiveMsg("✅ נשלח! ההודעה בדרך ללקוח");
+      setProactivePhone("");
       onMutate();
       setTimeout(() => {
-        setParkingMsg("");
-        setParkingOpen(false);
+        setProactiveMsg("");
+        setProactive(null);
       }, 4000);
     } catch (e) {
-      setParkingMsg(`⚠ ${e instanceof Error ? e.message : "השליחה נכשלה"}`);
+      setProactiveMsg(`⚠ ${e instanceof Error ? e.message : "השליחה נכשלה"}`);
     } finally {
-      setParkingBusy(false);
+      setProactiveBusy(false);
     }
+  }
+  /** מעבר בין שתי התבניות (ולחיצה חוזרת סוגרת) - בלי לגרור הודעה ישנה */
+  function toggleProactive(kind: ProactiveKind) {
+    setProactiveMsg("");
+    setProactive((cur) => (cur === kind ? null : kind));
   }
   function backToList() {
     setSelectedId(null);
@@ -718,41 +746,45 @@ export default function Inbox({
                 {l}
               </button>
             ))}
-            <button
-              onClick={() => setParkingOpen((o) => !o)}
-              aria-expanded={parkingOpen}
-              title="שליחת הוראות הגעה וחניה בוואטסאפ ללקוח שהתקשר"
-              className={`rounded-lg px-2.5 py-1.5 mr-auto ${parkingOpen ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)]"}`}
-            >
-              📍 שלח חניה
-            </button>
+            <div className="flex gap-1 mr-auto">
+              {(Object.keys(PROACTIVE) as ProactiveKind[]).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => toggleProactive(k)}
+                  aria-expanded={proactive === k}
+                  title={PROACTIVE[k].title}
+                  className={`rounded-lg px-2.5 py-1.5 ${proactive === k ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)]"}`}
+                >
+                  {PROACTIVE[k].label}
+                </button>
+              ))}
+            </div>
           </div>
-          {parkingOpen && (
+          {proactive && (
             <div className="space-y-1.5">
               <div className="flex gap-2">
                 <input
-                  value={parkingPhone}
-                  onChange={(e) => setParkingPhone(e.target.value)}
+                  value={proactivePhone}
+                  onChange={(e) => setProactivePhone(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") sendParking();
+                    if (e.key === "Enter") sendProactive();
                   }}
                   placeholder="מספר הלקוח, למשל 0501234567"
                   dir="ltr"
                   inputMode="tel"
+                  aria-label={PROACTIVE[proactive].title}
                   className="flex-1 bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
                 />
                 <button
-                  onClick={sendParking}
-                  disabled={parkingBusy || !parkingPhone.trim()}
+                  onClick={sendProactive}
+                  disabled={proactiveBusy || !proactivePhone.trim()}
                   className="bg-[var(--accent)] text-[var(--accent-fg)] text-sm font-semibold rounded-xl px-4 disabled:opacity-40"
                 >
-                  {parkingBusy ? "שולח…" : "שלח"}
+                  {proactiveBusy ? "שולח…" : "שלח"}
                 </button>
               </div>
-              {parkingMsg && <div className="text-[11px]">{parkingMsg}</div>}
-              <div className="text-[10px] text-[var(--muted)]">
-                הלקוח יקבל בוואטסאפ את הכתובת, ניווט ב-Waze וסרטון הדרך לחניה - והשיחה תתועד כאן בפאנל.
-              </div>
+              {proactiveMsg && <div className="text-[11px]">{proactiveMsg}</div>}
+              <div className="text-[10px] text-[var(--muted)]">{PROACTIVE[proactive].hint}</div>
             </div>
           )}
           <div className="flex gap-1 flex-wrap text-xs">
