@@ -9,6 +9,7 @@
 
 const { chromium } = require('playwright');
 const path = require('path');
+const fs = require('fs');
 
 const PROFILE_DIR = path.join(__dirname, 'tabit-profile');
 const URL = 'https://tgm-app.tabit.cloud/';
@@ -16,6 +17,9 @@ const URL = 'https://tgm-app.tabit.cloud/';
 (async () => {
   console.log('Opening Chrome with a persistent profile at:', PROFILE_DIR);
   console.log('URL:', URL);
+
+  // ניקוי נעילה שאולי נשארה מהסוכן (אם הוא לא נסגר לגמרי) כדי שההתחברות תוכל לעלות
+  try { for (const f of fs.readdirSync(PROFILE_DIR)) if (f.startsWith('Singleton')) try { fs.unlinkSync(path.join(PROFILE_DIR, f)); } catch (_) {} } catch (_) {}
 
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: false,
