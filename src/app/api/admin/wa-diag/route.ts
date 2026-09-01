@@ -136,9 +136,12 @@ export async function POST(req: NextRequest) {
         for (const w of (owned.data ?? []) as { id: string }[]) wabaIds.add(w.id);
       }
     }
+    // body.wabaId כבר נטען מהאחסון למעלה - זה המזהה שנקלט מה-webhook
+    if (body.wabaId) wabaIds.add(body.wabaId);
     return NextResponse.json({
       status: r.status,
       wabaIds: [...wabaIds],
+      fromWebhook: body.wabaId ?? null,
       expiresAt: d.data?.expires_at ?? null,
       scopes,
       probe,
