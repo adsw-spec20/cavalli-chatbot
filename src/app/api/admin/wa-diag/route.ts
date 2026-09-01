@@ -100,14 +100,44 @@ export async function POST(req: NextRequest) {
       data?: { granular_scopes?: { scope: string; target_ids?: string[] }[]; expires_at?: number };
     };
     const scopes = d.data?.granular_scopes ?? [];
-    const wabaIds = [
-      ...new Set(
-        scopes
-          .filter((s) => s.scope.startsWith("whatsapp_business"))
-          .flatMap((s) => s.target_ids ?? [])
-      ),
-    ];
-    return NextResponse.json({ status: r.status, wabaIds, expiresAt: d.data?.expires_at ?? null, scopes });
+    const wabaIds = new Set(
+      scopes
+        .filter((s) => s.scope.startsWith("whatsapp_business"))
+        .flatMap((s) => s.target_ids ?? [])
+    );
+
+    // טוקן של system user לא נושא target_ids, אז נופלים לשרשרת הרגילה:
+    // המספר -> ה-WABA שלו, ואם גם זה ריק - העסקים שהטוקן רואה והחשבונות שלהם.
+    const probe: Record<string, unknown> = {};
+    const get = async (path: string) => {
+      const res = await fetch(
+        `https://graph.facebook.com/${V}${path}${path.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(token)}`
+      );
+      return (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    };
+    const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    if (phoneId) {
+      const viaPhone = await get(`/${phoneId}?fields=whatsapp_business_account{id,name}`);
+      probe.viaPhone = viaPhone;
+      const acct = (viaPhone as { whatsapp_business_account?: { id?: string } }).whatsapp_business_account;
+      if (acct?.id) wabaIds.add(acct.id);
+    }
+    if (!wabaIds.size) {
+      const biz = await get(`/me/businesses?fields=id,name`);
+      probe.businesses = biz;
+      for (const b of ((biz.data ?? []) as { id: string }[]).slice(0, 5)) {
+        const owned = await get(`/${b.id}/owned_whatsapp_business_accounts?fields=id,name`);
+        probe[`owned_${b.id}`] = owned;
+        for (const w of (owned.data ?? []) as { id: string }[]) wabaIds.add(w.id);
+      }
+    }
+    return NextResponse.json({
+      status: r.status,
+      wabaIds: [...wabaIds],
+      expiresAt: d.data?.expires_at ?? null,
+      scopes,
+      probe,
+    });
   }
 
   // שליחת התראת בדיקה לצוות (למספרים שהוגדרו בפאנל) - לאימות אחרי חיבור תשלום
