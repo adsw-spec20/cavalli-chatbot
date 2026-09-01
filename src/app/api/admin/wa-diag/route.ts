@@ -217,26 +217,26 @@ export async function POST(req: NextRequest) {
 
   // יצירת תבנית "תזכורת תשלום" לשליחה יזומה - חד-פעמי.
   // בלי משתנים בכוונה: המארחת מזינה רק מספר טלפון, והקישור הספציפי
-  // כבר נשלח ללקוח כשההזמנה אושרה (החלטת בעל העסק 1.9).
+  // כבר נשלח ללקוח ב-SMS כשההזמנה אושרה. הנוסח הוא של בעל העסק (1.9) -
+  // לא לשנות בלי אישור, כל שינוי דורש מחיקה ואישור מחדש של מטא.
   if (body.action === "createPaymentTemplate" && body.wabaId && token) {
+    const name = (body as { templateName?: string }).templateName || "payment_reminder";
     const r = await fetch(
       `https://graph.facebook.com/${V}/${body.wabaId}/message_templates?access_token=${encodeURIComponent(token)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "payment_reminder",
+          name,
           language: "he",
           category: "UTILITY",
           components: [
             {
               type: "BODY",
               text:
-                "היי! כאן קפה קוואלי 🙂\n\n" +
-                "רצינו להזכיר שההזמנה שלכם עדיין ממתינה להשלמת התשלום - " +
-                'פיקדון של 100 ש"ח, בקישור ששלחנו לכם קודם.\n\n' +
-                "ברגע שהתשלום מתקבל ההזמנה מאושרת סופית.\n\n" +
-                "מחכים לכם! ☕",
+                "היי, כאן קפה קוואלי 😊\n" +
+                "רצינו להזכיר שעדיין לא הושלם הפיקדון בסך 100 ₪ עבור ההזמנה שלכם.\n\n" +
+                "כדי להשלים ולאשר את ההזמנה, ניתן לבצע את התשלום בקישור ששלחנו לכם בSMS 🙏",
             },
           ],
         }),
@@ -259,7 +259,7 @@ export async function POST(req: NextRequest) {
   // סטטוס התבניות (לבדוק אישור)
   if (body.action === "templates" && body.wabaId && token) {
     const r = await fetch(
-      `https://graph.facebook.com/${V}/${body.wabaId}/message_templates?fields=name,status,category,language&access_token=${encodeURIComponent(token)}`
+      `https://graph.facebook.com/${V}/${body.wabaId}/message_templates?fields=name,status,category,language,components&access_token=${encodeURIComponent(token)}`
     );
     return NextResponse.json({ status: r.status, body: await r.json().catch(() => ({})) });
   }
