@@ -30,6 +30,11 @@ const TOOLS: Anthropic.Tool[] = [
   { name: "tabit_deposit_summary", description: "סיכום פיקדונות ליום: כמה מובטחים וכמה חסרים, ורשימת החסרים. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
   { name: "tabit_get_deposit_link", description: "שלוף את קישור הפיקדון של הזמנה לפי reservationId.", input_schema: { type: "object", properties: { reservationId: { type: "string" } }, required: ["reservationId"] } },
   { name: "tabit_create_reservation", description: "צור הזמנה חדשה בטאביט. הוספה בלבד - לעולם לא נוגע בהזמנות קיימות. שיוך השולחן נעשה אוטומטית וחכם (לפי מספר הסועדים ומה שפנוי באותה שעה, כולל צירוף שולחנות לקבוצה גדולה). send_deposit_link=true שולח ללקוח SMS עם קישור הפיקדון; false (ברירת מחדל) רק יוצר את הקישור ומחזיר אותו בלי לשלוח. מחזיר מזהה, שולחנות משויכים וקישור פיקדון.", input_schema: { type: "object", properties: { name: { type: "string" }, phone: { type: "string" }, date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string", description: "HH:MM" }, seats: { type: "number" }, send_deposit_link: { type: "boolean", description: "האם לשלוח ללקוח SMS עם קישור הפיקדון" } }, required: ["name", "phone", "date", "time", "seats", "send_deposit_link"] } },
+  { name: "tabit_check_availability", description: "בדוק אם יש מקום פנוי לקבוצה בשעה ותאריך נתונים. מחזיר האם פנוי ואיזה שולחן/שולחנות. לא יוצר כלום.", input_schema: { type: "object", properties: { date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string", description: "HH:MM" }, seats: { type: "number" } }, required: ["date", "time", "seats"] } },
+  { name: "tabit_customer_lookup", description: "חפש לקוח לפי טלפון או שם, והחזר את ההזמנות הקרובות שלו, מספר ביקורים בעבר, אי-הגעות וביטולים. קריאה בלבד.", input_schema: { type: "object", properties: { phone: { type: "string" }, name: { type: "string" } } } },
+  { name: "tabit_tables_status", description: "מצב השולחנות החי כרגע: כמה פנויים, תפוסים, מלוכלכים, וסה\"כ מקומות.", input_schema: { type: "object", properties: {} } },
+  { name: "tabit_no_show_summary", description: "מעקב אי-הגעה וביטולים מתוך הארכיון ב-N הימים האחרונים (ברירת מחדל 30): כמה no-show, כמה ביטולים, אחוז אי-הגעה, ולקוחות שלא הגיעו יותר מפעם אחת.", input_schema: { type: "object", properties: { days: { type: "number" } } } },
+  { name: "tabit_booking_sources", description: "פילוח מקורות ההזמנות ב-N הימים האחרונים (ברירת מחדל 30): אונליין, גוגל, טלפון/צוות, הגעה מהרחוב.", input_schema: { type: "object", properties: { days: { type: "number" } } } },
 ];
 
 const TOOL_TO_ACTION: Record<string, TabitAction> = {
@@ -38,6 +43,11 @@ const TOOL_TO_ACTION: Record<string, TabitAction> = {
   tabit_deposit_summary: "deposit_summary",
   tabit_get_deposit_link: "get_deposit_link",
   tabit_create_reservation: "create_reservation",
+  tabit_check_availability: "check_availability",
+  tabit_customer_lookup: "customer_lookup",
+  tabit_tables_status: "tables_status",
+  tabit_no_show_summary: "no_show_summary",
+  tabit_booking_sources: "booking_sources",
 };
 
 const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למערכת ההזמנות טאביט, עבור מסעדת "קפה קוואלי".
@@ -49,6 +59,11 @@ const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למע
 - tabit_read_day / tabit_deposit_summary: קריאת הזמנות וסטטוס פיקדונות ליום.
 - tabit_get_deposit_link: קישור פיקדון להזמנה.
 - tabit_create_reservation: יצירת הזמנה חדשה (הוספה בלבד).
+- tabit_check_availability: בדיקת זמינות מקום לקבוצה בתאריך ושעה.
+- tabit_customer_lookup: חיפוש לקוח (טלפון/שם) - הזמנות קרובות, ביקורים, אי-הגעות.
+- tabit_tables_status: מצב השולחנות החי (פנוי/תפוס/מלוכלך).
+- tabit_no_show_summary: מעקב אי-הגעה וביטולים מהארכיון.
+- tabit_booking_sources: פילוח מקורות ההזמנות (אונליין/גוגל/טלפון/הגעה).
 
 כללים קשיחים:
 1. אין לך שום כלי לשינוי, ביטול או מחיקה של הזמנות - ואסור לך להבטיח פעולות כאלה. אתה יכול רק לקרוא וליצור חדשות.

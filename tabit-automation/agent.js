@@ -284,6 +284,125 @@ async function actCreateReservation(page, params, me) {
   };
 }
 
+// ===== קבוצה א': קריאה וניתוח מתקדם =====
+
+async function getArchived(page, fromISO) {
+  const q = fromISO ? `?from=${encodeURIComponent(fromISO)}&tgmv=${Date.now()}` : `?tgmv=${Date.now()}`;
+  const r = await apiFetch(page, "GET", `/reservations-archived${q}`);
+  if (r.status !== 200 || !Array.isArray(r.body)) throw new Error(`קריאת ארכיון נכשלה (status ${r.status}) - ייתכן שה-session פג`);
+  return r.body;
+}
+
+// ביטול אמיתי (לא ניקוי-מערכת של הזמנה זמנית שפגה)
+const REAL_CANCEL = new Set(["customer_cancelled", "cancelled", "אחר"]);
+
+function sourceLabel(r) {
+  if (r.type === "walked_in") return "הגעה מהרחוב";
+  const s = r.online_booking_source_client && r.online_booking_source_client.name;
+  if (s === "tabit-web") return "אונליין (אתר)";
+  if (s === "tabit-google-reserve") return "גוגל";
+  if (r.online_booking) return "אונליין";
+  return "טלפון / צוות";
+}
+
+const digitsOnly = (p) => (p || "").replace(/\D/g, "");
+function samePhone(a, b) {
+  const A = digitsOnly(a), B = digitsOnly(b);
+  if (A.length < 9 || B.length < 9) return false;
+  return A.slice(-9) === B.slice(-9);
+}
+
+async function actNoShowSummary(page, params) {
+  const days = Number(params.days) || 30;
+  const fromISO = new Date(Date.now() - days * 86400000).toISOString();
+  const list = await getArchived(page, fromISO);
+  let noShow = 0, cancelled = 0, completed = 0;
+  const byPhone = new Map();
+  for (const r of list) {
+    const reason = r.archived_reason || "";
+    if (reason === "idle-temp-reservation") continue;
+    if (reason === "no_show") {
+      noShow++;
+      const c = r.reservation_details && r.reservation_details.customer;
+      if (c && c.phone) byPhone.set(c.phone, { name: c.name || "", n: (byPhone.get(c.phone) ? byPhone.get(c.phone).n : 0) + 1 });
+    } else if (REAL_CANCEL.has(reason)) cancelled++;
+    else completed++;
+  }
+  const total = noShow + cancelled + completed;
+  const repeat = [...byPhone.entries()].filter(([, v]) => v.n >= 2).map(([phone, v]) => ({ phone, name: v.name, no_shows: v.n }));
+  return { period_days: days, total, no_show: noShow, cancelled, completed, no_show_rate_pct: total ? Math.round((noShow / total) * 1000) / 10 : 0, repeat_no_show_customers: repeat };
+}
+
+async function actBookingSources(page, params) {
+  const days = Number(params.days) || 30;
+  const fromISO = new Date(Date.now() - days * 86400000).toISOString();
+  const list = await getArchived(page, fromISO);
+  const counts = {};
+  for (const r of list) {
+    if (r.archived_reason === "idle-temp-reservation") continue;
+    const l = sourceLabel(r);
+    counts[l] = (counts[l] || 0) + 1;
+  }
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const breakdown = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([source, count]) => ({ source, count, pct: total ? Math.round((count / total) * 1000) / 10 : 0 }));
+  return { period_days: days, total, breakdown };
+}
+
+const TABLE_STATUS_HE = { available: "פנוי", occupied: "תפוס", reserved: "שמור", dirty: "מלוכלך", seated: "תפוס", cleaning: "בניקוי" };
+async function actTablesStatus(page) {
+  const tables = await getTables(page);
+  const active = tables.filter((t) => !t.disabled);
+  const counts = {};
+  let seats = 0;
+  for (const t of active) { const s = t.status || "?"; counts[s] = (counts[s] || 0) + 1; seats += t.seats || 0; }
+  const by_status = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([status, count]) => ({ status, label: TABLE_STATUS_HE[status] || status, count }));
+  return { total_tables: active.length, total_seats: seats, by_status };
+}
+
+async function actCustomerLookup(page, params) {
+  const { phone, name } = params;
+  if (!phone && !name) throw new Error("צריך טלפון או שם לחיפוש");
+  const fromISO = new Date(Date.now() - 365 * 86400000).toISOString();
+  const [upcoming, archived, tables] = [await getReservations(page), await getArchived(page, fromISO), await getTables(page)];
+  const tableNum = new Map(tables.map((t) => [t._id, t.number]));
+  const match = (r) => {
+    const c = (r.reservation_details && r.reservation_details.customer) || {};
+    if (phone && samePhone(c.phone, phone)) return true;
+    if (name && c.name && c.name.includes(name)) return true;
+    return false;
+  };
+  const up = upcoming.filter((r) => r.type !== "walked_in" && r.state !== "cancelled").filter(match).map((r) => mapReservation(r, tableNum));
+  const past = archived.filter(match);
+  const visits = past.filter((r) => !r.archived_reason || r.archived_reason === "").length;
+  const noShows = past.filter((r) => r.archived_reason === "no_show").length;
+  const cancels = past.filter((r) => REAL_CANCEL.has(r.archived_reason)).length;
+  const found = up[0] || past[0];
+  const c = found && found.reservation_details && found.reservation_details.customer;
+  return {
+    name: (found && (found.name || (c && c.name))) || name || "",
+    phone: (c && c.phone) || phone || "",
+    upcoming: up.map((r) => ({ day: r.day, time: r.time, seats: r.seats, tables: r.tables, deposit: r.deposit })),
+    past_visits: visits,
+    no_shows: noShows,
+    cancellations: cancels,
+  };
+}
+
+async function actCheckAvailability(page, params) {
+  const { date, time, seats } = params;
+  if (!date || !time || !seats) throw new Error("צריך תאריך (YYYY-MM-DD), שעה (HH:MM) ומספר סועדים");
+  const from = ilToUtcISO(date, time);
+  const until = new Date(new Date(from).getTime() + 120 * 60000).toISOString();
+  const [tables, allRes] = [await getTables(page), await getReservations(page)];
+  const picked = pickTables(tables, allRes, from, until, Number(seats));
+  return {
+    date, time, seats: Number(seats),
+    available: picked.ids.length > 0,
+    tables: picked.numbers,
+    note: picked.ids.length ? `יש מקום: שולחן ${picked.numbers.join(", ")}` : "אין שולחן פנוי מתאים בשעה הזאת",
+  };
+}
+
 async function run(page, cmd, me) {
   switch (cmd.action) {
     case "health": return actHealth(page);
@@ -291,6 +410,11 @@ async function run(page, cmd, me) {
     case "deposit_summary": return actDepositSummary(page, cmd.params || {});
     case "get_deposit_link": return actGetDepositLink(page, cmd.params || {});
     case "create_reservation": return actCreateReservation(page, cmd.params || {}, me);
+    case "no_show_summary": return actNoShowSummary(page, cmd.params || {});
+    case "booking_sources": return actBookingSources(page, cmd.params || {});
+    case "tables_status": return actTablesStatus(page);
+    case "customer_lookup": return actCustomerLookup(page, cmd.params || {});
+    case "check_availability": return actCheckAvailability(page, cmd.params || {});
     default: throw new Error(`פעולה לא מוכרת: ${cmd.action}`);
   }
 }

@@ -17,7 +17,12 @@ export type TabitAction =
   | "read_day"
   | "deposit_summary"
   | "get_deposit_link"
-  | "create_reservation";
+  | "create_reservation"
+  | "check_availability"
+  | "customer_lookup"
+  | "tables_status"
+  | "no_show_summary"
+  | "booking_sources";
 
 export type TabitCommandStatus = "pending" | "running" | "done" | "error";
 
