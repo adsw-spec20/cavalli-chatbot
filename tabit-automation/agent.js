@@ -457,6 +457,9 @@ async function actCheckAvailability(page, params) {
 // ===== שינוי וביטול הזמנות קיימות (כתיבה!) - רק אחרי שהבוט זיהה ואישר =====
 
 function currentAreaOf(r, tables) {
+  // האזור נשמר בשדה preference (inside/outside/screen). אם לא - נגזור מהשולחנות.
+  const pref = r.reservation_details && r.reservation_details.preference;
+  if (pref && ["inside", "outside", "screen", "bar"].includes(pref)) return pref;
   const tmap = new Map(tables.map((t) => [t._id, (t.area && t.area.name) || ""]));
   for (const id of (r.reservation_details && r.reservation_details.reserved_tables_ids) || []) {
     const a = tmap.get(id);
@@ -494,6 +497,10 @@ async function actModifyReservation(page, params, me) {
   // שיוך מחדש: מתעלמים מההזמנה עצמה בחישוב התפוסה
   const others = all.filter((x) => x._id !== reservation_id);
   const picked = pickTables(tables, others, newFrom, newUntil, newSeats, areaNames);
+  // אם התבקש אזור חדש ואין בו שולחן פנוי - לא מבצעים ולא מדווחים הצלחה
+  if (seating && picked.ids.length === 0) {
+    throw new Error(`אין שולחן פנוי ב${areaLabel} בשעה ${targetTime} - לא ביצעתי את השינוי`);
+  }
   const newTableIds = picked.ids.length ? picked.ids : (d.reserved_tables_ids || []);
 
   const body = {
@@ -518,8 +525,22 @@ async function actModifyReservation(page, params, me) {
   };
   const res = await apiFetch(page, "PUT", `/reservations/${reservation_id}`, body);
   if (res.status !== 200 && res.status !== 201) throw new Error(`עדכון נכשל (status ${res.status}): ${JSON.stringify(res.body).slice(0, 200)}`);
-  const after = { seats: newSeats, day: dayFmt.format(new Date(newFrom)), time: timeFmt.format(new Date(newFrom)), area: areaLabel, tables: picked.numbers.length ? picked.numbers : before.tables };
-  return { id: reservation_id, name: d.customer && d.customer.name, before, after };
+
+  // אימות אמיתי: קוראים מחדש מטאביט ובונים "אחרי" מהנתונים בפועל (לא ממה שביקשנו)
+  const fresh = await getReservations(page);
+  const vr = fresh.find((x) => x._id === reservation_id);
+  if (!vr) throw new Error("השינוי נשלח אך לא הצלחתי לאמת - ההזמנה לא נמצאה בקריאה חוזרת");
+  const vd = vr.reservation_details || {};
+  const vArea = currentAreaOf(vr, tables);
+  const after = { seats: vd.seats_count, day: dayFmt.format(new Date(vd.reserved_from)), time: timeFmt.format(new Date(vd.reserved_from)), area: AREA_HE[vArea] || vArea, tables: tblNumbers(vd.reserved_tables_ids, tables) };
+  const changed = JSON.stringify(before) !== JSON.stringify(after);
+  return {
+    id: reservation_id,
+    name: d.customer && d.customer.name,
+    before, after,
+    verified_changed: changed,
+    note: changed ? "השינוי אומת מול טאביט ✓" : "אזהרה: טאביט קיבל את הבקשה אך ההזמנה לא השתנתה בפועל - אל תדווח שהצליח",
+  };
 }
 
 async function actCancelReservation(page, params) {
