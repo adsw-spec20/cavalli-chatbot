@@ -208,13 +208,24 @@ function pickTables(tables, allReservations, fromISO, untilISO, party, seatingPr
   // שולחן בודד: הקטן ביותר שמכיל את הקבוצה
   const singles = free.filter((t) => (t.seats || 0) >= party).sort((a, b) => a.seats - b.seats);
   if (singles.length) return { ids: [singles[0]._id], numbers: [singles[0].number] };
-  // צירוף לקבוצה גדולה (תמים - מהגדול לקטן, בתוך האזור המבוקש שכבר סוננו אליו).
-  // ⚠️ יוחלף במנוע צירופים אמיתי אחרי שנגדיר אילו שולחנות באמת מתחברים.
-  const sorted = [...free].sort((a, b) => (b.seats || 0) - (a.seats || 0));
+  // צירוף "התאמה הדוקה": בכל צעד בוחרים את השולחן הקטן ביותר שמכסה את מה
+  // שנשאר, ואם אף אחד לא מכסה - את הגדול ביותר. כך לא מבזבזים שולחנות גדולים
+  // (10 סועדים => למשל 8+2, לא 8+8).
+  // ⚠️ עדיין לא מודע לצמידות פיזית (איזה שולחנות באמת מתחברים) - זה נשאר
+  // למנוע האמיתי שנגדיר עם איש צוות.
+  const pool = [...free];
   const chosen = [];
-  let sum = 0;
-  for (const t of sorted) { chosen.push(t); sum += t.seats || 0; if (sum >= party) break; }
-  if (sum >= party) return { ids: chosen.map((t) => t._id), numbers: chosen.map((t) => t.number) };
+  let remaining = party;
+  while (remaining > 0 && pool.length) {
+    pool.sort((a, b) => (a.seats || 0) - (b.seats || 0));
+    let idx = pool.findIndex((t) => (t.seats || 0) >= remaining);
+    if (idx === -1) idx = pool.length - 1;
+    const t = pool.splice(idx, 1)[0];
+    chosen.push(t);
+    remaining -= t.seats || 0;
+  }
+  const total = chosen.reduce((s, t) => s + (t.seats || 0), 0);
+  if (total >= party) return { ids: chosen.map((t) => t._id), numbers: chosen.map((t) => t.number) };
   return { ids: [], numbers: [] };
 }
 
