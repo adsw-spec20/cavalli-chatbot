@@ -28,7 +28,7 @@ function authed(req: NextRequest): boolean {
 
 function line(r: Row): string {
   const tbl = r.tables && r.tables.length ? ` שולחן ${r.tables.join(",")}` : "";
-  return `**${r.time}** ${r.name || "(ללא שם)"}${tbl}(${r.seats}איש)`;
+  return `*${r.time}* ${r.name || "(ללא שם)"}${tbl}(${r.seats}איש)`;
 }
 
 export async function GET(req: NextRequest) {
@@ -60,9 +60,9 @@ export async function GET(req: NextRequest) {
   const evening = big.filter((r) => r.time >= "18:00");
 
   const text =
-    `**שולחנות גדולים למחר**\n\n` +
-    `**בוקר**\n${morning.length ? morning.map(line).join("\n") : "-"}\n\n` +
-    `**ערב**\n${evening.length ? evening.map(line).join("\n") : "-"}`;
+    `*שולחנות גדולים למחר*\n\n` +
+    `*בוקר*\n${morning.length ? morning.map(line).join("\n") : "-"}\n\n` +
+    `*ערב*\n${evening.length ? evening.map(line).join("\n") : "-"}`;
 
   return NextResponse.json({
     text,
