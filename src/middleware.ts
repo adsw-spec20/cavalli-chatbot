@@ -37,6 +37,8 @@ const PUBLIC_PATHS = [
   "/api/admin/tabit/agent",
   // webhook "שולחנות גדולים למחר" ל-Make; מאומת בסוד ב-route.
   "/api/admin/tabit/digest",
+  // webhook "בריאות החיבור" ל-Make (התראת נפילה); מאומת בסוד ב-route.
+  "/api/admin/tabit/health",
   "/login",
   "/privacy",
   "/data-deletion",
