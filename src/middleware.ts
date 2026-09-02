@@ -35,6 +35,8 @@ const PUBLIC_PATHS = [
   "/api/admin/tabit/ingest",
   // הסוכן המקומי של מעבדת טאביט מושך/מחזיר פקודות כאן; מאומת בסוד ב-route.
   "/api/admin/tabit/agent",
+  // webhook "שולחנות גדולים למחר" ל-Make; מאומת בסוד ב-route.
+  "/api/admin/tabit/digest",
   "/login",
   "/privacy",
   "/data-deletion",
