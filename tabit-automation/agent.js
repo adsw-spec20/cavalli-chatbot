@@ -446,17 +446,24 @@ async function actCustomerLookup(page, params) {
 }
 
 async function actCheckAvailability(page, params) {
-  const { date, time, seats } = params;
+  const { date, time, seats, seating } = params;
   if (!date || !time || !seats) throw new Error("צריך תאריך (YYYY-MM-DD), שעה (HH:MM) ומספר סועדים");
   const from = ilToUtcISO(date, time);
   const until = new Date(new Date(from).getTime() + 120 * 60000).toISOString();
+  const seatingPref = seating === "inside" ? "inside" : seating === "outside" ? "outside" : null;
   const [tables, allRes] = [await getTables(page), await getReservations(page)];
-  const picked = pickTables(tables, allRes, from, until, Number(seats));
+  const picked = pickTables(tables, allRes, from, until, Number(seats), seatingPref);
+  const areaOfPicked = picked.numbers.length ? (OUTSIDE_NUMS.has(picked.numbers[0]) ? "חוץ" : "פנים") : null;
+  const reqAreaHe = seatingPref === "outside" ? "חוץ" : seatingPref === "inside" ? "פנים" : null;
   return {
     date, time, seats: Number(seats),
+    requested_area: reqAreaHe || "כל אזור",
     available: picked.ids.length > 0,
     tables: picked.numbers,
-    note: picked.ids.length ? `יש מקום: שולחן ${picked.numbers.join(", ")}` : "אין שולחן פנוי מתאים בשעה הזאת",
+    area: areaOfPicked,
+    note: picked.ids.length
+      ? `יש מקום ב${areaOfPicked}: שולחן ${picked.numbers.join(", ")}`
+      : (reqAreaHe ? `אין שולחן פנוי ב${reqAreaHe} בשעה הזאת` : "אין שולחן פנוי מתאים בשעה הזאת"),
   };
 }
 
