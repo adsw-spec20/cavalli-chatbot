@@ -184,11 +184,48 @@ const LOCKED_NUMS = new Set([72, 73, 74, 75, 76, 77, 78, 79]);
 const isOutside = (t) => OUTSIDE_NUMS.has(t.number);
 const isLockedTable = (t) => LOCKED_NUMS.has(t.number);
 
+// מרחק פיזי בין שני שולחנות לפי מיקומם על המפה (location.x/y).
+function dist(a, b) {
+  const ax = a.location && a.location.x, ay = a.location && a.location.y;
+  const bx = b.location && b.location.x, by = b.location && b.location.y;
+  if (ax == null || bx == null) return 1e6;
+  return Math.hypot(ax - bx, ay - by);
+}
+// צירוף מודע-צמידות: מכל שולחן-זרע מגדילים אשכול לפי השכן הקרוב ביותר עד שמגיעים
+// לגודל הקבוצה, ובוחרים את האשכול עם הכי מעט עודף מקומות ואז הכי קומפקטי.
+// ⚠️ צמידות לפי מיקום היא היוריסטיקה טובה אבל לא מושלמת (יכול להיות מעבר בין
+// שולחנות קרובים) - צריך אימות מול הצוות ואפשר להוסיף חריגים.
+function comboByProximity(free, party) {
+  let best = null;
+  for (const seed of free) {
+    const cluster = [seed];
+    let sum = seed.seats || 0;
+    const rest = free.filter((t) => t !== seed);
+    while (sum < party && rest.length) {
+      let bi = 0, bd = Infinity;
+      for (let i = 0; i < rest.length; i++) {
+        let d = Infinity;
+        for (const c of cluster) d = Math.min(d, dist(c, rest[i]));
+        if (d < bd) { bd = d; bi = i; }
+      }
+      const t = rest.splice(bi, 1)[0];
+      cluster.push(t);
+      sum += t.seats || 0;
+    }
+    if (sum >= party) {
+      const excess = sum - party;
+      let spread = 0;
+      for (let i = 0; i < cluster.length; i++) for (let j = i + 1; j < cluster.length; j++) spread = Math.max(spread, dist(cluster[i], cluster[j]));
+      if (!best || excess < best.excess || (excess === best.excess && spread < best.spread)) best = { cluster, excess, spread };
+    }
+  }
+  return best ? best.cluster : null;
+}
+
 /**
- * שיוך שולחן מודע-זמינות: מחזיר שולחן בודד (הקטן שמתאים) או צירוף שולחנות,
- * אך ורק מתוך שולחנות פנויים בחלון הזמן הזה ובאזור המבוקש (פנים/חוץ), ולא
- * נעולים. seatingPref: "inside" | "outside" | null (הכל).
- * הערה: הצירוף כרגע "תמים" (מהגדול לקטן) - יוחלף במנוע אמיתי אחרי שנגדיר צירופים.
+ * שיוך שולחן מודע-זמינות: מחזיר שולחן בודד (הקטן שמתאים) או צירוף שולחנות
+ * צמודים, אך ורק מתוך שולחנות פנויים בחלון הזמן ובאזור המבוקש (פנים/חוץ),
+ * ולא נעולים. seatingPref: "inside" | "outside" | null (הכל).
  */
 function pickTables(tables, allReservations, fromISO, untilISO, party, seatingPref) {
   const fromT = new Date(fromISO).getTime();
@@ -208,24 +245,10 @@ function pickTables(tables, allReservations, fromISO, untilISO, party, seatingPr
   // שולחן בודד: הקטן ביותר שמכיל את הקבוצה
   const singles = free.filter((t) => (t.seats || 0) >= party).sort((a, b) => a.seats - b.seats);
   if (singles.length) return { ids: [singles[0]._id], numbers: [singles[0].number] };
-  // צירוף "התאמה הדוקה": בכל צעד בוחרים את השולחן הקטן ביותר שמכסה את מה
-  // שנשאר, ואם אף אחד לא מכסה - את הגדול ביותר. כך לא מבזבזים שולחנות גדולים
-  // (10 סועדים => למשל 8+2, לא 8+8).
-  // ⚠️ עדיין לא מודע לצמידות פיזית (איזה שולחנות באמת מתחברים) - זה נשאר
-  // למנוע האמיתי שנגדיר עם איש צוות.
-  const pool = [...free];
-  const chosen = [];
-  let remaining = party;
-  while (remaining > 0 && pool.length) {
-    pool.sort((a, b) => (a.seats || 0) - (b.seats || 0));
-    let idx = pool.findIndex((t) => (t.seats || 0) >= remaining);
-    if (idx === -1) idx = pool.length - 1;
-    const t = pool.splice(idx, 1)[0];
-    chosen.push(t);
-    remaining -= t.seats || 0;
-  }
-  const total = chosen.reduce((s, t) => s + (t.seats || 0), 0);
-  if (total >= party) return { ids: chosen.map((t) => t._id), numbers: chosen.map((t) => t.number) };
+  // צירוף לקבוצה גדולה: אשכול של שולחנות צמודים פיזית (לפי מיקום), עם התאמה
+  // הדוקה לגודל. כך 10 סועדים יקבלו שילוב קומפקטי של שולחנות סמוכים.
+  const combo = comboByProximity(free, party);
+  if (combo) return { ids: combo.map((t) => t._id), numbers: combo.map((t) => t.number) };
   return { ids: [], numbers: [] };
 }
 
