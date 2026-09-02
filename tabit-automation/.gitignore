@@ -6,3 +6,5 @@ node_modules/
 agent.lock
 # Holds the ingest URL + shared secret - must never be committed
 sync-config.json
+# Holds the Tabit user id + passcode for auto-relogin - must never be committed
+agent-credentials.json

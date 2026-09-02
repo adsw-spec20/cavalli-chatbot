@@ -68,7 +68,8 @@ function depositStatus(r) {
   return r.links && r.links.deposit ? "missing" : "none";
 }
 
-async function apiFetch(page, method, apiPath, bodyObj) {
+// קריאה גולמית מול ה-API (בתוך הדפדפן המאומת), בלי טיפול ב-401.
+async function apiFetchRaw(page, method, apiPath, bodyObj) {
   return page.evaluate(
     async ({ API, method, apiPath, bodyObj, HEADERS }) => {
       const res = await fetch(API + apiPath, { method, headers: HEADERS, credentials: "include", body: bodyObj ? JSON.stringify(bodyObj) : undefined });
@@ -78,6 +79,34 @@ async function apiFetch(page, method, apiPath, bodyObj) {
     },
     { API, method, apiPath, bodyObj: bodyObj || null, HEADERS }
   );
+}
+
+// ----- התחברות-מחדש אוטומטית (self-heal) -----
+// כשמקבלים 401, מתחברים מחדש לבד עם POST /sessions (מזהה משתמש + קוד גישה
+// ששמורים מקומית ב-agent-credentials.json). המכשיר כבר מאושר, אז לא צריך
+// אימייל/סיסמה. אחרי התחברות מחדש - חוזרים על הקריאה המקורית.
+let CREDS = null;
+function loadCreds() {
+  try { CREDS = JSON.parse(fs.readFileSync(path.join(__dirname, "agent-credentials.json"), "utf8")); }
+  catch (_) { CREDS = null; }
+}
+async function reauth(page) {
+  if (!CREDS || !CREDS.userId || CREDS.passcode == null || CREDS.passcode === "") return false;
+  const body = { id: CREDS.userId, passcode: String(CREDS.passcode), supportUser: false, organization: ORG_ID, device_name: HEADERS["x-tg-device-name"] };
+  try { await apiFetchRaw(page, "DELETE", "/sessions", { clearAllSites: false }); } catch (_) {}
+  const r = await apiFetchRaw(page, "POST", "/sessions", body);
+  const ok = r.status === 200 && r.body && r.body.token;
+  console.log(ok ? "[reauth] התחברות מחדש הצליחה ✓" : `[reauth] נכשל (status ${r.status})`);
+  return ok;
+}
+
+async function apiFetch(page, method, apiPath, bodyObj) {
+  let r = await apiFetchRaw(page, method, apiPath, bodyObj);
+  if (r.status === 401 && apiPath !== "/sessions") {
+    console.log("[reauth] 401 - מנסה להתחבר מחדש לבד…");
+    if (await reauth(page)) r = await apiFetchRaw(page, method, apiPath, bodyObj);
+  }
+  return r;
 }
 
 async function getReservations(page) {
@@ -663,6 +692,15 @@ async function launchBrowser() {
     if (cur.status === 200 && cur.body) me = { id: cur.body._id, name: [cur.body.firstName, cur.body.lastName].filter(Boolean).join(" ") || "בדיקה" };
   } catch (_) {}
   console.log("ready as:", me.name, me.id);
+  // מילוי אוטומטי של userId בקובץ ה-credentials (כך שאתה צריך למלא רק passcode)
+  try {
+    if (me.id && CREDS && CREDS.userId !== me.id) {
+      CREDS.userId = me.id;
+      CREDS.name = me.name;
+      fs.writeFileSync(path.join(__dirname, "agent-credentials.json"), JSON.stringify(CREDS, null, 2));
+      console.log("[reauth] userId עודכן אוטומטית בקובץ ה-credentials");
+    }
+  } catch (_) {}
   return { ctx, page, me };
 }
 
@@ -671,6 +709,10 @@ async function launchBrowser() {
   if (!cfg.agentUrl || !cfg.secret) { console.error("חסר TABIT_SYNC_URL / TABIT_SYNC_SECRET (או sync-config.json)"); process.exit(1); }
   if (anotherAgentAlive()) { console.error("סוכן אחר כבר רץ (agent.lock טרי). סגור אותו קודם. יוצא."); process.exit(1); }
   console.log("agent polling:", cfg.agentUrl);
+
+  loadCreds();
+  if (CREDS && CREDS.userId && CREDS.passcode) console.log("[reauth] פרטי התחברות-אוטומטית נטענו - הסוכן יתחבר מחדש לבד במקרה של ניתוק");
+  else console.log("[reauth] אין פרטי התחברות-אוטומטית מלאים (agent-credentials.json) - ניתוק ידרוש login.js ידני");
 
   let b = await launchBrowser();
   async function recover(e) {
