@@ -175,12 +175,22 @@ async function actGetDepositLink(page, params) {
   return { id: params.reservationId, deposit_link: null, note: "קישור פיקדון עדיין לא נוצר, או ההזמנה לא נמצאה" };
 }
 
+// ===== הגדרת אזורים לפי החלוקה האמיתית של קוואלי (לא לפי area.name של טאביט) =====
+// "בחוץ" = הרשימה המפורשת הזאת (כולל "מול המסך"). כל השאר = "בפנים".
+// 72-79 נעולים כרגע (עד עדכון) - לא משבצים אליהם.
+// ⚠️ הצירופים (אילו שולחנות מתחברים) עדיין לא הוגדרו - צריך לעבור עם איש צוות.
+const OUTSIDE_NUMS = new Set([70, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 80, 81, 82, 83, 5, 6, 7, 8, 49, 50, 51]);
+const LOCKED_NUMS = new Set([72, 73, 74, 75, 76, 77, 78, 79]);
+const isOutside = (t) => OUTSIDE_NUMS.has(t.number);
+const isLockedTable = (t) => LOCKED_NUMS.has(t.number);
+
 /**
- * שיוך שולחן חכם ומודע-זמינות: מחזיר שולחן בודד (הקטן שמתאים) או צירוף
- * שולחנות לקבוצה גדולה - אך ורק מתוך שולחנות שפנויים בחלון הזמן הזה (לא
- * תפוסים ע"י הזמנה קיימת חופפת). כך לעולם לא "דורסים" הזמנה קיימת.
+ * שיוך שולחן מודע-זמינות: מחזיר שולחן בודד (הקטן שמתאים) או צירוף שולחנות,
+ * אך ורק מתוך שולחנות פנויים בחלון הזמן הזה ובאזור המבוקש (פנים/חוץ), ולא
+ * נעולים. seatingPref: "inside" | "outside" | null (הכל).
+ * הערה: הצירוף כרגע "תמים" (מהגדול לקטן) - יוחלף במנוע אמיתי אחרי שנגדיר צירופים.
  */
-function pickTables(tables, allReservations, fromISO, untilISO, party, areaNames) {
+function pickTables(tables, allReservations, fromISO, untilISO, party, seatingPref) {
   const fromT = new Date(fromISO).getTime();
   const untilT = new Date(untilISO).getTime();
   const occupied = new Set();
@@ -191,23 +201,20 @@ function pickTables(tables, allReservations, fromISO, untilISO, party, areaNames
     const ru = d.reserved_until ? new Date(d.reserved_until).getTime() : rf + 120 * 60000;
     if (rf < untilT && ru > fromT) (d.reserved_tables_ids || []).forEach((id) => occupied.add(id));
   }
-  let free = tables.filter((t) => !t.disabled && !occupied.has(t._id));
-  // הגבלה לאזור מבוקש (פנים / חוץ), לפי area.name של השולחן
-  if (areaNames && areaNames.length) free = free.filter((t) => areaNames.includes((t.area && t.area.name) || ""));
+  let free = tables.filter((t) => !t.disabled && !isLockedTable(t) && !occupied.has(t._id));
+  // הגבלה לאזור מבוקש לפי החלוקה של קוואלי
+  if (seatingPref === "outside") free = free.filter((t) => isOutside(t));
+  else if (seatingPref === "inside") free = free.filter((t) => !isOutside(t));
   // שולחן בודד: הקטן ביותר שמכיל את הקבוצה
   const singles = free.filter((t) => (t.seats || 0) >= party).sort((a, b) => a.seats - b.seats);
   if (singles.length) return { ids: [singles[0]._id], numbers: [singles[0].number] };
-  // צירוף לקבוצה גדולה: מהגדול לקטן, מאותו אזור אם אפשר, עד שמגיעים לגודל
-  const byArea = new Map();
-  for (const t of free) { const a = (t.area && t.area.name) || ""; if (!byArea.has(a)) byArea.set(a, []); byArea.get(a).push(t); }
-  let best = null;
-  for (const group of [...byArea.values(), free]) {
-    const sorted = [...group].sort((a, b) => b.seats - a.seats);
-    const chosen = []; let sum = 0;
-    for (const t of sorted) { chosen.push(t); sum += t.seats || 0; if (sum >= party) break; }
-    if (sum >= party && (!best || chosen.length < best.chosen.length)) best = { chosen, sum };
-  }
-  if (best) return { ids: best.chosen.map((t) => t._id), numbers: best.chosen.map((t) => t.number) };
+  // צירוף לקבוצה גדולה (תמים - מהגדול לקטן, בתוך האזור המבוקש שכבר סוננו אליו).
+  // ⚠️ יוחלף במנוע צירופים אמיתי אחרי שנגדיר אילו שולחנות באמת מתחברים.
+  const sorted = [...free].sort((a, b) => (b.seats || 0) - (a.seats || 0));
+  const chosen = [];
+  let sum = 0;
+  for (const t of sorted) { chosen.push(t); sum += t.seats || 0; if (sum >= party) break; }
+  if (sum >= party) return { ids: chosen.map((t) => t._id), numbers: chosen.map((t) => t.number) };
   return { ids: [], numbers: [] };
 }
 
@@ -217,20 +224,19 @@ async function actCreateReservation(page, params, me) {
   const from = ilToUtcISO(date, time);
   const until = new Date(new Date(from).getTime() + 120 * 60000).toISOString();
 
-  // אזור: פנים / חוץ. "בחוץ" = הגרלה בין כניסה ראשית (outside) למול המסך (screen).
-  // "בר" לא נתמך כרגע. אזור נקבע ע"י בחירת שולחנות מאותו אזור.
-  let areaNames = null, areaLabel = null;
-  if (seating === "inside") { areaNames = ["inside"]; areaLabel = "פנים"; }
-  else if (seating === "outside") {
-    const pick = Math.random() < 0.5 ? "outside" : "screen";
-    areaNames = [pick];
-    areaLabel = pick === "outside" ? "חוץ - כניסה ראשית" : "חוץ - מול המסך";
-  }
+  // אזור: פנים / חוץ (לפי החלוקה של קוואלי). "בר" לא נתמך כרגע.
+  let seatingPref = null, areaLabel = null;
+  if (seating === "inside") { seatingPref = "inside"; areaLabel = "פנים"; }
+  else if (seating === "outside") { seatingPref = "outside"; areaLabel = "חוץ"; }
 
-  // שיוך שולחן חכם מתוך השולחנות הפנויים בחלון הזמן הזה (ובאזור המבוקש)
+  // שיוך שולחן מתוך השולחנות הפנויים בחלון הזמן ובאזור המבוקש
   const [tables, allRes] = [await getTables(page), await getReservations(page)];
-  const picked = pickTables(tables, allRes, from, until, Number(seats), areaNames);
+  const picked = pickTables(tables, allRes, from, until, Number(seats), seatingPref);
   const tableIds = picked.ids;
+  // אם התבקש אזור ואין בו מקום - לא יוצרים בלי שולחן/באזור שגוי, מדווחים
+  if (seatingPref && tableIds.length === 0) throw new Error(`אין שולחן פנוי ב${areaLabel} בשעה ${time} - לא יצרתי את ההזמנה`);
+  const firstTbl = tables.find((t) => t._id === (tableIds[0] || ""));
+  const prefVal = seatingPref ? ((firstTbl && firstTbl.area && firstTbl.area.name) || "first_available") : "first_available";
 
   const localId = Math.random().toString(36).slice(2, 18);
   const body = {
@@ -257,7 +263,7 @@ async function actCreateReservation(page, params, me) {
       personal_message: "",
       tags: [],
       notify_almost_done: false,
-      preference: areaNames ? areaNames[0] : "first_available",
+      preference: prefVal,
     },
     deposit: { request_cc_details: true, request_cc_details_email: false, cancel_request_cc_details: false },
     request_deposit_payment: false,
@@ -457,17 +463,19 @@ async function actCheckAvailability(page, params) {
 // ===== שינוי וביטול הזמנות קיימות (כתיבה!) - רק אחרי שהבוט זיהה ואישר =====
 
 function currentAreaOf(r, tables) {
-  // האזור נשמר בשדה preference (inside/outside/screen). אם לא - נגזור מהשולחנות.
-  const pref = r.reservation_details && r.reservation_details.preference;
-  if (pref && ["inside", "outside", "screen", "bar"].includes(pref)) return pref;
-  const tmap = new Map(tables.map((t) => [t._id, (t.area && t.area.name) || ""]));
+  // אזור לפי החלוקה של קוואלי: אם שולחן משויך ברשימת "חוץ" -> חוץ, אחרת פנים.
+  const numById = new Map(tables.map((t) => [t._id, t.number]));
   for (const id of (r.reservation_details && r.reservation_details.reserved_tables_ids) || []) {
-    const a = tmap.get(id);
-    if (a) return a;
+    const num = numById.get(id);
+    if (num != null) return OUTSIDE_NUMS.has(num) ? "outside" : "inside";
   }
+  // אין שולחנות משויכים - ניגזר מ-preference של טאביט
+  const pref = r.reservation_details && r.reservation_details.preference;
+  if (pref === "inside") return "inside";
+  if (pref === "outside" || pref === "screen") return "outside";
   return null;
 }
-const AREA_HE = { inside: "פנים", outside: "חוץ - כניסה ראשית", screen: "חוץ - מול המסך", bar: "בר" };
+const AREA_HE = { inside: "פנים", outside: "חוץ", screen: "חוץ", bar: "בר" };
 function tblNumbers(ids, tables) {
   return (ids || []).map((id) => { const t = tables.find((x) => x._id === id); return t && t.number; }).filter((n) => n != null);
 }
@@ -483,10 +491,10 @@ async function actModifyReservation(page, params, me) {
   const before = { seats: d.seats_count, day: dayFmt.format(new Date(d.reserved_from)), time: timeFmt.format(new Date(d.reserved_from)), area: AREA_HE[curAreaName] || curAreaName, tables: tblNumbers(d.reserved_tables_ids, tables) };
 
   const newSeats = seats != null ? Number(seats) : d.seats_count;
-  let areaNames = curAreaName ? [curAreaName] : null;
+  let seatingPref = curAreaName || null; // "inside" / "outside"
   let areaLabel = before.area;
-  if (seating === "inside") { areaNames = ["inside"]; areaLabel = AREA_HE.inside; }
-  else if (seating === "outside") { const p = Math.random() < 0.5 ? "outside" : "screen"; areaNames = [p]; areaLabel = AREA_HE[p]; }
+  if (seating === "inside") { seatingPref = "inside"; areaLabel = AREA_HE.inside; }
+  else if (seating === "outside") { seatingPref = "outside"; areaLabel = AREA_HE.outside; }
 
   const targetDay = date || dayFmt.format(new Date(d.reserved_from));
   const targetTime = time || timeFmt.format(new Date(d.reserved_from));
@@ -496,12 +504,14 @@ async function actModifyReservation(page, params, me) {
 
   // שיוך מחדש: מתעלמים מההזמנה עצמה בחישוב התפוסה
   const others = all.filter((x) => x._id !== reservation_id);
-  const picked = pickTables(tables, others, newFrom, newUntil, newSeats, areaNames);
+  const picked = pickTables(tables, others, newFrom, newUntil, newSeats, seatingPref);
   // אם התבקש אזור חדש ואין בו שולחן פנוי - לא מבצעים ולא מדווחים הצלחה
   if (seating && picked.ids.length === 0) {
     throw new Error(`אין שולחן פנוי ב${areaLabel} בשעה ${targetTime} - לא ביצעתי את השינוי`);
   }
   const newTableIds = picked.ids.length ? picked.ids : (d.reserved_tables_ids || []);
+  const firstNewTbl = tables.find((t) => t._id === (newTableIds[0] || ""));
+  const newPref = seating ? ((firstNewTbl && firstNewTbl.area && firstNewTbl.area.name) || d.preference || "first_available") : (d.preference || "first_available");
 
   const body = {
     last_modified_by: me.id, last_modified_by_name: me.name,
@@ -512,7 +522,7 @@ async function actModifyReservation(page, params, me) {
       seats_count: newSeats,
       reserved_from: newFrom,
       reserved_until: newUntil,
-      preference: areaNames ? areaNames[0] : (d.preference || "first_available"),
+      preference: newPref,
       previous_reserved_from: d.reserved_from,
       previous_reserved_until: d.reserved_until,
     },
