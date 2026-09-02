@@ -27,6 +27,7 @@ function israelNow(): string {
 const TOOLS: Anthropic.Tool[] = [
   { name: "tabit_health", description: "בדוק את החיבור לטאביט: טוען נתונים ומחזיר כמה הזמנות נטענו וגרסת שרת. השתמש כשמבקשים לוודא שהחיבור עובד.", input_schema: { type: "object", properties: {} } },
   { name: "tabit_read_day", description: "קרא את ההזמנות של יום מסוים מטאביט. day = \"today\" | \"tomorrow\" | \"YYYY-MM-DD\".", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
+  { name: "tabit_covers_summary", description: "כמה אנשים (סה\"כ סועדים) וכמה הזמנות יש ביום, אופציונלית בטווח שעות. from/to בפורמט HH:MM (ערב = from \"18:00\"; צהריים = to \"18:00\"). מחזיר count ו-covers מחושבים בקוד - קח אותם כמו שהם, אל תסכם בעצמך. השתמש בזה לכל שאלת 'כמה אנשים/מוזמנים' (בשעה/בערב/בטווח).", input_schema: { type: "object", properties: { day: { type: "string" }, from: { type: "string" }, to: { type: "string" } }, required: ["day"] } },
   { name: "tabit_deposit_summary", description: "סיכום פיקדונות ליום: כמה מובטחים וכמה חסרים, ורשימת החסרים. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
   { name: "tabit_get_deposit_link", description: "שלוף את קישור הפיקדון של הזמנה לפי reservationId.", input_schema: { type: "object", properties: { reservationId: { type: "string" } }, required: ["reservationId"] } },
   { name: "tabit_create_reservation", description: "צור הזמנה חדשה בטאביט. הוספה בלבד - לעולם לא נוגע בהזמנות קיימות. seating: \"inside\"=בפנים, \"outside\"=בחוץ (המערכת בוחרת אוטומטית ובאקראי בין 'כניסה ראשית' ל'מול המסך'). שיוך השולחן אוטומטי וחכם (לפי מספר הסועדים, האזור, ומה שפנוי באותה שעה, כולל צירוף שולחנות). send_deposit_link=true שולח ללקוח SMS עם קישור הפיקדון; false רק מחזיר את הקישור. מחזיר מזהה, אזור, שולחנות וקישור פיקדון.", input_schema: { type: "object", properties: { name: { type: "string" }, phone: { type: "string" }, date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string", description: "HH:MM" }, seats: { type: "number" }, seating: { type: "string", enum: ["inside", "outside"], description: "בפנים או בחוץ" }, send_deposit_link: { type: "boolean", description: "האם לשלוח ללקוח SMS עם קישור הפיקדון" } }, required: ["name", "phone", "date", "time", "seats", "seating", "send_deposit_link"] } },
@@ -42,6 +43,7 @@ const TOOLS: Anthropic.Tool[] = [
 const TOOL_TO_ACTION: Record<string, TabitAction> = {
   tabit_health: "health",
   tabit_read_day: "read_day",
+  tabit_covers_summary: "covers_summary",
   tabit_deposit_summary: "deposit_summary",
   tabit_get_deposit_link: "get_deposit_link",
   tabit_create_reservation: "create_reservation",
@@ -61,6 +63,7 @@ const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למע
 הכלים שלך:
 - tabit_health: בדיקת חיבור.
 - tabit_read_day / tabit_deposit_summary: קריאת הזמנות וסטטוס פיקדונות ליום.
+- tabit_covers_summary: כמה אנשים/הזמנות ביום או בטווח שעות (ערב=from 18:00) - מספרים מחושבים מוכנים.
 - tabit_get_deposit_link: קישור פיקדון להזמנה.
 - tabit_create_reservation: יצירת הזמנה חדשה (הוספה בלבד).
 - tabit_check_availability: בדיקת זמינות מקום לקבוצה בתאריך ושעה.
@@ -82,7 +85,8 @@ const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למע
 4. ענה תמציתי וברור, בעברית.
 5. שלמות הנתונים מעל הכל - אתה כלי בדיקה, לא תקציר שיווקי. כשמציגים רשימה, הצג את **כולה** ואל תקצר בשקט. "הזמנות גדולות" בלי מספר מפורש = 8+ סועדים כברירת מחדל; רשום את כל ההזמנות שעומדות בסף, ואם יש הרבה - אמור כמה יש ואל תשמיט.
 6. פיקדון הוא מידע קריטי: בכל רשימת הזמנות, סמן במפורש אילו **חסרות פיקדון**, ואם יש ולו אחת חסרה - אמור זאת בבירור בסיכום (אל תיתן רושם שהכל מכוסה כשלא).
-7. **לעולם אל תחשב או תסכם מספרים בעצמך** (סה"כ סועדים, כמה מובטחים וכו') - זה מקור לטעויות. השתמש אך ורק בשדות המחושבים שהכלי מחזיר: count (מספר הזמנות), covers (סה"כ סועדים), secured, missing. אם צריך סה"כ סועדים - קרא ל-tabit_read_day או tabit_deposit_summary וקח את covers משם כמו שהוא.
+7. **לעולם אל תחשב או תסכם מספרים בעצמך** (סה"כ סועדים, כמה מובטחים וכו') - זה מקור לטעויות. השתמש אך ורק בשדות המחושבים שהכלי מחזיר: count, covers, secured, missing. לשאלת "כמה אנשים/מוזמנים" בשעה/בערב/בטווח - קרא ל-**tabit_covers_summary** עם from/to (ערב = from "18:00", צהריים = to "18:00") וקח את covers כמו שהוא. אל תסכם ידנית רשימת הזמנות אף פעם.
+8. **ענה ישיר וקצר.** כשמבקשים מספר - **המשפט הראשון הוא המספר** (למשל: "היום מ-18:00 יש 84 סועדים ב-19 הזמנות"). בלי הקדמות ארוכות, בלי לתאר את התהליך שעשית, בלי תשובות מסובכות. פרט נוסף רק אם ביקשו או אם באמת עוזר.
 
 השעה בישראל כעת: ${israelNow()}.`;
 

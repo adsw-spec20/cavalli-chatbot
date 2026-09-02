@@ -189,6 +189,22 @@ async function actReadDay(page, params) {
   const covers = rows.reduce((s, r) => s + (r.seats || 0), 0);
   return { day, count: rows.length, covers, reservations: rows };
 }
+// סועדים + מספר הזמנות ליום, אופציונלית בטווח שעות (למשל ערב = from 18:00).
+// הכל מחושב בקוד (דטרמיניסטי) - הבוט לא מסכם בעצמו.
+async function actCoversSummary(page, params) {
+  const { day, reservations } = await actReadDay(page, { day: params.day });
+  const from = params.from || "00:00";
+  const to = params.to || "23:59";
+  const win = reservations.filter((r) => r.time >= from && r.time <= to);
+  const covers = win.reduce((s, r) => s + (r.seats || 0), 0);
+  return {
+    day, from, to,
+    count: win.length,
+    covers,
+    reservations: win.map((r) => ({ time: r.time, name: r.name, seats: r.seats, deposit: r.deposit })),
+  };
+}
+
 async function actDepositSummary(page, params) {
   const { day, covers, reservations } = await actReadDay(page, params);
   const missing = reservations.filter((r) => r.deposit === "missing");
@@ -648,6 +664,7 @@ async function run(page, cmd, me) {
   switch (cmd.action) {
     case "health": return actHealth(page);
     case "read_day": return actReadDay(page, cmd.params || {});
+    case "covers_summary": return actCoversSummary(page, cmd.params || {});
     case "deposit_summary": return actDepositSummary(page, cmd.params || {});
     case "get_deposit_link": return actGetDepositLink(page, cmd.params || {});
     case "create_reservation": return actCreateReservation(page, cmd.params || {}, me);
