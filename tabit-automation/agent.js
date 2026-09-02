@@ -91,7 +91,11 @@ function loadCreds() {
   catch (_) { CREDS = null; }
 }
 async function reauth(page) {
-  if (!CREDS || !CREDS.userId || CREDS.passcode == null || CREDS.passcode === "") return false;
+  loadCreds(); // תמיד לקרוא את הקובץ העדכני (אם הוספת passcode תוך כדי ריצה)
+  if (!CREDS || !CREDS.userId || CREDS.passcode == null || CREDS.passcode === "") {
+    console.log("[reauth] אין passcode ב-agent-credentials.json - לא ניתן להתחבר מחדש לבד");
+    return false;
+  }
   const body = { id: CREDS.userId, passcode: String(CREDS.passcode), supportUser: false, organization: ORG_ID, device_name: HEADERS["x-tg-device-name"] };
   try { await apiFetchRaw(page, "DELETE", "/sessions", { clearAllSites: false }); } catch (_) {}
   const r = await apiFetchRaw(page, "POST", "/sessions", body);
