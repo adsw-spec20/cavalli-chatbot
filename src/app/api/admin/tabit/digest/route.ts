@@ -12,6 +12,7 @@ import { runCommand } from "@/lib/tabit-queue";
  */
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic"; // אף פעם לא סטטי/ממוטמן - כל קריאה טרייה
 export const maxDuration = 60;
 
 const TZ = "Asia/Jerusalem";
@@ -64,13 +65,17 @@ export async function GET(req: NextRequest) {
     `*בוקר*\n${morning.length ? morning.map(line).join("\n") : "-"}\n\n` +
     `*ערב*\n${evening.length ? evening.map(line).join("\n") : "-"}`;
 
-  return NextResponse.json({
-    text,
-    date: tomorrow,
-    min,
-    total: big.length,
-    morning: morning.length,
-    evening: evening.length,
-    source,
-  });
+  return NextResponse.json(
+    {
+      text,
+      date: tomorrow,
+      min,
+      total: big.length,
+      morning: morning.length,
+      evening: evening.length,
+      source, // "live" = נקרא חי מהסוכן ברגע זה | "snapshot" = הסוכן לא ענה, נתונים אחרונים
+      generatedAt: new Date().toISOString(),
+    },
+    { headers: { "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0" } }
+  );
 }
