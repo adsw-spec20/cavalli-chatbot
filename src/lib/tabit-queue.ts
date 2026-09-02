@@ -22,7 +22,9 @@ export type TabitAction =
   | "customer_lookup"
   | "tables_status"
   | "no_show_summary"
-  | "booking_sources";
+  | "booking_sources"
+  | "modify_reservation"
+  | "cancel_reservation";
 
 export type TabitCommandStatus = "pending" | "running" | "done" | "error";
 

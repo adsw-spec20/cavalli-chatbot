@@ -35,6 +35,8 @@ const TOOLS: Anthropic.Tool[] = [
   { name: "tabit_tables_status", description: "מצב השולחנות החי כרגע: כמה פנויים, תפוסים, מלוכלכים, וסה\"כ מקומות.", input_schema: { type: "object", properties: {} } },
   { name: "tabit_no_show_summary", description: "מעקב אי-הגעה וביטולים מתוך הארכיון ב-N הימים האחרונים (ברירת מחדל 30): כמה no-show, כמה ביטולים, אחוז אי-הגעה, ולקוחות שלא הגיעו יותר מפעם אחת.", input_schema: { type: "object", properties: { days: { type: "number" } } } },
   { name: "tabit_booking_sources", description: "פילוח מקורות ההזמנות ב-N הימים האחרונים (ברירת מחדל 30): אונליין, גוגל, טלפון/צוות, הגעה מהרחוב.", input_schema: { type: "object", properties: { days: { type: "number" } } } },
+  { name: "tabit_modify_reservation", description: "שנה הזמנה קיימת (כתיבה!). reservation_id הוא מזהה ההזמנה (משיג אותו קודם דרך read_day/customer_lookup). שלח רק את השדות שמשתנים: seating (inside/outside), date (YYYY-MM-DD), time (HH:MM), seats. השולחנות משויכים מחדש אוטומטית. אסור לקרוא לכלי הזה לפני שהצגת למשתמש את ההזמנה המדויקת וקיבלת אישור 'כן' מפורש.", input_schema: { type: "object", properties: { reservation_id: { type: "string" }, seating: { type: "string", enum: ["inside", "outside"] }, date: { type: "string" }, time: { type: "string" }, seats: { type: "number" } }, required: ["reservation_id"] } },
+  { name: "tabit_cancel_reservation", description: "בטל הזמנה קיימת (כתיבה!). reservation_id הוא מזהה ההזמנה. אסור לקרוא לכלי הזה לפני שהצגת למשתמש את ההזמנה המדויקת וקיבלת אישור 'כן' מפורש לביטול.", input_schema: { type: "object", properties: { reservation_id: { type: "string" } }, required: ["reservation_id"] } },
 ];
 
 const TOOL_TO_ACTION: Record<string, TabitAction> = {
@@ -48,6 +50,8 @@ const TOOL_TO_ACTION: Record<string, TabitAction> = {
   tabit_tables_status: "tables_status",
   tabit_no_show_summary: "no_show_summary",
   tabit_booking_sources: "booking_sources",
+  tabit_modify_reservation: "modify_reservation",
+  tabit_cancel_reservation: "cancel_reservation",
 };
 
 const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למערכת ההזמנות טאביט, עבור מסעדת "קפה קוואלי".
@@ -64,9 +68,15 @@ const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למע
 - tabit_tables_status: מצב השולחנות החי (פנוי/תפוס/מלוכלך).
 - tabit_no_show_summary: מעקב אי-הגעה וביטולים מהארכיון.
 - tabit_booking_sources: פילוח מקורות ההזמנות (אונליין/גוגל/טלפון/הגעה).
+- tabit_modify_reservation / tabit_cancel_reservation: שינוי או ביטול הזמנה קיימת - כתיבה! רק אחרי זיהוי מדויק ואישור מפורש (ראה כלל 1).
 
 כללים קשיחים:
-1. אין לך שום כלי לשינוי, ביטול או מחיקה של הזמנות - ואסור לך להבטיח פעולות כאלה. אתה יכול רק לקרוא וליצור חדשות.
+1. **שינוי וביטול הזמנות קיימות** (tabit_modify_reservation / tabit_cancel_reservation) הם כלים חזקים ומסוכנים, ולכן חוקים נוקשים שאסור לעבור עליהם:
+   א. לעולם אל תשנה או תבטל בלי לזהות קודם את **ההזמנה המדויקת**. השתמש ב-tabit_read_day או tabit_customer_lookup כדי למצוא אותה ולקבל את ה-reservation_id.
+   ב. אם יותר מהזמנה אחת מתאימה, או שלא ברור לחלוטין על איזו מדובר - **שאל, אל תנחש**. אף פעם אל תפעל על סמך ניחוש.
+   ג. **תמיד** הצג למשתמש את ההזמנה המלאה (שם, יום, שעה, מספר סועדים, אזור/שולחן נוכחי) ובקש אישור **"כן" מפורש** לפני שאתה קורא לכלי השינוי/ביטול. בלי "כן" ברור - אתה לא מבצע כלום.
+   ד. אחרי הביצוע - דווח בדיוק **מה השתנה (לפני / אחרי)**.
+   ה. אין לך כלי אחר שנוגע בהזמנות קיימות מעבר לשניים האלה.
 2. יצירת הזמנה - אסוף את הפרטים: שם, טלפון, מספר סועדים, תאריך, שעה, **בפנים או בחוץ** (seating: inside/outside; אם אומרים "בר" - אמור שזה לא נתמך כרגע ובקש פנים/חוץ), ו**האם לשלוח ללקוח קישור פיקדון** (send_deposit_link). הצג סיכום קצר של כל אלה, וצור רק אחרי אישור מפורש. אל תשאל על שולחן ספציפי - השיוך אוטומטי וחכם לפי האזור.
 3. כשכלי נכשל - דווח בבירור מה נכשל ומה השגיאה. זו כל המטרה של סביבת הבדיקה.
 4. ענה תמציתי וברור, בעברית.

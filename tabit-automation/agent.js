@@ -257,7 +257,7 @@ async function actCreateReservation(page, params, me) {
       personal_message: "",
       tags: [],
       notify_almost_done: false,
-      preference: "first_available",
+      preference: areaNames ? areaNames[0] : "first_available",
     },
     deposit: { request_cc_details: true, request_cc_details_email: false, cancel_request_cc_details: false },
     request_deposit_payment: false,
@@ -433,7 +433,7 @@ async function actCustomerLookup(page, params) {
     name: (c && c.name) || name || "",
     phone: (c && c.phone) || phone || "",
     has_upcoming: up.length > 0,
-    upcoming: up.map((r) => ({ day: r.day, time: r.time, seats: r.seats, tables: r.tables, deposit: r.deposit })),
+    upcoming: up.map((r) => ({ id: r.id, day: r.day, time: r.time, seats: r.seats, tables: r.tables, deposit: r.deposit })),
     past_visits, no_shows, cancellations,
     ...(history_note ? { history_note } : {}),
   };
@@ -454,6 +454,91 @@ async function actCheckAvailability(page, params) {
   };
 }
 
+// ===== שינוי וביטול הזמנות קיימות (כתיבה!) - רק אחרי שהבוט זיהה ואישר =====
+
+function currentAreaOf(r, tables) {
+  const tmap = new Map(tables.map((t) => [t._id, (t.area && t.area.name) || ""]));
+  for (const id of (r.reservation_details && r.reservation_details.reserved_tables_ids) || []) {
+    const a = tmap.get(id);
+    if (a) return a;
+  }
+  return null;
+}
+const AREA_HE = { inside: "פנים", outside: "חוץ - כניסה ראשית", screen: "חוץ - מול המסך", bar: "בר" };
+function tblNumbers(ids, tables) {
+  return (ids || []).map((id) => { const t = tables.find((x) => x._id === id); return t && t.number; }).filter((n) => n != null);
+}
+
+async function actModifyReservation(page, params, me) {
+  const { reservation_id, seating, date, time, seats } = params;
+  if (!reservation_id) throw new Error("צריך reservation_id (זהה קודם את ההזמנה)");
+  const [all, tables] = [await getReservations(page), await getTables(page)];
+  const r = all.find((x) => x._id === reservation_id);
+  if (!r) throw new Error("ההזמנה לא נמצאה - ייתכן שכבר עברה, בוטלה, או שהמזהה שגוי");
+  const d = r.reservation_details || {};
+  const curAreaName = currentAreaOf(r, tables);
+  const before = { seats: d.seats_count, day: dayFmt.format(new Date(d.reserved_from)), time: timeFmt.format(new Date(d.reserved_from)), area: AREA_HE[curAreaName] || curAreaName, tables: tblNumbers(d.reserved_tables_ids, tables) };
+
+  const newSeats = seats != null ? Number(seats) : d.seats_count;
+  let areaNames = curAreaName ? [curAreaName] : null;
+  let areaLabel = before.area;
+  if (seating === "inside") { areaNames = ["inside"]; areaLabel = AREA_HE.inside; }
+  else if (seating === "outside") { const p = Math.random() < 0.5 ? "outside" : "screen"; areaNames = [p]; areaLabel = AREA_HE[p]; }
+
+  const targetDay = date || dayFmt.format(new Date(d.reserved_from));
+  const targetTime = time || timeFmt.format(new Date(d.reserved_from));
+  const newFrom = ilToUtcISO(targetDay, targetTime);
+  const durMs = new Date(d.reserved_until).getTime() - new Date(d.reserved_from).getTime();
+  const newUntil = new Date(new Date(newFrom).getTime() + (durMs > 0 ? durMs : 120 * 60000)).toISOString();
+
+  // שיוך מחדש: מתעלמים מההזמנה עצמה בחישוב התפוסה
+  const others = all.filter((x) => x._id !== reservation_id);
+  const picked = pickTables(tables, others, newFrom, newUntil, newSeats, areaNames);
+  const newTableIds = picked.ids.length ? picked.ids : (d.reserved_tables_ids || []);
+
+  const body = {
+    last_modified_by: me.id, last_modified_by_name: me.name,
+    standby_reservation: r.standby_reservation || false, pending_approval: r.pending_approval || false, online_booking: r.online_booking || false,
+    reservation_details: {
+      ...d,
+      reserved_tables_ids: newTableIds,
+      seats_count: newSeats,
+      reserved_from: newFrom,
+      reserved_until: newUntil,
+      preference: areaNames ? areaNames[0] : (d.preference || "first_available"),
+      previous_reserved_from: d.reserved_from,
+      previous_reserved_until: d.reserved_until,
+    },
+    locale: r.locale || null, block_review: r.block_review || false, exclude_from_remind_all: r.exclude_from_remind_all || false,
+    hotel_guests_ids: r.hotel_guests_ids || [],
+    deposit: { request_cc_details: false, request_cc_details_email: false, cancel_request_cc_details: false },
+    deposit_removed: false, advanced_payment_removed: false,
+    standby_flexible_time: r.standby_flexible_time || { from: "", to: "" },
+    failure_system_notification: { type: "reservation-update-failed", local: true },
+  };
+  const res = await apiFetch(page, "PUT", `/reservations/${reservation_id}`, body);
+  if (res.status !== 200 && res.status !== 201) throw new Error(`עדכון נכשל (status ${res.status}): ${JSON.stringify(res.body).slice(0, 200)}`);
+  const after = { seats: newSeats, day: dayFmt.format(new Date(newFrom)), time: timeFmt.format(new Date(newFrom)), area: areaLabel, tables: picked.numbers.length ? picked.numbers : before.tables };
+  return { id: reservation_id, name: d.customer && d.customer.name, before, after };
+}
+
+async function actCancelReservation(page, params) {
+  const { reservation_id } = params;
+  if (!reservation_id) throw new Error("צריך reservation_id (זהה קודם את ההזמנה)");
+  const all = await getReservations(page);
+  const r = all.find((x) => x._id === reservation_id);
+  const d = r && r.reservation_details;
+  const name = d && d.customer && d.customer.name;
+  const body = { reason: "cancelled", send_notification: { event_type: "deleted", send_local_review_request: false }, refund: false };
+  const res = await apiFetch(page, "DELETE", `/reservations/${reservation_id}`, body);
+  if (res.status !== 200 && res.status !== 201) throw new Error(`ביטול נכשל (status ${res.status}): ${JSON.stringify(res.body).slice(0, 200)}`);
+  return {
+    id: reservation_id, name, cancelled: true,
+    was: d ? { seats: d.seats_count, day: dayFmt.format(new Date(d.reserved_from)), time: timeFmt.format(new Date(d.reserved_from)) } : null,
+    archived_reason: (res.body && res.body.archived_reason) || "cancelled",
+  };
+}
+
 async function run(page, cmd, me) {
   switch (cmd.action) {
     case "health": return actHealth(page);
@@ -466,6 +551,8 @@ async function run(page, cmd, me) {
     case "tables_status": return actTablesStatus(page);
     case "customer_lookup": return actCustomerLookup(page, cmd.params || {});
     case "check_availability": return actCheckAvailability(page, cmd.params || {});
+    case "modify_reservation": return actModifyReservation(page, cmd.params || {}, me);
+    case "cancel_reservation": return actCancelReservation(page, cmd.params || {});
     default: throw new Error(`פעולה לא מוכרת: ${cmd.action}`);
   }
 }
