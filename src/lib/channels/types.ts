@@ -55,6 +55,8 @@ export interface ChannelAdapter {
   sendTyping?(recipientId: string): Promise<void>;
   /** שולף את שם הפרופיל של המשתמש (אם הערוץ תומך, למשל דרך Graph API) */
   getProfileName?(userId: string): Promise<string | undefined>;
-  /** שולח מדיה (תמונה/סרטון) לפי כתובת URL ציבורית */
-  sendMedia?(recipientId: string, url: string, type: "image" | "video"): Promise<void>;
+  /** שולח מדיה (תמונה/סרטון) לפי כתובת URL ציבורית. mime אופציונלי - מאפשר
+      לערוץ לבחור מסלול תואם (וואטסאפ דוחה video/quicktime של אייפון כסרטון,
+      אבל מקבל אותו כמסמך) */
+  sendMedia?(recipientId: string, url: string, type: "image" | "video", mime?: string): Promise<void>;
 }

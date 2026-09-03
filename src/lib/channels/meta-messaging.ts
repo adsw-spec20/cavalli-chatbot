@@ -191,9 +191,16 @@ function createAdapter(
     async sendMedia(recipientId: string, url: string, type: "image" | "video"): Promise<void> {
       const token = process.env[tokenEnv];
       if (!token) throw new Error(`חסר ${tokenEnv}`);
-      // שימוש ב-attachment_id ממטמון (מיידי) במקום הורדה מחדש של ה-URL בכל שליחה
-      const attId = await ensureAttachment(channel, tokenEnv, url, type);
-      const payload = attId ? { attachment_id: attId } : { url, is_reusable: true };
+      // אינסטגרם (3.9): endpoint העלאת ה-attachments ו-is_reusable קיימים רק
+      // במסנג'ר - שליחתם לאינסטגרם נדחית, וזה מה שמנע צירוף תמונות שם.
+      // באינסטגרם שולחים url ישיר בלי הפרמטרים האלה.
+      const attId =
+        channel === "instagram" ? undefined : await ensureAttachment(channel, tokenEnv, url, type);
+      const payload = attId
+        ? { attachment_id: attId }
+        : channel === "instagram"
+          ? { url }
+          : { url, is_reusable: true };
       const res = await fetch(endpoint(token), {
         method: "POST",
         headers: { "Content-Type": "application/json" },

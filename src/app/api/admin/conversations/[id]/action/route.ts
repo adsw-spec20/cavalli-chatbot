@@ -52,7 +52,8 @@ export async function POST(
           return NextResponse.json({ error: "https url required" }, { status: 400 });
         }
         const mediaType = body.mediaType === "video" ? "video" : "image";
-        return NextResponse.json(await agentReplyMedia(id, body.url, mediaType, body.agentName));
+        const mime = typeof body.mime === "string" ? body.mime.slice(0, 80) : undefined;
+        return NextResponse.json(await agentReplyMedia(id, body.url, mediaType, body.agentName, mime));
       }
       default:
         return NextResponse.json({ error: "unknown action" }, { status: 400 });

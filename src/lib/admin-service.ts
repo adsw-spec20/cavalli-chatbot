@@ -225,7 +225,8 @@ export async function agentReplyMedia(
   id: string,
   url: string,
   type: "image" | "video",
-  agentName?: string
+  agentName?: string,
+  mime?: string
 ) {
   const repo = getRepo();
   const conversation = await repo.getConversation(id);
@@ -237,7 +238,7 @@ export async function agentReplyMedia(
     if (customer) {
       try {
         if (!adapter.sendMedia) throw new Error("channel has no media support");
-        await adapter.sendMedia(customer.channelUserId, url, type);
+        await adapter.sendMedia(customer.channelUserId, url, type, mime);
       } catch (err) {
         // אינסטגרם (ולעיתים כשלי קובץ נקודתיים) - הלקוח מקבל קישור במקום צירוף
         console.error(`[agent-media] צירוף קובץ נכשל בערוץ ${conversation.channel}, נשלח כקישור:`, err);

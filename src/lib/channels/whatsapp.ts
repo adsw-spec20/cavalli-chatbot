@@ -143,14 +143,26 @@ export const whatsappAdapter: ChannelAdapter = {
     }
   },
 
-  async sendMedia(recipientId: string, url: string, type: "image" | "video"): Promise<void> {
+  async sendMedia(recipientId: string, url: string, type: "image" | "video", mime?: string): Promise<void> {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
     const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
     if (!phoneNumberId || !accessToken) {
       throw new Error("חסרים WHATSAPP_PHONE_NUMBER_ID או WHATSAPP_ACCESS_TOKEN");
     }
-    const body =
-      type === "video"
+    // וואטסאפ מקבל כסרטון רק mp4/3gpp - סרטון אייפון (video/quicktime) נדחה,
+    // ובאיחור (דרך webhook סטטוס, אחרי שה-API כבר ענה 200). לכן פורמט אחר
+    // נשלח מראש כמסמך: עובר תמיד, והלקוח מנגן אותו בלחיצה.
+    const unsupportedVideo =
+      type === "video" && !!mime && !/video\/(mp4|3gpp)/i.test(mime);
+    const body = unsupportedVideo
+      ? {
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: recipientId,
+          type: "document",
+          document: { link: url, filename: "video.mov" },
+        }
+      : type === "video"
         ? { messaging_product: "whatsapp", recipient_type: "individual", to: recipientId, type: "video", video: { link: url } }
         : { messaging_product: "whatsapp", recipient_type: "individual", to: recipientId, type: "image", image: { link: url } };
     const res = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {

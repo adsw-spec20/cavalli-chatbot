@@ -678,6 +678,7 @@ export default function Inbox({
           action: "replyMedia",
           url: blob.url,
           mediaType: file.type.startsWith("video/") ? "video" : "image",
+          mime: file.type,
           agentName,
         }),
       });
