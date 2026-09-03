@@ -101,7 +101,7 @@ function mdToWhatsApp(md: string): string {
           else if (h === "שולחנות" || h === "שולחן") parts.push(`ש׳ ${cell}`);
           else parts.push(cell);
         });
-        if (parts.length) out.push(parts.join(" · "));
+        if (parts.length) out.push(parts.join(" • "));
       }
       continue;
     }
@@ -110,17 +110,6 @@ function mdToWhatsApp(md: string): string {
     i++;
   }
   return out.join("\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-
-/** תצוגה מקדימה של איך ההודעה תיראה בוואטסאפ (בועה ירקרקה, הדגשות מוסתרות). */
-function WhatsAppView({ text }: { text: string }) {
-  return (
-    <div dir="rtl" className="rounded-2xl px-3 py-2 text-sm leading-relaxed" style={{ background: "#dcf8c6", color: "#111b21" }}>
-      {text.split("\n").map((ln, i) =>
-        ln.trim() === "" ? <div key={i} className="h-2" /> : <div key={i}>{renderInline(ln, `wa${i}`)}</div>
-      )}
-    </div>
-  );
 }
 
 function CopyBtn({ text }: { text: string }) {
@@ -136,28 +125,16 @@ function CopyBtn({ text }: { text: string }) {
   );
 }
 
-/** בועת תשובת הבוט: טבלה יפה כברירת מחדל, מעבר לתצוגת וואטסאפ, והעתקה בפורמט וואטסאפ. */
+/** בועת תשובת הבוט: טבלה יפה בממשק, והעתקה בפורמט וואטסאפ נקי. */
 function AssistantContent({ text, tools }: { text: string; tools?: ToolEntry[] }) {
-  const [wa, setWa] = useState(false);
   const waText = useMemo(() => mdToWhatsApp(text), [text]);
   return (
     <>
-      {wa ? (
-        <WhatsAppView text={waText} />
-      ) : (
-        <div dir="auto" className="rounded-2xl px-3 py-2 text-sm break-words bg-[var(--panel2)] text-[var(--text)]">
-          <MarkdownLite text={text} />
-        </div>
-      )}
+      <div dir="auto" className="rounded-2xl px-3 py-2 text-sm break-words bg-[var(--panel2)] text-[var(--text)]">
+        <MarkdownLite text={text} />
+      </div>
       <div className="flex items-center gap-2 mt-1">
         <CopyBtn text={waText} />
-        <button
-          onClick={() => setWa((v) => !v)}
-          className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-md px-2 py-0.5"
-          title="ככה זה ייראה בוואטסאפ"
-        >
-          {wa ? "תצוגת טבלה" : "תצוגת וואטסאפ 👁"}
-        </button>
       </div>
       {tools && <ToolLog tools={tools} />}
     </>

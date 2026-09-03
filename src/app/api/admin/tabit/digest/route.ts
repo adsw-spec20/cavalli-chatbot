@@ -28,9 +28,9 @@ function authed(req: NextRequest): boolean {
 }
 
 function line(r: Row): string {
-  const tbl = r.tables && r.tables.length ? ` · ש׳ ${r.tables.join(",")}` : "";
-  const dep = r.deposit === "missing" ? " · ⚠️ חסר פיקדון" : "";
-  return `*${r.time}* · ${r.name || "(ללא שם)"} · ${r.seats} סועדים${tbl}${dep}`;
+  const tbl = r.tables && r.tables.length ? ` • ש׳ ${r.tables.join(",")}` : "";
+  const dep = r.deposit === "missing" ? " • ⚠️ חסר פיקדון" : "";
+  return `*${r.time}* • ${r.name || "(ללא שם)"} • ${r.seats} סועדים${tbl}${dep}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
     `*שולחנות גדולים למחר* (${min}+ סועדים)\n\n` +
     `*🌅 בוקר*\n${morning.length ? morning.map(line).join("\n") : "—"}\n\n` +
     `*🌆 ערב*\n${evening.length ? evening.map(line).join("\n") : "—"}\n\n` +
-    `סה״כ ${big.length} שולחנות גדולים${missingCount ? ` · ⚠️ ${missingCount} חסרי פיקדון` : ""}`;
+    `סה״כ ${big.length} שולחנות גדולים${missingCount ? ` • ⚠️ ${missingCount} חסרי פיקדון` : ""}`;
 
   return NextResponse.json(
     {
