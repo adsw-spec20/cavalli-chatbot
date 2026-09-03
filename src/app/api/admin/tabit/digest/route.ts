@@ -29,7 +29,8 @@ function authed(req: NextRequest): boolean {
 
 function line(r: Row): string {
   const tbl = r.tables && r.tables.length ? ` • ש׳ ${r.tables.join(",")}` : "";
-  const dep = r.deposit === "missing" ? " • ⚠️ חסר פיקדון" : "";
+  // ✅ פיקדון מובטח · ⚠️ חסר · ריק = אין פיקדון בהזמנה (לא מסמנים ✅ מטעה)
+  const dep = r.deposit === "missing" ? " • ⚠️ חסר פיקדון" : r.deposit === "secured" ? " • ✅" : "";
   return `*${r.time}* • ${r.name || "(ללא שם)"} • ${r.seats} סועדים${tbl}${dep}`;
 }
 
