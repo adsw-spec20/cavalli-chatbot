@@ -1,0 +1,36 @@
+# השרת הווירטואלי של קוואלי (3.9): שלושה תפקידים במכונה אחת קטנה.
+#   1. waha      - שער וואטסאפ עצמאי (מחליף את GreenAPI, חינם)
+#   2. scheduler - ההודעות המתוזמנות לקבוצות הצוות (שעון ישראל אמיתי)
+#   3. סוכן הטאביט רץ לצד הדוקר (ראה README)
+# הרמה: docker compose up -d
+
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000" # נגיש רק מקומית - לא חשוף לאינטרנט
+    environment:
+      - WHATSAPP_API_KEY=${WAHA_API_KEY}
+      - WAHA_PRINT_QR=true
+    volumes:
+      - waha-sessions:/app/.sessions
+
+  scheduler:
+    build: ./scheduler
+    container_name: scheduler
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Jerusalem
+      # waha (ברירת מחדל) או greenapi - מאפשר לעבור בהדרגה
+      - GATEWAY=${GATEWAY:-waha}
+      - WAHA_URL=http://waha:3000
+      - WAHA_API_KEY=${WAHA_API_KEY}
+      - GREENAPI_INSTANCE=${GREENAPI_INSTANCE:-}
+      - GREENAPI_TOKEN=${GREENAPI_TOKEN:-}
+    depends_on:
+      - waha
+
+volumes:
+  waha-sessions:
