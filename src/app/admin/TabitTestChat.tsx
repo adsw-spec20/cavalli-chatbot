@@ -1,7 +1,79 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./types";
+
+/** עיצוב טקסט inline: **מודגש** / *מודגש* -> bold */
+function renderInline(text: string, kp: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|\*[^*\n]+\*)/g;
+  let last = 0, m: RegExpExecArray | null, i = 0;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<strong key={`${kp}b${i++}`}>{m[0].replace(/^\*+|\*+$/g, "")}</strong>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/** מציג מרקדאון קליל: טבלאות, רשימות, כותרות, והדגשות - יפה ונקי. */
+function MarkdownLite({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const blocks: ReactNode[] = [];
+  let i = 0, key = 0;
+  const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (cells: string[]) => cells.every((c) => /^[-:\s]*$/.test(c));
+  while (i < lines.length) {
+    const line = lines[i];
+    if (isRow(line)) {
+      const rows: string[][] = [];
+      while (i < lines.length && isRow(lines[i])) {
+        rows.push(lines[i].trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+        i++;
+      }
+      const data = rows.filter((r) => !isSep(r));
+      const head = data[0] || [];
+      const body = data.slice(1);
+      blocks.push(
+        <div key={key++} className="overflow-x-auto my-1.5">
+          <table className="text-xs border-collapse" style={{ minWidth: "100%" }}>
+            <thead><tr>{head.map((h, hi) => <th key={hi} className="border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-right font-semibold whitespace-nowrap">{renderInline(h, `h${hi}`)}</th>)}</tr></thead>
+            <tbody>{body.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} className="border border-[var(--border)] px-2 py-1 text-right whitespace-nowrap">{renderInline(c, `c${ri}_${ci}`)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+    if (/^\s*[-•*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-•*]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-•*]\s+/, "")); i++; }
+      blocks.push(<ul key={key++} className="list-disc pr-5 my-1 space-y-0.5">{items.map((it, ii) => <li key={ii}>{renderInline(it, `li${ii}`)}</li>)}</ul>);
+      continue;
+    }
+    if (/^\s*#{1,4}\s+/.test(line)) {
+      blocks.push(<div key={key++} className="font-bold text-[15px] mt-2 mb-0.5">{renderInline(line.replace(/^\s*#{1,4}\s+/, ""), "hd")}</div>);
+      i++; continue;
+    }
+    if (line.trim() === "") { blocks.push(<div key={key++} className="h-2" />); i++; continue; }
+    blocks.push(<div key={key++} className="leading-relaxed">{renderInline(line, `p${i}`)}</div>);
+    i++;
+  }
+  return <div>{blocks}</div>;
+}
+
+function CopyBtn({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      onClick={() => { navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }).catch(() => {}); }}
+      className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-md px-2 py-0.5 mt-1"
+      title="העתק"
+    >
+      {done ? "הועתק ✓" : "העתק"}
+    </button>
+  );
+}
 
 /**
  * מעבדת טאביט - צ'אט AI מבודד לבדיקת החיבורים לטאביט (מנהל בלבד).
@@ -124,10 +196,16 @@ export default function TabitTestChat({ token }: { token: string }) {
           )}
           {msgs.map((m, i) => (
             <div key={i} className={`flex ${m.role === "assistant" ? "justify-start" : "justify-end"}`}>
-              <div className="max-w-[85%]">
-                <div dir="auto" className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${m.role === "user" ? "bg-[var(--accent)] text-[var(--accent-fg)]" : m.text.startsWith("⚠") ? "bg-red-500/15 text-red-300 border border-red-500/25" : "bg-[var(--panel2)] text-[var(--text)]"}`}>
-                  {m.text}
+              <div className="max-w-[92%] md:max-w-[85%]">
+                <div dir="auto" className={`rounded-2xl px-3 py-2 text-sm break-words ${m.role === "user" ? "bg-[var(--accent)] text-[var(--accent-fg)] whitespace-pre-wrap" : m.text.startsWith("⚠") ? "bg-red-500/15 text-red-300 border border-red-500/25 whitespace-pre-wrap" : "bg-[var(--panel2)] text-[var(--text)]"}`}>
+                  {m.role === "assistant" && !m.text.startsWith("⚠") ? <MarkdownLite text={m.text} /> : m.text}
                 </div>
+                {m.role === "assistant" && !m.text.startsWith("⚠") && (
+                  <div className="flex items-center gap-2">
+                    <CopyBtn text={m.text} />
+                    {m.tools && m.tools.length > 0 && <span className="text-[10px] text-[var(--muted)]">·</span>}
+                  </div>
+                )}
                 {m.role === "assistant" && m.tools && <ToolLog tools={m.tools} />}
               </div>
             </div>

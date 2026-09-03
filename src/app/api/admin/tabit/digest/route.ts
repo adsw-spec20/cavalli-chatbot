@@ -18,7 +18,7 @@ export const maxDuration = 60;
 const TZ = "Asia/Jerusalem";
 const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
 
-interface Row { name: string; seats: number; time: string; day: string; tables: number[]; state?: string; type?: string }
+interface Row { name: string; seats: number; time: string; day: string; tables: number[]; deposit?: string; state?: string; type?: string }
 
 function authed(req: NextRequest): boolean {
   const secret = process.env.TABIT_SYNC_SECRET;
@@ -28,8 +28,9 @@ function authed(req: NextRequest): boolean {
 }
 
 function line(r: Row): string {
-  const tbl = r.tables && r.tables.length ? ` שולחן ${r.tables.join(",")}` : "";
-  return `*${r.time}* ${r.name || "(ללא שם)"}${tbl}(${r.seats}איש)`;
+  const tbl = r.tables && r.tables.length ? ` · ש׳ ${r.tables.join(",")}` : "";
+  const dep = r.deposit === "missing" ? " · ⚠️ חסר פיקדון" : "";
+  return `*${r.time}* · ${r.name || "(ללא שם)"} · ${r.seats} סועדים${tbl}${dep}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -60,10 +61,12 @@ export async function GET(req: NextRequest) {
   const morning = big.filter((r) => r.time < "18:00");
   const evening = big.filter((r) => r.time >= "18:00");
 
+  const missingCount = big.filter((r) => r.deposit === "missing").length;
   const text =
-    `*שולחנות גדולים למחר*\n\n` +
-    `*בוקר*\n${morning.length ? morning.map(line).join("\n") : "-"}\n\n` +
-    `*ערב*\n${evening.length ? evening.map(line).join("\n") : "-"}`;
+    `*שולחנות גדולים למחר* (${min}+ סועדים)\n\n` +
+    `*🌅 בוקר*\n${morning.length ? morning.map(line).join("\n") : "—"}\n\n` +
+    `*🌆 ערב*\n${evening.length ? evening.map(line).join("\n") : "—"}\n\n` +
+    `סה״כ ${big.length} שולחנות גדולים${missingCount ? ` · ⚠️ ${missingCount} חסרי פיקדון` : ""}`;
 
   return NextResponse.json(
     {
