@@ -62,6 +62,12 @@ function MarkdownLite({ text }: { text: string }) {
   return <div>{blocks}</div>;
 }
 
+/** מספר ישראלי נייד -> 05X-XXX-XXXX. אחרת מחזיר כמו שהוא. */
+function fmtPhone(p: string): string {
+  const d = p.replace(/\D/g, "").replace(/^972/, "0");
+  return /^0\d{9}$/.test(d) ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : p.trim();
+}
+
 /**
  * ממיר markdown (כולל טבלאות) לטקסט ידידותי לוואטסאפ:
  * טבלה -> שורה להזמנה, כוכבית בודדת להדגשה, בלי מקפים ארוכים/חצים שנשברים.
@@ -99,9 +105,10 @@ function mdToWhatsApp(md: string): string {
           const h = header[ci] || "";
           if (h === "סועדים") parts.push(`${cell.replace(/\*/g, "")} סועדים`);
           else if (h === "שולחנות" || h === "שולחן") parts.push(`ש׳ ${cell}`);
+          else if (h === "טלפון" || h === "נייד") parts.push(fmtPhone(cell));
           else parts.push(cell);
         });
-        if (parts.length) out.push(parts.join(" • "));
+        if (parts.length) out.push(parts.join(" •• "));
       }
       continue;
     }

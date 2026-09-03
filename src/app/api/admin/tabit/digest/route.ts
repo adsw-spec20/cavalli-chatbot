@@ -18,7 +18,13 @@ export const maxDuration = 60;
 const TZ = "Asia/Jerusalem";
 const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
 
-interface Row { name: string; seats: number; time: string; day: string; tables: number[]; deposit?: string; state?: string; type?: string }
+interface Row { name: string; seats: number; time: string; day: string; tables: number[]; phone?: string; deposit?: string; state?: string; type?: string }
+
+/** מספר ישראלי נייד -> 05X-XXX-XXXX. אחרת מחזיר כמו שהוא. */
+function fmtPhone(p: string): string {
+  const d = (p || "").replace(/\D/g, "").replace(/^972/, "0");
+  return /^0\d{9}$/.test(d) ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : (p || "").trim();
+}
 
 function authed(req: NextRequest): boolean {
   const secret = process.env.TABIT_SYNC_SECRET;
@@ -28,10 +34,11 @@ function authed(req: NextRequest): boolean {
 }
 
 function line(r: Row): string {
-  const tbl = r.tables && r.tables.length ? ` • ש׳ ${r.tables.join(",")}` : "";
+  const tbl = r.tables && r.tables.length ? ` •• ש׳ ${r.tables.join(",")}` : "";
+  const ph = r.phone ? ` •• ${fmtPhone(r.phone)}` : "";
   // ✅ פיקדון מובטח · ⚠️ חסר · ריק = אין פיקדון בהזמנה (לא מסמנים ✅ מטעה)
-  const dep = r.deposit === "missing" ? " • ⚠️ חסר פיקדון" : r.deposit === "secured" ? " • ✅" : "";
-  return `*${r.time}* • ${r.name || "(ללא שם)"} • ${r.seats} סועדים${tbl}${dep}`;
+  const dep = r.deposit === "missing" ? " •• ⚠️ חסר פיקדון" : r.deposit === "secured" ? " •• ✅" : "";
+  return `*${r.time}* •• ${r.name || "(ללא שם)"} •• ${r.seats} סועדים${tbl}${ph}${dep}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -67,7 +74,7 @@ export async function GET(req: NextRequest) {
     `*שולחנות גדולים למחר* (${min}+ סועדים)\n\n` +
     `*🌅 בוקר*\n${morning.length ? morning.map(line).join("\n") : "—"}\n\n` +
     `*🌆 ערב*\n${evening.length ? evening.map(line).join("\n") : "—"}\n\n` +
-    `סה״כ ${big.length} שולחנות גדולים${missingCount ? ` • ⚠️ ${missingCount} חסרי פיקדון` : ""}`;
+    `סה״כ ${big.length} שולחנות גדולים${missingCount ? ` •• ⚠️ ${missingCount} חסרי פיקדון` : ""}`;
 
   return NextResponse.json(
     {
