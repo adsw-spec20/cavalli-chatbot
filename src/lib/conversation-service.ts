@@ -304,6 +304,71 @@ const PARKING_PAGE_URL = "https://caffecavalli.com/parking";
 const PRICE_HINT = /כמה עולה|מה המחיר|מחיר של/;
 
 /**
+ * ניקוי טקסט שהמודל כתב לפני שהוא נשלח ללקוח: חיתוך דליפות של קריאות-כלי
+ * (כטקסט או כבלוק JSON מגודר) והמרת הדגשה ** ל-* שמוצגת נכון בוואטסאפ.
+ * משותף למסלול התשובה הרגילה ולמסלול ההסלמה (ששניהם שולחים טקסט של המודל).
+ */
+function sanitizeModelText(raw: string): string {
+  let t = (raw ?? "").trim();
+  for (const marker of ["<tool_call", "&lt;tool_call", "</tool_call", "<function_call", "<invoke"]) {
+    const idx = t.indexOf(marker);
+    if (idx >= 0) t = t.slice(0, idx).trim();
+  }
+  t = t
+    .replace(/```[\s\S]*?```/g, (block) =>
+      /"tool"|tool_call|open_parking_gate|escalate_to_human|request_reservation|send_media|report_knowledge_gap/i.test(
+        block
+      )
+        ? ""
+        : block
+    )
+    .replace(/^[ \t]*\{[^{}\n]*"tool"[^{}\n]*\}[ \t]*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  // הדגשה בכוכבית כפולה (**מילה**) מוצגת כתווים גולמיים בוואטסאפ/מסנג'ר - ממירים
+  // לכוכבית בודדת (מודגש תקין). תיקון דטרמיניסטי במקום לרדוף אחרי המודל בפרומפט.
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, "*$1*");
+  // ...וגם סימון *לא מאוזן*, שההמרה למעלה מפספסת כי היא דורשת ** משני הצדדים.
+  // קרה בפועל (3.9): "*050-236-6466**" - כוכבית אחת בפתיחה ושתיים בסגירה, והלקוח
+  // ראה את הכוכביות. רצף של 2+ כוכביות אף פעם אינו הדגשה תקינה בוואטסאפ, אז
+  // מכווצים אותו לאחת.
+  t = t.replace(/\*{2,}/g, "*");
+  // שגיאת דקדוק חוזרת של המודל, ודווקא בהודעות חירום שבהן היא הכי בולטת:
+  // "לחייגו 101" (אין מילה כזאת). מתקנים בקוד - בפרומפט זה לא נתפס תמיד.
+  t = t.replace(/לחייגו/g, "חייגו");
+  // "משהו אפשר לעזור?" - עברית שבורה שחוזרת מדי פעם כסיומת שאלה, למרות שהיא
+  // אסורה במפורש בפרומפט. מתקנים רק את הצורה העצמאית הזאת (שאלה שלמה), כדי לא
+  // לשבור משפטים תקינים כמו "יש משהו אחר שאוכל לעזור בו?".
+  return t.replace(/(^|[\s(])משהו אפשר לעזור\?/g, "$1אפשר לעזור במשהו?");
+}
+
+// ----- שומרים על מסלול התבניות הקבועות (3.9) -----
+// תלונה/כעס/אכזבה: חייב להגיע למודל (שיודע גם להסלים לנציג לפי כלל 6),
+// ולעולם לא להיענות בתבנית שעונה רק על החלק העובדתי של ההודעה.
+const COMPLAINT_RX =
+  /התלונ|תלונה|להתלונן|מאוכזב|אכזב|לא חזר[וה]? אליי|לא חזרתם|אף אחד לא ענה|לא ענ(ה|יתם)|גרוע|מזעזע|בושה|לא מקובל|חוצפה|עצבן|כועס|מתוסכל|דורש החזר|תחזירו לי|פעם אחרונה/;
+// שאלה שנייה נפרדת באותה הודעה: תבנית אחת תענה על אחת ותשמיט את השנייה.
+// שני סימני שאלה, או מילת קישור שפותחת בקשה נוספת.
+function hasSecondAsk(text: string): boolean {
+  const t = text.trim();
+  if ((t.match(/\?/g) ?? []).length >= 2) return true;
+  return /(^|[\s,.!?])(אבל|וגם|בנוסף|חוץ מזה|ועוד שאלה|ודרך אגב|אגב,|קודם תגיד|לפני זה)(\s|$)/.test(t);
+}
+
+// ----- רשת ביטחון לשאלות אלרגיה (3.9) -----
+// שאלת אלרגן היא שאלת בטיחות, ולכן ההפניה לאימות מול הצוות לא צריכה להיות תלויה
+// בכך שהמודל זכר להוסיף אותה בכל פעם. אם הלקוח שאל על אלרגן והתשובה חזרה בלי שום
+// הפניה לאימות - הקוד משלים שורה קצרה. (בפטאיט הגילוי הנאות הרפואי מוזרק מהמערכת
+// ולכן עקבי ב-100%; אצלנו זה היה תלוי מודל בלבד.)
+const ALLERGEN_RX =
+  /אלרגי|אלרג'|רגיש(ות|)\s*ל|צליאק|גלוטן|לקטוז|בוטנ|אגוז|שומשום|סויה|allerg|gluten|celiac|lactose|peanut|sesame/i;
+// אלרגנים שאינם מאכל - שם ההשלמה על מנה לא רלוונטית
+const NON_FOOD_ALLERGY_RX = /חתול|כלב|אבק|פריחה|עש|נוצות|לטקס|תרופ|cat|dog|dust|pollen|latex/i;
+// כל דרך שבה התשובה כבר מפנה לאימות מול הצוות (אז אין מה להוסיף)
+const ALLERGY_VERIFIED_RX =
+  /לוודא|לאמת|תוודא|לבדוק מול|מול הצוות|עם הצוות|לצוות|בהזמנה עצמה|verify|confirm with|check with|let the team|tell the team/i;
+
+/**
  * ג': מחיר מנה ישירות מהתפריט - "כמה עולה X" נענה בחינם כשיש התאמה חד-משמעית
  * לפריט אחד בדיוק. עמימות (כמה פריטים), תזונה/אלרגיות, או פריט שאזל -> מודל.
  */
@@ -1443,7 +1508,17 @@ export async function handleIncomingMessage(
     return { conversationId: conversation.id, reply: gateReply, status: gate.status };
   }
 
-  {
+  // ----- שומר על התבניות הקבועות (3.9) -----
+  // תבנית קבועה עונה על כוונה אחת. כשההודעה נושאת גם משהו רגשי (תלונה, כעס,
+  // אכזבה) או שאלה שנייה נפרדת, תשובה קבועה עונה על חלק ומתעלמת מהשאר - וזה
+  // בדיוק מה שנשמע כמו בוט. במקרים כאלה מוותרים על החיסכון ושולחים למודל,
+  // שיודע לענות על הכל ולהסלים כשצריך.
+  // (נמצא בביקורת 3.9: "התלוננתי אתמול ואף אחד לא חזר אליי, מה שעות הפעילות?"
+  //  קיבל את טבלת השעות בלבד, בלי מילה על התלונה.)
+  const forceModelReply =
+    COMPLAINT_RX.test(lastUserTurn) || hasSecondAsk(lastUserTurn);
+
+  if (!forceModelReply) {
     const cfg = cfgEarly;
     const cannedLang = langFromHistory(history);
     // אינסטגרם לא מאפשר שליחת מדיה דרך ה-API - במקום סרטון מצורף שולחים קישור בתוך הטקסט
@@ -1732,11 +1807,23 @@ export async function handleIncomingMessage(
       meta: { escalation: true, summary: result.escalate.summary },
     });
 
-    const handoff = buildHandoffMessage(
+    const handoffLine = buildHandoffMessage(
       isFirstTurn,
       await loadBusinessConfig(),
       langFromHistory(history)
     );
+    // ⚠️ עד 3.9 הודעת ההעברה *החליפה* את מה שהמודל כתב, וכל התוכן שלו נזרק.
+    // בהסלמה רגילה זה לא הורגש, אבל במקרה רגיש זה היה מסוכן ממש: על "יש לי
+    // כאבים חזקים בחזה" המודל כתב להתקשר ל-101, הקוד מחק את זה, והלקוח קיבל
+    // רק "מעביר אותך לנציג". עכשיו שומרים את דברי המודל ומוסיפים אחריהם את
+    // שורת ההעברה (ואם המודל כבר אמר שהוא מעביר - לא מכפילים).
+    const modelSaid = sanitizeModelText(result.text ?? "");
+    const alreadySaidHandoff = /נציג|לצוות|מעביר|אעביר|human (agent|representative)|our team/i.test(modelSaid);
+    const handoff = !modelSaid
+      ? handoffLine
+      : alreadySaidHandoff
+        ? modelSaid
+        : `${modelSaid}\n\n${handoffLine}`;
     if (isFirstTurn) {
       await repo.updateConversation(conversation.id, { disclosedAi: true });
     }
@@ -1757,29 +1844,22 @@ export async function handleIncomingMessage(
   // ----- תשובה רגילה -----
   // בהודעה ראשונה עם שאלה, המודל כבר שזר את גילוי ה-AI בתוך התשובה (ראה claude.ts),
   // אז לא מדביקים משפט קבוע. (פתיחה של "רק ברכה" טופלה למעלה במסלול נפרד.)
-  let reply = (result.text ?? "").trim();
-  // מעקה: במקרים נדירים המודל מדליף סימון קריאת-כלי כטקסט גלוי - חותכים לפני שהלקוח רואה
-  for (const marker of ["<tool_call", "&lt;tool_call", "</tool_call", "<function_call", "<invoke"]) {
-    const idx = reply.indexOf(marker);
-    if (idx >= 0) reply = reply.slice(0, idx).trim();
+  // ניקוי דליפות קריאות-כלי + המרת ** ל-* (ראה sanitizeModelText למעלה; משותף
+  // עם מסלול ההסלמה, שגם הוא שולח טקסט של המודל)
+  let reply = sanitizeModelText(result.text ?? "");
+  // רשת ביטחון: שאלת אלרגן שנענתה בלי הפניה לאימות מול הצוות - משלימים אותה בקוד,
+  // כדי שההנחיה הבטיחותית לא תהיה תלויה בזה שהמודל זכר אותה (ראה ALLERGEN_RX למעלה).
+  if (
+    reply &&
+    ALLERGEN_RX.test(lastUserTurn) &&
+    !NON_FOOD_ALLERGY_RX.test(lastUserTurn) &&
+    !ALLERGY_VERIFIED_RX.test(reply)
+  ) {
+    reply +=
+      langFromHistory(history) === "en"
+        ? "\n\nJust to be safe - please mention it to the team when you order, so they can verify it for you."
+        : "\n\nרק כדי להיות בטוחים - שווה לציין את זה לצוות בהזמנה, שיוודאו לכם.";
   }
-  // דליפה בפורמט אחר (תקרית 25.8): המודל כתב את קריאת הכלי כבלוק JSON מגודר
-  // ("```json {\"tool\": ...} ```") בתוך הטקסט ללקוח. מסירים כל בלוק קוד מגודר
-  // (הבוט ממילא לא אמור לשלוח קוד ללקוחות) וכל שורת JSON בודדת שמזכירה כלי.
-  reply = reply
-    .replace(/```[\s\S]*?```/g, (block) =>
-      /"tool"|tool_call|open_parking_gate|escalate_to_human|request_reservation|send_media|report_knowledge_gap/i.test(
-        block
-      )
-        ? ""
-        : block
-    )
-    .replace(/^[ \t]*\{[^{}\n]*"tool"[^{}\n]*\}[ \t]*$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  // הדגשה בכוכבית כפולה (**מילה**) מוצגת כתווים גולמיים בוואטסאפ/מסנג'ר - ממירים
-  // לכוכבית בודדת (מודגש תקין). תיקון דטרמיניסטי במקום לרדוף אחרי המודל בפרומפט.
-  reply = reply.replace(/\*\*([^*\n]+)\*\*/g, "*$1*");
   if (!reply) {
     reply =
       langFromHistory(history) === "en"
