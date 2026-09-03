@@ -13,3 +13,6 @@ npm-debug.log*
 next-env.d.ts
 
 .vercel
+
+# חומרי מחקר/תחקירים (תמלילים ופרומפטים של מתחרים) - מקומי בלבד
+research/
