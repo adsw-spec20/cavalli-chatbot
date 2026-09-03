@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
   const toolLog: { tool: string; params: unknown; ok: boolean; result?: unknown; error?: string }[] = [];
 
   for (let i = 0; i < 5; i++) {
-    const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages: msgs });
+    const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 3000, system: SYSTEM, tools: TOOLS, messages: msgs });
     const toolUses = resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     msgs.push({ role: "assistant", content: resp.content });
 
@@ -133,7 +133,8 @@ export async function POST(req: NextRequest) {
         out = { error: e instanceof Error ? e.message : "שגיאה" };
       }
       toolLog.push({ tool: tu.name, params: tu.input, ok, result: ok ? out : undefined, error: ok ? undefined : (out as { error: string }).error });
-      toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 6000), is_error: !ok });
+      // גבול נדיב: יום עמוס יכול להחזיר 50+ הזמנות; חיתוך נמוך מדי קיצץ את המאוחרות והחזיר ספירה חלקית
+      toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 40000), is_error: !ok });
     }
     msgs.push({ role: "user", content: toolResults });
   }
