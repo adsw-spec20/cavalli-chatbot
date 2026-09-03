@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "./types";
 
 /** עיצוב טקסט inline: **מודגש** / *מודגש* -> bold */
@@ -62,16 +62,105 @@ function MarkdownLite({ text }: { text: string }) {
   return <div>{blocks}</div>;
 }
 
+/**
+ * ממיר markdown (כולל טבלאות) לטקסט ידידותי לוואטסאפ:
+ * טבלה -> שורה להזמנה, כוכבית בודדת להדגשה, בלי מקפים ארוכים/חצים שנשברים.
+ * זה מה שנשלח בפועל כשמעתיקים - ככה הצוות רואה את זה בקבוצה.
+ */
+function mdToWhatsApp(md: string): string {
+  const src = md.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (cells: string[]) => cells.every((c) => /^[-:\s]*$/.test(c));
+  const clean = (s: string) =>
+    s
+      .replace(/\*\*/g, "*")            // ** -> * (הדגשת וואטסאפ)
+      .replace(/\s*[—–]\s*/g, " - ")    // מקף ארוך -> מקף רגיל
+      .replace(/\s*[←→⇐⇒]\s*/g, " ")    // חצים החוצה
+      .replace(/ {2,}/g, " ");
+  while (i < src.length) {
+    const line = src[i];
+    if (isRow(line)) {
+      const rows: string[][] = [];
+      while (i < src.length && isRow(src[i])) {
+        rows.push(src[i].trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+        i++;
+      }
+      const data = rows.filter((r) => !isSep(r));
+      if (!data.length) continue;
+      const header = data[0].map((h) => h.replace(/\*/g, "").trim());
+      for (const r of data.slice(1)) {
+        const parts: string[] = [];
+        r.forEach((cellRaw, ci) => {
+          const cell = clean(cellRaw).trim();
+          if (!cell || cell === "-" || cell === "—") return;
+          if (ci === 0) { parts.push(`*${cell.replace(/\*/g, "")}*`); return; }
+          const h = header[ci] || "";
+          if (h === "סועדים") parts.push(`${cell.replace(/\*/g, "")} סועדים`);
+          else if (h === "שולחנות" || h === "שולחן") parts.push(`ש׳ ${cell}`);
+          else parts.push(cell);
+        });
+        if (parts.length) out.push(parts.join(" · "));
+      }
+      continue;
+    }
+    if (/^\s*[-_*]{3,}\s*$/.test(line)) { out.push(""); i++; continue; }  // קו מפריד -> רווח
+    out.push(clean(line).replace(/^\s*[-*•]\s+/, "• "));                  // תבליט -> •
+    i++;
+  }
+  return out.join("\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** תצוגה מקדימה של איך ההודעה תיראה בוואטסאפ (בועה ירקרקה, הדגשות מוסתרות). */
+function WhatsAppView({ text }: { text: string }) {
+  return (
+    <div dir="rtl" className="rounded-2xl px-3 py-2 text-sm leading-relaxed" style={{ background: "#dcf8c6", color: "#111b21" }}>
+      {text.split("\n").map((ln, i) =>
+        ln.trim() === "" ? <div key={i} className="h-2" /> : <div key={i}>{renderInline(ln, `wa${i}`)}</div>
+      )}
+    </div>
+  );
+}
+
 function CopyBtn({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
       onClick={() => { navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }).catch(() => {}); }}
-      className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-md px-2 py-0.5 mt-1"
-      title="העתק"
+      className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-md px-2 py-0.5"
+      title="מעתיק בפורמט וואטסאפ נקי"
     >
-      {done ? "הועתק ✓" : "העתק"}
+      {done ? "הועתק ✓" : "העתק לוואטסאפ"}
     </button>
+  );
+}
+
+/** בועת תשובת הבוט: טבלה יפה כברירת מחדל, מעבר לתצוגת וואטסאפ, והעתקה בפורמט וואטסאפ. */
+function AssistantContent({ text, tools }: { text: string; tools?: ToolEntry[] }) {
+  const [wa, setWa] = useState(false);
+  const waText = useMemo(() => mdToWhatsApp(text), [text]);
+  return (
+    <>
+      {wa ? (
+        <WhatsAppView text={waText} />
+      ) : (
+        <div dir="auto" className="rounded-2xl px-3 py-2 text-sm break-words bg-[var(--panel2)] text-[var(--text)]">
+          <MarkdownLite text={text} />
+        </div>
+      )}
+      <div className="flex items-center gap-2 mt-1">
+        <CopyBtn text={waText} />
+        <button
+          onClick={() => setWa((v) => !v)}
+          className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-md px-2 py-0.5"
+          title="ככה זה ייראה בוואטסאפ"
+        >
+          {wa ? "תצוגת טבלה" : "תצוגת וואטסאפ 👁"}
+        </button>
+      </div>
+      {tools && <ToolLog tools={tools} />}
+    </>
   );
 }
 
@@ -194,22 +283,22 @@ export default function TabitTestChat({ token }: { token: string }) {
               </div>
             </div>
           )}
-          {msgs.map((m, i) => (
-            <div key={i} className={`flex ${m.role === "assistant" ? "justify-start" : "justify-end"}`}>
-              <div className="max-w-[92%] md:max-w-[85%]">
-                <div dir="auto" className={`rounded-2xl px-3 py-2 text-sm break-words ${m.role === "user" ? "bg-[var(--accent)] text-[var(--accent-fg)] whitespace-pre-wrap" : m.text.startsWith("⚠") ? "bg-red-500/15 text-red-300 border border-red-500/25 whitespace-pre-wrap" : "bg-[var(--panel2)] text-[var(--text)]"}`}>
-                  {m.role === "assistant" && !m.text.startsWith("⚠") ? <MarkdownLite text={m.text} /> : m.text}
+          {msgs.map((m, i) => {
+            const isAssistant = m.role === "assistant" && !m.text.startsWith("⚠");
+            return (
+              <div key={i} className={`flex ${m.role === "assistant" ? "justify-start" : "justify-end"}`}>
+                <div className="max-w-[92%] md:max-w-[85%]">
+                  {isAssistant ? (
+                    <AssistantContent text={m.text} tools={m.tools} />
+                  ) : (
+                    <div dir="auto" className={`rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap ${m.role === "user" ? "bg-[var(--accent)] text-[var(--accent-fg)]" : "bg-red-500/15 text-red-300 border border-red-500/25"}`}>
+                      {m.text}
+                    </div>
+                  )}
                 </div>
-                {m.role === "assistant" && !m.text.startsWith("⚠") && (
-                  <div className="flex items-center gap-2">
-                    <CopyBtn text={m.text} />
-                    {m.tools && m.tools.length > 0 && <span className="text-[10px] text-[var(--muted)]">·</span>}
-                  </div>
-                )}
-                {m.role === "assistant" && m.tools && <ToolLog tools={m.tools} />}
               </div>
-            </div>
-          ))}
+            );
+          })}
           {busy && <div className="text-xs text-[var(--muted)]">מריץ מול טאביט…</div>}
         </div>
         <div className="border-t border-[var(--border)] p-2.5 flex gap-2">
