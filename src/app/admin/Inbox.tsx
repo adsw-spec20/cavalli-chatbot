@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { upload } from "@vercel/blob/client";
 import {
   api,
   CHANNELS,
@@ -272,6 +273,10 @@ export default function Inbox({
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false); // מניעת שליחה כפולה גם בלחיצות מהירות
+  // צירוף תמונה מהנציג (3.9): הקובץ שנבחר ממתין לאישור לפני שליחה ללקוח
+  const [pendingMedia, setPendingMedia] = useState<{ file: File; preview: string } | null>(null);
+  const [sendingMedia, setSendingMedia] = useState(false);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [err, setErr] = useState("");
   const [sendFailed, setSendFailed] = useState(false);
@@ -628,6 +633,62 @@ export default function Inbox({
       setErr(e instanceof Error ? e.message : "שגיאה");
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** בחירת תמונה מהמצלמה/גלריה: נשמרת לתצוגה מקדימה עד שהנציג מאשר לשלוח */
+  function onMediaPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // שבחירה חוזרת של אותו קובץ תפעיל שוב את האירוע
+    if (!file) return;
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+      setErr("אפשר לשלוח רק תמונה או סרטון");
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      setErr("הקובץ גדול מדי (עד 50MB)");
+      return;
+    }
+    setErr("");
+    setPendingMedia({ file, preview: URL.createObjectURL(file) });
+  }
+
+  /** שליחת התמונה שאושרה: העלאה ל-Blob -> שליחה בערוץ -> רישום בשיחה */
+  async function sendPendingMedia() {
+    if (!pendingMedia || !detail || sendingMedia) return;
+    setSendingMedia(true);
+    setErr("");
+    try {
+      // כמו במענה טקסט: התערבות נציג משתיקה את הבוט בשיחה הזו
+      if (detail.conversation.status !== "human" && !detail.conversation.botPaused) {
+        await api(token, `/conversations/${detail.conversation.id}/action`, {
+          method: "POST",
+          body: JSON.stringify({ action: "pauseBot" }),
+        });
+      }
+      const file = pendingMedia.file;
+      const blob = await upload(`agent-media/${Date.now()}-${file.name || "photo.jpg"}`, file, {
+        access: "public",
+        handleUploadUrl: "/api/admin/media/upload",
+        clientPayload: token,
+      });
+      await api(token, `/conversations/${detail.conversation.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "replyMedia",
+          url: blob.url,
+          mediaType: file.type.startsWith("video/") ? "video" : "image",
+          agentName,
+        }),
+      });
+      URL.revokeObjectURL(pendingMedia.preview);
+      setPendingMedia(null);
+      await loadDetail(detail.conversation.id);
+      onMutate();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "שליחת התמונה נכשלה");
+    } finally {
+      setSendingMedia(false);
     }
   }
 
@@ -1052,6 +1113,22 @@ export default function Inbox({
                     </div>
                   )}
                   <div className="flex gap-2 items-end">
+                    {/* צירוף תמונה/סרטון: באייפון הבורר המובנה מציע גם מצלמה וגם גלריה */}
+                    <input
+                      ref={mediaInputRef}
+                      type="file"
+                      accept="image/*,video/*"
+                      onChange={onMediaPicked}
+                      className="hidden"
+                    />
+                    <button
+                      onClick={() => mediaInputRef.current?.click()}
+                      disabled={busy || sendingMedia}
+                      title="שליחת תמונה או סרטון ללקוח (מצלמה או גלריה)"
+                      className="shrink-0 text-base border border-[var(--border)] rounded-xl px-2.5 min-h-11 hover:bg-[var(--panel2)] disabled:opacity-50"
+                    >
+                      📷
+                    </button>
                     <button
                       onClick={polishText}
                       disabled={suggesting || busy || !reply.trim()}
@@ -1086,6 +1163,48 @@ export default function Inbox({
                 </>
               )}
             </div>
+
+            {/* אישור לפני שליחת תמונה ללקוח - שלא תישלח תמונה בטעות */}
+            {pendingMedia && (
+              <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4" dir="rtl">
+                <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 w-full max-w-sm space-y-3">
+                  <h3 className="font-semibold text-sm">לשלוח ללקוח?</h3>
+                  {pendingMedia.file.type.startsWith("video/") ? (
+                    <video
+                      src={pendingMedia.preview}
+                      controls
+                      playsInline
+                      className="rounded-xl w-full max-h-72 bg-black/30"
+                    />
+                  ) : (
+                    <img
+                      src={pendingMedia.preview}
+                      alt="תצוגה מקדימה"
+                      className="rounded-xl w-full max-h-72 object-contain bg-[var(--panel2)]"
+                    />
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={sendPendingMedia}
+                      disabled={sendingMedia}
+                      className="flex-1 bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-xl min-h-11 text-sm disabled:opacity-50"
+                    >
+                      {sendingMedia ? "שולח…" : "שלח ללקוח"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        URL.revokeObjectURL(pendingMedia.preview);
+                        setPendingMedia(null);
+                      }}
+                      disabled={sendingMedia}
+                      className="border border-[var(--border)] rounded-xl px-4 min-h-11 text-sm hover:bg-[var(--panel2)] disabled:opacity-50"
+                    >
+                      ביטול
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
       </section>

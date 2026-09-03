@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   agentReply,
+  agentReplyMedia,
   closeConversation,
   deleteConversation,
   releaseConversation,
@@ -45,6 +46,14 @@ export async function POST(
           return NextResponse.json({ error: "text required" }, { status: 400 });
         }
         return NextResponse.json(await agentReply(id, body.text, body.agentName));
+      case "replyMedia": {
+        // תמונה/סרטון שנציג צילם או בחר מהגלריה (כבר הועלו ל-Blob מהדפדפן)
+        if (typeof body.url !== "string" || !/^https:\/\//.test(body.url)) {
+          return NextResponse.json({ error: "https url required" }, { status: 400 });
+        }
+        const mediaType = body.mediaType === "video" ? "video" : "image";
+        return NextResponse.json(await agentReplyMedia(id, body.url, mediaType, body.agentName));
+      }
       default:
         return NextResponse.json({ error: "unknown action" }, { status: 400 });
     }

@@ -134,6 +134,11 @@ export async function getConversationDetail(
       if (items.length) msg.media = items;
     }
   }
+  // תמונות שנציגים שלחו (agentMedia) נושאות כתובת מלאה - ישירות לתצוגה
+  for (const msg of messages) {
+    const own = msg.meta?.agentMedia as { url: string; type: "image" | "video" }[] | undefined;
+    if (own?.length) msg.media = [...(msg.media ?? []), ...own];
+  }
   return { conversation, customer, messages, hasOlder };
 }
 
@@ -208,6 +213,50 @@ export async function agentReply(id: string, text: string, agentName?: string) {
     content: text,
     ts: Date.now(),
     meta: agentName ? { agentName } : undefined,
+  });
+}
+
+/**
+ * נציג שולח תמונה/סרטון ללקוח (3.9): הקובץ כבר הועלה ל-Blob מהפאנל (מהגלריה
+ * או מהמצלמה), כאן שולחים אותו בערוץ ורושמים בשיחה. באינסטגרם - שמטא לא
+ * מאפשרת בו צירוף קבצים דרך ה-API - נופלים אוטומטית לשליחת קישור.
+ */
+export async function agentReplyMedia(
+  id: string,
+  url: string,
+  type: "image" | "video",
+  agentName?: string
+) {
+  const repo = getRepo();
+  const conversation = await repo.getConversation(id);
+  if (!conversation) throw new Error("conversation not found");
+
+  const adapter = CHANNEL_ADAPTERS[conversation.channel];
+  if (adapter) {
+    const customer = await repo.getCustomer(conversation.customerId);
+    if (customer) {
+      try {
+        if (!adapter.sendMedia) throw new Error("channel has no media support");
+        await adapter.sendMedia(customer.channelUserId, url, type);
+      } catch (err) {
+        // אינסטגרם (ולעיתים כשלי קובץ נקודתיים) - הלקוח מקבל קישור במקום צירוף
+        console.error(`[agent-media] צירוף קובץ נכשל בערוץ ${conversation.channel}, נשלח כקישור:`, err);
+        await adapter.sendText(
+          customer.channelUserId,
+          `📷 ${type === "video" ? "סרטון" : "תמונה"} מהצוות: ${url}`,
+          { humanAgent: true }
+        );
+      }
+    }
+  }
+
+  return repo.addMessage({
+    conversationId: id,
+    role: "agent",
+    content: type === "video" ? "🎥 סרטון" : "📷 תמונה",
+    ts: Date.now(),
+    // agentMedia עם כתובת מלאה (להבדיל מ-sentMedia של הספרייה שנושא מזהים)
+    meta: { ...(agentName ? { agentName } : {}), agentMedia: [{ url, type }] },
   });
 }
 
