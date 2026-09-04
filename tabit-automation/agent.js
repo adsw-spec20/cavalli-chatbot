@@ -44,6 +44,7 @@ function todayIL() { return dayFmt.format(new Date()); }
 function resolveDay(day) {
   if (day === "today" || !day) return todayIL();
   if (day === "tomorrow") return dayFmt.format(new Date(Date.now() + 86400000));
+  if (day === "yesterday") return dayFmt.format(new Date(Date.now() - 86400000));
   return day; // assume YYYY-MM-DD
 }
 /** Israel local date+time -> UTC ISO (DST-correct) */
@@ -178,8 +179,21 @@ async function actHealth(page) {
 }
 async function actReadDay(page, params) {
   const day = resolveDay(params.day);
-  const [list, tables] = [await getReservations(page), await getTables(page)];
+  const tables = await getTables(page);
   const tableNum = new Map(tables.map((t) => [t._id, t.number]));
+
+  // ימי עבר: ההזמנות עברו מהפיד החי לארכיון. יום היום/עתיד: הפיד החי.
+  let list, source;
+  if (day < todayIL()) {
+    const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
+    // רק הזמנות אמיתיות של אותו יום: לא זמניות שפגו ולא ביטולים (אי-הגעה כן - היו על הספרים)
+    list = arch.items.filter((r) => r.archived_reason !== "idle-temp-reservation" && !REAL_CANCEL.has(r.archived_reason || ""));
+    source = "archive";
+  } else {
+    list = await getReservations(page);
+    source = "live";
+  }
+
   const rows = list
     .filter((r) => r && r.type !== "walked_in" && r.state !== "cancelled")
     .map((r) => mapReservation(r, tableNum))
@@ -187,7 +201,7 @@ async function actReadDay(page, params) {
     .sort((a, b) => (a.time < b.time ? -1 : 1));
   // covers מחושב בקוד (דטרמיניסטי) - הבוט לא מחבר בעצמו (מקור אי-דיוקים)
   const covers = rows.reduce((s, r) => s + (r.seats || 0), 0);
-  return { day, count: rows.length, covers, reservations: rows };
+  return { day, source, count: rows.length, covers, reservations: rows };
 }
 // סועדים + מספר הזמנות ליום, אופציונלית בטווח שעות (למשל ערב = from 18:00).
 // הכל מחושב בקוד (דטרמיניסטי) - הבוט לא מסכם בעצמו.
