@@ -147,7 +147,7 @@ function writeStorage(store: "session" | "local", key: string, value: string) {
   }
 }
 
-type Filter = "all" | "awaiting" | "escalated" | "human" | "closed";
+type Filter = "all" | "awaiting" | "escalated" | "human" | "closed" | "starred" | "vip";
 export interface InboxFilterIntent {
   status?: Filter;
   /** פתיחה ישירה של שיחה ספציפית (קפיצה מ"ידע"/"הזמנות") */
@@ -175,12 +175,14 @@ const ConvRow = memo(function ConvRow({
   selected,
   tick,
   onOpen,
+  onToggleStar,
 }: {
   c: ConvItem;
   readTs: number;
   selected: boolean;
   tick: number;
   onOpen: (id: string) => void;
+  onToggleStar: (id: string, next: boolean) => void;
 }) {
   void tick;
   // "ממתין": הלקוח כתב אחרון, או שיחה אצל נציג שאף נציג עוד לא ענה בה
@@ -205,7 +207,32 @@ const ConvRow = memo(function ConvRow({
             {c.vip && <span title="VIP">⭐</span>}
             {c.customerName || "לקוח"}
           </span>
-          <span className="text-[10px] text-[var(--muted)] shrink-0">{relTime(c.updatedAt)}</span>
+          <span className="flex items-center gap-1.5 shrink-0">
+            {/* השורה כולה היא <button>, ולכן הסימון הוא span עם role - כפתור
+                בתוך כפתור אינו חוקי ב-HTML. stopPropagation שלא ייפתח הצ'אט. */}
+            <span
+              role="button"
+              tabIndex={0}
+              aria-pressed={!!c.starred}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleStar(c.id, !c.starred);
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                e.stopPropagation();
+                onToggleStar(c.id, !c.starred);
+              }}
+              title={c.starred ? "בטל נעיצה" : "נעץ שיחה"}
+              className={`text-sm leading-none cursor-pointer transition ${
+                c.starred ? "" : "opacity-20 grayscale hover:opacity-70"
+              }`}
+            >
+              📌
+            </span>
+            <span className="text-[10px] text-[var(--muted)]">{relTime(c.updatedAt)}</span>
+          </span>
         </div>
         <div className={`text-xs truncate mt-0.5 ${unread ? "text-[var(--text)]" : "text-[var(--muted)]"}`} dir="auto">
           {c.lastMessage || "(אין הודעות)"}
@@ -482,16 +509,69 @@ export default function Inbox({
     if (!selectedId && listRef.current) listRef.current.scrollTop = listScrollPos.current;
   }, [selectedId]);
 
+  /**
+   * סימון כוכב: אופטימי בממשק. הרשימה מגיעה מהאב ומתרעננת רק כל 8 שניות,
+   * ובלי ההצפה הזאת הסימון היה "נתקע" עד שהשרת עונה. הערך המקומי נמחק ברגע
+   * שהשרת מחזיר את אותו ערך, כך שהאמת תמיד של השרת.
+   */
+  const [starOverride, setStarOverride] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    setStarOverride((m) => {
+      if (!Object.keys(m).length) return m;
+      const next = { ...m };
+      let changed = false;
+      for (const c of conversations) {
+        if (c.id in next && !!c.starred === next[c.id]) {
+          delete next[c.id];
+          changed = true;
+        }
+      }
+      return changed ? next : m;
+    });
+  }, [conversations]);
+
+  const convs = useMemo(
+    () =>
+      Object.keys(starOverride).length === 0
+        ? conversations
+        : conversations.map((c) => (c.id in starOverride ? { ...c, starred: starOverride[c.id] } : c)),
+    [conversations, starOverride]
+  );
+
+  const toggleStar = useCallback(
+    async (id: string, next: boolean) => {
+      setStarOverride((m) => ({ ...m, [id]: next }));
+      try {
+        await api(token, `/conversations/${id}/action`, {
+          method: "POST",
+          body: JSON.stringify({ action: next ? "star" : "unstar" }),
+        });
+        onMutate();
+      } catch {
+        // כשל בשרת: מסירים את ההצפה כדי שהתצוגה תחזור לאמת של השרת
+        setStarOverride((m) => {
+          const c = { ...m };
+          delete c[id];
+          return c;
+        });
+      }
+    },
+    [token, onMutate]
+  );
+
   const counts = useMemo(() => {
-    const open = conversations.filter((c) => c.status !== "closed");
+    const open = convs.filter((c) => c.status !== "closed");
     return {
       awaiting: open.filter((c) => c.awaiting).length,
       escalated: open.filter((c) => c.escalated).length,
       // "אצל נציג" = הדלי המאוחד של כל מה שדורש בן אדם: נלקחה ע"י נציג,
       // הוסלמה, או שהלקוח כתב ואף אחד לא ענה
       human: open.filter((c) => c.status === "human" || c.escalated || c.awaiting).length,
+      // נספרים על כל השיחות ולא רק על הפתוחות - שני המסננים כוללים גם סגורות
+      starred: convs.filter((c) => c.starred).length,
+      vip: convs.filter((c) => c.vip).length,
     };
-  }, [conversations]);
+  }, [convs]);
 
   // בר התראה לשיחות אצל נציג שעוד לא נענו: נספרת גם שיחה שההודעה האחרונה בה
   // היא הודעת ההעברה של הבוט ("נציג יחזור אליך") ואף נציג עוד לא כתב - הלקוח
@@ -514,8 +594,16 @@ export default function Inbox({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return conversations.filter((c) => {
-      if (statusFilter === "closed") {
+    return convs.filter((c) => {
+      if (statusFilter === "starred") {
+        // נעוצות חוצה מצבים בכוונה: הנקודה של נעיצה היא למצוא את השיחה שוב,
+        // וגם שיחה סגורה שננעצה חייבת להישאר נגישה דרך המסנן הזה.
+        if (!c.starred) return false;
+      } else if (statusFilter === "vip") {
+        // הכוכב שבכרטיס הלקוח (vip). מסנן על הלקוח, לא על השיחה, ולכן גם הוא
+        // חוצה מצבים - שיחה סגורה של לקוח מסומן עדיין שייכת לרשימה הזאת.
+        if (!c.vip) return false;
+      } else if (statusFilter === "closed") {
         if (c.status !== "closed") return false;
       } else {
         // "הכל" = שיחות שאינן סגורות; לסגורות יש מסנן ייעודי
@@ -532,7 +620,7 @@ export default function Inbox({
       }
       return true;
     });
-  }, [conversations, search, channelFilter, statusFilter]);
+  }, [convs, search, channelFilter, statusFilter]);
 
   // ביצועים (מובייל): מרנדרים רק את 60 השיחות הראשונות + כפתור "הצג עוד".
   // סינון/חיפוש חדשים מתחילים שוב מ-60 - הרינדור נשאר קטן ומהיר.
@@ -797,12 +885,16 @@ export default function Inbox({
                 ["all", "הכל"],
                 ["human", counts.human ? `אצל נציג · ${counts.human}` : "אצל נציג"],
                 ["closed", "סגורות"],
+                // כוכב (vip) ופין (starred) - אייקון בלבד, בלי טקסט (בקשת המשתמש)
+                ["vip", "⭐"],
+                ["starred", "📌"],
               ] as [Filter, string][]
             ).map(([k, l]) => (
               <button
                 key={k}
                 onClick={() => setStatusFilter(k)}
                 aria-pressed={statusFilter === k}
+                title={k === "vip" ? "מסומנות (כוכב)" : k === "starred" ? "נעוצות (פין)" : undefined}
                 className={`rounded-lg px-2.5 py-1.5 transition ${statusFilter === k ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)]"}`}
               >
                 {l}
@@ -897,6 +989,7 @@ export default function Inbox({
                 selected={selectedId === c.id}
                 tick={nowTick}
                 onOpen={openConversation}
+                onToggleStar={toggleStar}
               />
             ))}
           {loaded && filtered.length > listLimit && (

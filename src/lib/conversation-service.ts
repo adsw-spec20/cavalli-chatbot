@@ -1709,21 +1709,50 @@ export async function handleIncomingMessage(
     reservationSlots = reservationSlotsHint(extractReservationSlots(history)) ?? undefined;
   }
 
+  // קריאה למודל עם ניסיונות חוזרים לשגיאות רגעיות (429 / 5xx / חיבור). הרבה
+  // מ"התקלות" הן בליפ של שנייה - האנתרופיק מחזירה 429/529 ומיד אחר כך עונה
+  // כרגיל - ובלי ניסיון חוזר כל בליפ כזה שלח ללקוח "תקלה טכנית" וסימן הסלמה
+  // מיותרת. תקציב זמן (maxDuration=90ש'): מנסים שוב רק אם עברו פחות מ-15ש'
+  // מתחילת הקריאה (הכשל היה מהיר, לא timeout ארוך), כך שגם ניסיון שנתקע לא יחרוג.
   let result;
-  try {
-    result = await generateReply(history, {
-      firstTurn: isFirstTurn,
-      learnedFaqs,
-      customerMemory: customer.memory,
-      channel: input.channel,
-      activeReservations,
-      reservationSlots,
-      // פענוח שעות חשופות בקוד ("at 10" בתשע בערב = 22:00) - תקרית Mike 24.8
-      timeHint: bareHourHint(lastUserTurn) ?? undefined,
-    });
-  } catch (err) {
-    // תקלה רגעית במוח (API נפל/timeout) - הלקוח לעולם לא נשאר בלי מענה.
-    console.error("[conversation-service] generateReply נכשל:", err);
+  let lastErr: unknown;
+  const genStart = Date.now();
+  const isRetryable = (e: unknown): boolean => {
+    const status = e && typeof e === "object" && "status" in e ? Number((e as { status?: unknown }).status) : NaN;
+    if (status === 408 || status === 409 || status === 429 || (status >= 500 && status < 600)) return true;
+    const text = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+    return /timeout|etimedout|econnreset|econnrefused|socket hang up|network|fetch failed|overloaded|connection error/i.test(text);
+  };
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      result = await generateReply(history, {
+        firstTurn: isFirstTurn,
+        learnedFaqs,
+        customerMemory: customer.memory,
+        channel: input.channel,
+        activeReservations,
+        reservationSlots,
+        // פענוח שעות חשופות בקוד ("at 10" בתשע בערב = 22:00) - תקרית Mike 24.8
+        timeHint: bareHourHint(lastUserTurn) ?? undefined,
+      });
+      lastErr = undefined;
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (!(attempt < 3 && isRetryable(err) && Date.now() - genStart < 15_000)) break;
+      // אם בינתיים הגיעה הודעה חדשה יותר - אין טעם לנסות שוב (הקריאה החדשה תטפל)
+      if (await hasNewerUserMessage(conversation.id, myTs, myMsg.id)) {
+        return { conversationId: conversation.id, reply: null, status: conversation.status };
+      }
+      console.warn(`[conversation-service] generateReply ניסיון ${attempt}/3 נכשל, מנסה שוב:`, err instanceof Error ? err.message : err);
+      await new Promise((r) => setTimeout(r, 700 * attempt));
+    }
+  }
+
+  if (!result) {
+    const err = lastErr;
+    // תקלה שנשארה גם אחרי ניסיונות חוזרים - הלקוח לעולם לא נשאר בלי מענה.
+    console.error("[conversation-service] generateReply נכשל אחרי ניסיונות חוזרים:", err);
     await namePromise.catch(() => undefined);
 
     // 🚨 אזעקת מערכת לפאנל: נרשמת בכל כשל מודל, עם זיהוי מיוחד לקרדיטים שאזלו.
@@ -1770,6 +1799,15 @@ export async function handleIncomingMessage(
   if (alarmRaised) {
     alarmRaised = false;
     await repo.setSetting("api_alarm", "").catch(() => undefined);
+  }
+
+  // הבראה-עצמית: אם השיחה סומנה כהסלמה בגלל תקלת מערכת קודמת, והמודל שוב עונה
+  // כרגיל - מנקים את הדגל, כדי שלא תישאר תקועה ב"אצל נציג" על בליפ שכבר חלף.
+  // (רק דגל תקלת-המערכת שלנו; הסלמות אמיתיות של נציג/תלונה לא נוגעים בהן.)
+  if (conversation.escalated && conversation.escalationReason === "תקלת מערכת - הבוט לא הצליח לענות") {
+    await repo
+      .updateConversation(conversation.id, { escalated: false, escalationReason: undefined, escalationSummary: undefined })
+      .catch(() => undefined);
   }
 
   // רישום שימוש ועלות אמיתית (מזין גם את התקרה היומית וגם את מד העלות בפאנל)
