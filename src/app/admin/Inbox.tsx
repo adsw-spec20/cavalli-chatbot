@@ -336,7 +336,7 @@ export default function Inbox({
 
   const lastDetailJson = useRef("");
   // ביצועים: השרת שולח רק את ~120 ההודעות האחרונות. "הצג הודעות קודמות" טוען
-  // את כל ההיסטוריה - והדגל נשמר כדי שהסקר של כל 4 שניות לא יקטום אותה בחזרה.
+  // את כל ההיסטוריה - והדגל נשמר כדי שהסקר של כל 8 שניות לא יקטום אותה בחזרה.
   const wantAllHistory = useRef(false);
   // גובה הגלילה לפני הוספת היסטוריה מעל - כדי להישאר על אותה הודעה אחרי הטעינה
   const prependAdjust = useRef<number | null>(null);
@@ -344,7 +344,7 @@ export default function Inbox({
     async (id: string) => {
       try {
         const d = await api<Detail>(token, `/conversations/${id}${wantAllHistory.current ? "?all=1" : ""}`);
-        // ביצועים: הריענון של כל 4 שניות מרנדר מחדש את כל השיחה גם כשכלום לא
+        // ביצועים: הריענון של כל 8 שניות מרנדר מחדש את כל השיחה גם כשכלום לא
         // השתנה - במובייל זה גורם להקלדה מקוטעת. מדלגים כשאין שינוי אמיתי.
         const json = JSON.stringify(d);
         if (json !== lastDetailJson.current) {
@@ -358,7 +358,7 @@ export default function Inbox({
     [token]
   );
 
-  // טעינת פרטי השיחה הנבחרת + ריענון חי כל 4 שניות
+  // טעינת פרטי השיחה הנבחרת + ריענון חי כל 8 שניות
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
@@ -373,7 +373,7 @@ export default function Inbox({
     const t = setInterval(() => {
       // ברקע לא סוקרים - onWake של הפאנל מרענן הכל מיד עם החזרה
       if (document.visibilityState === "visible") loadDetail(selectedId);
-    }, 4000);
+    }, 8000);
     return () => clearInterval(t);
   }, [selectedId, loadDetail]);
 

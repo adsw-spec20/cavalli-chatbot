@@ -37,6 +37,8 @@ export interface ConversationListItem {
   escalated?: boolean;
   escalationReason?: string;
   urgent?: boolean;
+  /** סימון כוכב של הצוות (משותף לכולם, נשמר ב-meta של השיחה) */
+  starred?: boolean;
   botPaused?: boolean;
   customerName?: string;
   customerId: string;
@@ -66,6 +68,7 @@ export async function listConversations(): Promise<ConversationListItem[]> {
       escalated: c.escalated,
       escalationReason: c.escalationReason,
       urgent: (c.meta as { urgent?: boolean } | undefined)?.urgent,
+      starred: (c.meta as { starred?: boolean } | undefined)?.starred,
       botPaused: c.botPaused,
       customerName: s.customerName,
       customerId: c.customerId,
@@ -103,7 +106,7 @@ export interface ConversationDetail {
 }
 
 /** כמה הודעות אחרונות נשלחות לפאנל כברירת מחדל - שיחות ותיקות לא מורידות
-    מאות הודעות לטלפון בכל פתיחה ובכל רענון של 4 שניות */
+    מאות הודעות לטלפון בכל פתיחה ובכל רענון של 8 שניות */
 const DETAIL_MESSAGE_LIMIT = 120;
 
 export async function getConversationDetail(
@@ -265,6 +268,25 @@ export async function agentReplyMedia(
 export async function setConversationBotPaused(id: string, paused: boolean) {
   await logActivity(id, paused ? "הבוט הושהה בשיחה זו" : "הבוט הופעל מחדש בשיחה זו");
   return getRepo().updateConversation(id, { botPaused: paused });
+}
+
+/**
+ * סימון כוכב על שיחה (משותף לכל הצוות - מי שמסמן, כולם רואים).
+ *
+ * שתי זהירויות:
+ * 1. meta נדרס בעדכון ולא ממוזג, אז מפזרים את הקיים - אחרת סימון כוכב היה
+ *    מוחק שדות אחרים ב-meta (למשל urgent).
+ * 2. שומרים את updatedAt המקורי: כוכב הוא סימון של הצוות, לא פעילות בשיחה,
+ *    והוא לא אמור להקפיץ את השיחה לראש האינבוקס.
+ * אין רישום ליומן הפעילות - סימון ובטלתו הם פעולה קלה, לא אירוע בשיחה.
+ */
+export async function setConversationStarred(id: string, starred: boolean) {
+  const existing = await getRepo().getConversation(id);
+  if (!existing) throw new Error("conversation not found");
+  const meta = { ...(existing.meta ?? {}) };
+  if (starred) meta.starred = true;
+  else delete meta.starred;
+  return getRepo().updateConversation(id, { meta, updatedAt: existing.updatedAt });
 }
 
 // ----- ספריית מדיה -----

@@ -15,7 +15,17 @@ const APP_URL = "https://tgm-app.tabit.cloud/";
 const API = "https://tgm-api.tabit.cloud";
 const ORG_ID = "68f0eebde7aadd617c316921";
 const TZ = "Asia/Jerusalem";
-const POLL_MS = 2500;
+
+// Poll cadence: fast while someone is actually using the test lab, slow when
+// idle. A flat 2.5s poll meant ~1,000,000 requests/month to Vercel that almost
+// always returned {command:null}, and that alone burned the whole free Fluid
+// Active CPU allowance (6.9). Nothing customer-facing depends on this loop -
+// only the manager's test chat and the daily digest webhook use the queue.
+const POLL_HOT_MS = 2000;
+const POLL_IDLE_MS = 15000;
+// Stay in fast mode for this long after the last command, so follow-up
+// questions in a live session are picked up instantly.
+const HOT_WINDOW_MS = 60000;
 
 const HEADERS = {
   "x-org-id": ORG_ID,
@@ -759,6 +769,7 @@ async function launchBrowser() {
 
   const SNAPSHOT_MS = 5 * 60 * 1000;
   let lastSnap = 0;
+  let lastCmdAt = 0;
 
   for (;;) {
     touchLock();
@@ -772,7 +783,12 @@ async function launchBrowser() {
       const res = await fetch(cfg.agentUrl, { headers: { "x-tabit-sync-secret": cfg.secret } });
       if (res.ok) cmd = (await res.json()).command;
     } catch (_) {}
-    if (!cmd) { await new Promise((s) => setTimeout(s, POLL_MS)); continue; }
+    if (!cmd) {
+      const hot = Date.now() - lastCmdAt < HOT_WINDOW_MS;
+      await new Promise((s) => setTimeout(s, hot ? POLL_HOT_MS : POLL_IDLE_MS));
+      continue;
+    }
+    lastCmdAt = Date.now();
 
     console.log(`> ${cmd.action}`, JSON.stringify(cmd.params || {}));
     let status = "done", result = null, error = null;
@@ -790,5 +806,8 @@ async function launchBrowser() {
       });
       console.log(`  -> ${status}`);
     } catch (e) { console.error("  failed to post result:", e.message); }
+    // the hot window runs from when the command FINISHED, so a follow-up
+    // question right after a slow browser action still lands in fast mode
+    lastCmdAt = Date.now();
   }
 })();

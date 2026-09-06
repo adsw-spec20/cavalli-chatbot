@@ -49,10 +49,12 @@ export async function GET(req: NextRequest) {
   const tomorrow = dayFmt.format(new Date(Date.now() + 86400000));
 
   // מקור טרי: קריאה חיה מהסוכן. נפילה ל-snapshot אם לא זמין.
+  // 40 שניות (הוארך מ-20 ב-6.9): הסוכן המקומי סוקר כל 15 שניות כשהוא בטל,
+  // ובלי ההארכה הדייג'סט היה נופל ל-snapshot כמעט בכל פעם.
   let rows: Row[] = [];
   let source = "live";
   try {
-    const res = (await runCommand("read_day", { day: "tomorrow" }, 20000)) as { reservations?: Row[] };
+    const res = (await runCommand("read_day", { day: "tomorrow" }, 40000)) as { reservations?: Row[] };
     rows = res.reservations || [];
   } catch {
     source = "snapshot";

@@ -156,10 +156,20 @@ export default function Tabit({ token }: { token: string }) {
     }
   }, [token]);
 
+  // כמו במסך ההזמנות: סוקרים רק כשהמסך גלוי, ומושכים מיד בחזרה מרקע (6.9)
   useEffect(() => {
     load();
-    const t = setInterval(load, 30_000);
-    return () => clearInterval(t);
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 30_000);
+    const onWake = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onWake);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onWake);
+    };
   }, [load]);
 
   async function manualRefresh() {

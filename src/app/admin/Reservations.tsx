@@ -219,10 +219,22 @@ export default function Reservations({
     }
   }, [token]);
 
+  // סקירה רק כשהמסך באמת מול העיניים. עד 6.9 הטיימר רץ גם כשהטלפון היה נעול
+  // בכיס, ושרף שעות CPU בוורסל על מסך שאף אחד לא הסתכל עליו.
   useEffect(() => {
     load();
-    const t = setInterval(load, 10000);
-    return () => clearInterval(t);
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 10000);
+    // חזרה מרקע: מושכים מיד, שלא יוצג צילום ישן עד הטיק הבא
+    const onWake = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onWake);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onWake);
+    };
   }, [load]);
 
   // submit/submitSilent מחוברים ישירות ל-onClick, כך שהן מקבלות את אירוע

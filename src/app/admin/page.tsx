@@ -582,7 +582,7 @@ export default function AdminPage() {
     try {
       const list = await api<ConvItem[]>(token, "/conversations");
       // ביצועים (חשוב במובייל): אם שום דבר לא השתנה מאז המשיכה הקודמת, לא נוגעים
-      // ב-state - כך הסקר של כל 4 שניות לא גורם לרינדור מחדש של כל הפאנל
+      // ב-state - כך הסקר של כל 8 שניות לא גורם לרינדור מחדש של כל הפאנל
       // (זה מה שגרם להקלדה מקוטעת ולתחושת איטיות בטלפון).
       const json = JSON.stringify(list);
       if (json !== lastConvsJson.current) {
@@ -623,7 +623,7 @@ export default function AdminPage() {
     // ברקע (טאב מוסתר / טלפון נעול) לא סוקרים - onWake מושך הכל מיד בחזרה
     const t = setInterval(() => {
       if (document.visibilityState === "visible") loadConversations();
-    }, 4000);
+    }, 8000);
     return () => clearInterval(t);
   }, [authed, loadConversations]);
 
@@ -675,7 +675,7 @@ export default function AdminPage() {
     return () => clearInterval(t);
   }, [authed, refreshSettings]);
 
-  // 📱 חזרה מרקע: הטלפון מקפיא טאב ברקע (כולל סקר ה-4 שניות), ובפתיחה מחדש
+  // 📱 חזרה מרקע: הטלפון מקפיא טאב ברקע (כולל סקר ה-8 שניות), ובפתיחה מחדש
   // הפאנל מצייר רגע ארוך צילום ישן של הבוקר. מושכים הכל מיד ברגע שהטאב חוזר
   // להיות גלוי - גם בפתיחה מקיצור דרך במסך הבית וגם בשחזור מ-bfcache (תקרית 23.8)
   useEffect(() => {

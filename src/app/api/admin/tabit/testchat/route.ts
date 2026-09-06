@@ -94,8 +94,12 @@ const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למע
 async function dispatch(name: string, input: Record<string, unknown>): Promise<unknown> {
   const action = TOOL_TO_ACTION[name];
   if (!action) throw new Error(`כלי לא מוכר: ${name}`);
+  // הוארך ב-6.9: הסוכן המקומי סוקר עכשיו כל 15 שניות כשהוא בטל (במקום 2.5),
+  // כדי לא לשרוף את מכסת ה-CPU בוורסל. לכן הפקודה הראשונה בסשן יכולה לחכות
+  // עד 15 שניות רק כדי להיתפס, ורק אחר כך מתחילה לרוץ. פקודות המשך מהירות
+  // (הסוכן נכנס למצב מהיר לדקה אחרי כל פקודה).
   // יצירת הזמנה מקבלת timeout ארוך יותר (יצירה + שליפת הקישור לוקחת רגע)
-  const timeout = action === "create_reservation" ? 45_000 : 25_000;
+  const timeout = action === "create_reservation" ? 70_000 : 45_000;
   return runCommand(action, input, timeout);
 }
 

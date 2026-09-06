@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, CHANNELS, type Stats } from "./types";
+import { useCallback, useEffect, useState } from "react";
+import { api, CHANNELS, relTime, type Stats } from "./types";
 import type { InboxFilterIntent } from "./Inbox";
 
 function Kpi({
@@ -61,29 +61,63 @@ export default function Dashboard({
     openedLast7Days: number;
   } | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
+  const [refreshing, setRefreshing] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState(0);
+
+  /** משיכת שני המקורות של המסך (סטטיסטיקות + יומן השער) במקביל */
+  const load = useCallback(async () => {
+    await Promise.all([
       api<Stats>(token, "/stats")
-        .then((s) => alive && setStats(s))
-        .catch((e) => alive && setErr(e instanceof Error ? e.message : "שגיאה"));
-    const loadGate = () =>
+        .then((s) => {
+          setStats(s);
+          setErr("");
+        })
+        .catch((e) => setErr(e instanceof Error ? e.message : "שגיאה")),
       api<{ events: []; openedLast7Days: number }>(token, "/gate-log")
-        .then((g) => alive && setGateLog(g))
-        .catch(() => {});
-    load();
-    loadGate();
-    const t = setInterval(() => {
-      load();
-      loadGate();
-    }, 15000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
+        .then(setGateLog)
+        .catch(() => {}),
+    ]);
+    setFetchedAt(Date.now());
   }, [token]);
 
-  if (err) return <div className="text-red-400 text-sm">{err}</div>;
+  // המסך הזה מציג מגמות של 7 ימים - הוא לא צריך להיות "חי". הוא נמשך מחדש
+  // בכל כניסה ללשונית (הרכבה מחדש) ובכפתור הרענון; הטיימר כאן הוא רק רשת
+  // ביטחון למסך שנשאר פתוח לאורך זמן. סקר תכוף כאן שרף שעות CPU בוורסל
+  // בלי שאף אחד הסתכל על התוצאה (6.9).
+  useEffect(() => {
+    load();
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 12 * 3600_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  async function manualRefresh() {
+    setRefreshing(true);
+    const started = Date.now();
+    await load();
+    // מינימום 400ms כדי שהכפתור לא "יהבהב" בלי שהמשתמש יספיק לראות
+    const wait = 400 - (Date.now() - started);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    setRefreshing(false);
+  }
+
+  // כשל בטעינה הראשונה: מציגים שגיאה + כפתור ניסיון חוזר. חשוב במיוחד מאז
+  // שהרענון האוטומטי ירד ל-12 שעות - בלי הכפתור המסך היה נתקע על השגיאה.
+  if (err && !stats) {
+    return (
+      <div className="text-sm space-y-3">
+        <div className="text-red-400">{err}</div>
+        <button
+          onClick={manualRefresh}
+          disabled={refreshing}
+          className="rounded-lg px-3 py-1.5 border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-60"
+        >
+          {refreshing ? "מנסה שוב…" : "↻ נסה שוב"}
+        </button>
+      </div>
+    );
+  }
   if (!stats) return <div className="text-[var(--muted)] text-sm">טוען נתונים…</div>;
 
   const maxDay = Math.max(1, ...stats.last7Days.map((d) => d.count));
@@ -93,6 +127,21 @@ export default function Dashboard({
 
   return (
     <div className="space-y-4 max-w-[1700px]">
+      {/* שורת רענון: הנתונים כאן לא "חיים", ולכן אומרים במפורש מתי נמשכו */}
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        {/* fetchedAt נקבע רק אחרי ששתי המשיכות חזרו, אז יש פריים אחד שבו הוא
+            עדיין 0 - בלי השער הזה relTime היה מציג "לפני 20000 י'" לרגע */}
+        <span className="text-[var(--muted)]">{fetchedAt ? `עודכן ${relTime(fetchedAt)}` : "טוען…"}</span>
+        {err && <span className="text-red-400">הרענון האחרון נכשל</span>}
+        <button
+          onClick={manualRefresh}
+          disabled={refreshing}
+          className="mr-auto rounded-lg px-2.5 py-1 border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-60"
+        >
+          {refreshing ? "מרענן…" : "↻ רענן"}
+        </button>
+      </div>
+
       {/* KPI - כל כרטיס שדורש פעולה לחיץ ומוביל לרשימה המסוננת */}
       {(stats.pendingReservations ?? 0) > 0 && (
         <button
