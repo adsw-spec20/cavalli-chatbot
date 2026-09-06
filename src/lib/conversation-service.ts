@@ -1770,6 +1770,16 @@ export async function handleIncomingMessage(
     if (await hasNewerUserMessage(conversation.id, myTs, myMsg.id)) {
       return { conversationId: conversation.id, reply: null, status: conversation.status };
     }
+    // עיבוד-כפול (ממצא הסריקה): אם עיבוד מקביל של אותה הודעה כבר שלח תשובת בוט
+    // לתור הזה - אל תשלח "תקלה טכנית" ואל תסלים; נטוש בשקט (הלקוח כבר קיבל מענה).
+    try {
+      const after = await repo.getMessages(conversation.id, { limit: 6 });
+      if (after.some((m) => m.role === "assistant" && m.ts >= myTs)) {
+        return { conversationId: conversation.id, reply: null, status: conversation.status };
+      }
+    } catch {
+      /* אם הבדיקה נכשלה, ממשיכים למסלול הגיבוי הרגיל */
+    }
     const cfg = await loadBusinessConfig();
     const phone = cfg.contact.phone;
     const fallback =
@@ -1926,6 +1936,14 @@ export async function handleIncomingMessage(
         meta: { activity: true, gateVetoed: true, gateBlocked: true },
       })
       .catch(() => undefined);
+    // הפתיחה לא בוצעה (ההודעה לא נגעה לשער). אם המודל בכל זאת טען "פותח/פתחתי" -
+    // אסור להשאיר טענה כוזבת על פעולה פיזית. מחליפים בהצעה נייטרלית.
+    if (/פותח|פתחתי|פתחנו|נפתח|יפתח|פותחת|open(ing|ed)?\b|i'?ll open/i.test(reply)) {
+      reply =
+        langFromHistory(history) === "en"
+          ? "If you meant the parking gate - just message me when you're right at the gate and I'll open it for you 🙂"
+          : "אם התכוונת לשער החניה - רק כתוב לי כשאתה ממש ליד השער ואפתח לך 🙂";
+    }
   } else if (result.openGateRequested && isGateConfigured()) {
     const gate = await runGateOpen({
       repo,
@@ -2215,15 +2233,18 @@ export async function handleIncomingMessage(
   // לקוחות התלוננו במפורש ("לא רואה איפה התשובה", "אין סיכוי שנגיע אם לא ברור מקום חנייה")
   // ואחד מהם נטש. כאן, אם התשובה מבטיחה מדיה ואין מדיה - מחליפים את ההבטחה בקישור אמיתי.
   if (!media?.length && !sentMediaIds?.length) {
-    const promisesMedia = /(מצרף|שולח|אשלח|שלחתי|מעביר)\s+(לך|לכם|לך גם|כאן)?\s*(את ה)?(סרטון|וידאו|תמונה|קליפ)/.test(reply);
+    // זיהוי רחב: התשובה מזכירה מדיה (סרטון/תמונה) + פועל שליחה כלשהו - כולל
+    // ניסוחים שנפלו קודם כמו "שכחתי לשלוח את הסרטון" או "לשלוח לך סרטון".
+    const promisesMedia =
+      /(סרטון|וידאו|תמונה|קליפ)/.test(reply) && /(מצרף|שולח|אשלח|לשלוח|שלחתי|מעביר|שכחתי)/.test(reply);
     if (promisesMedia) {
       const aboutParking = /חני|שער|דרך|להגיע|מגיעים/.test(reply + " " + lastUserTurn);
       reply = aboutParking
         ? `${reply}\n\n🎥 הנה הסרטון שמראה בדיוק איך מגיעים לחניה: ${PARKING_PAGE_URL}`
-        : reply.replace(
-            /(מצרף|שולח|אשלח|שלחתי|מעביר)\s+(לך|לכם|לך גם|כאן)?\s*(את ה)?(סרטון|וידאו|תמונה|קליפ)[^.!?\n]*/g,
-            "אשמח לפרט כאן בכתב"
-          );
+        : reply
+            .replace(/[^.!?\n]*(מצרף|שולח|אשלח|לשלוח|שלחתי|מעביר|שכחתי)[^.!?\n]*(סרטון|וידאו|תמונה|קליפ)[^.!?\n]*/g, "אשמח לפרט כאן בכתב")
+            .replace(/\s{2,}/g, " ")
+            .trim();
       console.log(`[MEDIA] הבטחת מדיה בלי מדיה - תוקן בתשובה, conv=${conversation.id}`);
     }
   }
@@ -2236,6 +2257,18 @@ export async function handleIncomingMessage(
   if (freshConv && (freshConv.status === "human" || freshConv.botPaused)) {
     console.log(`[SILENCE] נציג נכנס תוך כדי חשיבת המודל - הבוט שותק. conv=${conversation.id}`);
     return { conversationId: conversation.id, reply: null, status: freshConv.status };
+  }
+
+  // עיבוד-כפול (ממצא הסריקה): אם עיבוד מקביל של אותה הודעה כבר שלח תשובת בוט
+  // לתור הזה - אל תשלח כפילות. (שכבת ההגנה האטומית היא dedup-ה-mid; זו רשת נוספת.)
+  try {
+    const recent = await repo.getMessages(conversation.id, { limit: 4 });
+    if (recent.some((m) => m.role === "assistant" && m.ts >= myTs)) {
+      console.log(`[DEDUP] תשובת בוט כבר נשלחה לתור הזה - נמנעת כפילות. conv=${conversation.id}`);
+      return { conversationId: conversation.id, reply: null, status: "bot" };
+    }
+  } catch {
+    /* לא קריטי - ממשיכים */
   }
 
   await repo.addMessage({

@@ -228,7 +228,7 @@ export async function generateReply(
 
   // המידע העסקי + ספריית המדיה נטענים דינמית (ניתנים לעריכה מהפאנל).
   const [businessConfig, media] = await Promise.all([loadBusinessConfig(), loadMedia()]);
-  const systemPrompt = buildSystemPrompt(businessConfig, media);
+  const systemPrompt = buildSystemPrompt(businessConfig, media, options.channel);
 
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {
