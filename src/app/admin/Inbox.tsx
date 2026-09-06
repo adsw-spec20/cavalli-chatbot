@@ -147,7 +147,7 @@ function writeStorage(store: "session" | "local", key: string, value: string) {
   }
 }
 
-type Filter = "all" | "awaiting" | "escalated" | "human" | "closed" | "starred" | "vip";
+type Filter = "all" | "awaiting" | "escalated" | "human" | "closed" | "starred";
 export interface InboxFilterIntent {
   status?: Filter;
   /** פתיחה ישירה של שיחה ספציפית (קפיצה מ"ידע"/"הזמנות") */
@@ -204,7 +204,6 @@ const ConvRow = memo(function ConvRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <span className={`text-sm truncate flex items-center gap-1 ${unread ? "font-bold" : "font-semibold"}`}>
-            {c.vip && <span title="VIP">⭐</span>}
             {c.customerName || "לקוח"}
           </span>
           <span className="flex items-center gap-1.5 shrink-0">
@@ -569,7 +568,6 @@ export default function Inbox({
       human: open.filter((c) => c.status === "human" || c.escalated || c.awaiting).length,
       // נספרים על כל השיחות ולא רק על הפתוחות - שני המסננים כוללים גם סגורות
       starred: convs.filter((c) => c.starred).length,
-      vip: convs.filter((c) => c.vip).length,
     };
   }, [convs]);
 
@@ -599,10 +597,6 @@ export default function Inbox({
         // נעוצות חוצה מצבים בכוונה: הנקודה של נעיצה היא למצוא את השיחה שוב,
         // וגם שיחה סגורה שננעצה חייבת להישאר נגישה דרך המסנן הזה.
         if (!c.starred) return false;
-      } else if (statusFilter === "vip") {
-        // הכוכב שבכרטיס הלקוח (vip). מסנן על הלקוח, לא על השיחה, ולכן גם הוא
-        // חוצה מצבים - שיחה סגורה של לקוח מסומן עדיין שייכת לרשימה הזאת.
-        if (!c.vip) return false;
       } else if (statusFilter === "closed") {
         if (c.status !== "closed") return false;
       } else {
@@ -885,8 +879,7 @@ export default function Inbox({
                 ["all", "הכל"],
                 ["human", counts.human ? `אצל נציג · ${counts.human}` : "אצל נציג"],
                 ["closed", "סגורות"],
-                // כוכב (vip) ופין (starred) - אייקון בלבד, בלי טקסט (בקשת המשתמש)
-                ["vip", "⭐"],
+                // פין/נעיצה - אייקון בלבד, בלי טקסט (בקשת המשתמש)
                 ["starred", "📌"],
               ] as [Filter, string][]
             ).map(([k, l]) => (
@@ -894,7 +887,7 @@ export default function Inbox({
                 key={k}
                 onClick={() => setStatusFilter(k)}
                 aria-pressed={statusFilter === k}
-                title={k === "vip" ? "מסומנות (כוכב)" : k === "starred" ? "נעוצות (פין)" : undefined}
+                title={k === "starred" ? "נעוצות (פין)" : undefined}
                 className={`rounded-lg px-2.5 py-1.5 transition ${statusFilter === k ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)]"}`}
               >
                 {l}
@@ -1061,7 +1054,6 @@ export default function Inbox({
                   <Avatar name={detail?.customer?.name} channel={conv.channel} size={34} />
                   <div className="min-w-0">
                     <div className="font-semibold text-sm truncate flex items-center gap-1">
-                      {detail?.customer?.vip && <span>⭐</span>}
                       {detail?.customer?.name || "לקוח"}
                     </div>
                     <div className="text-[11px] text-[var(--muted)] flex items-center gap-1.5">
@@ -1324,7 +1316,6 @@ function CustomerCard({
   const cust = detail.customer;
   const [name, setName] = useState(cust?.name ?? "");
   const [notes, setNotes] = useState(cust?.notes ?? "");
-  const [vip, setVip] = useState(!!cust?.vip);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   const [enrichment, setEnrichment] = useState<CustomerEnrichment | null>(null);
@@ -1332,8 +1323,7 @@ function CustomerCard({
   useEffect(() => {
     setName(cust?.name ?? "");
     setNotes(cust?.notes ?? "");
-    setVip(!!cust?.vip);
-  }, [cust?.id, cust?.name, cust?.notes, cust?.vip]);
+  }, [cust?.id, cust?.name, cust?.notes]);
 
   // העשרה (הזמנה פעילה, ספירת שיחות, מאז/אחרון) - נטענת בקריאה נפרדת קלה
   useEffect(() => {
@@ -1374,11 +1364,11 @@ function CustomerCard({
   const res = enrichment?.activeReservation ?? null;
   const phone = enrichment?.phone ?? null;
   const hasBotMemory = mem.warnings.length > 0 || !!mem.preferences || !!mem.general;
-  const showRegularChip = !vip && (enrichment?.conversationCount ?? 0) >= 3;
+  const showRegularChip = (enrichment?.conversationCount ?? 0) >= 3;
 
   return (
     <div className="mx-3 mt-2 bg-[var(--panel2)] border border-[var(--border)] rounded-xl p-3 text-sm space-y-3">
-      {/* ---- זהות: שם + טלפון + VIP ---- */}
+      {/* ---- זהות: שם + טלפון ---- */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <input
@@ -1400,18 +1390,6 @@ function CustomerCard({
           )}
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
-          <button
-            onClick={() => {
-              const next = !vip;
-              setVip(next);
-              save({ vip: next });
-            }}
-            className={`text-xl leading-none transition ${vip ? "" : "opacity-25 grayscale hover:opacity-60"}`}
-            title={vip ? "לקוח VIP (לחץ להסרה)" : "סמן כ-VIP"}
-            aria-label="VIP"
-          >
-            ⭐
-          </button>
           <button
             onClick={onMarkUnread}
             className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-md px-2 py-1 whitespace-nowrap"
