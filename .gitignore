@@ -16,3 +16,6 @@ next-env.d.ts
 
 # חומרי מחקר/תחקירים (תמלילים ופרומפטים של מתחרים) - מקומי בלבד
 research/
+
+# Local conversation-scan data (PII) - never commit
+scan-data/
