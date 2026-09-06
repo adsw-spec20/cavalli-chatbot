@@ -213,6 +213,18 @@ async function actReadDay(page, params) {
   const covers = rows.reduce((s, r) => s + (r.seats || 0), 0);
   return { day, source, count: rows.length, covers, reservations: rows };
 }
+// שולחנות גדולים ליום: הסינון (min+ סועדים), המיון והספירה - הכל בקוד (דטרמיניסטי).
+// הבוט רק מציג את מה שחוזר, לא מסנן/סופר בעצמו, ומקבל רק את הגדולות (פחות טוקנים).
+async function actBigTables(page, params) {
+  const min = Math.max(1, Number(params.min) || 8);
+  const { day, source, reservations } = await actReadDay(page, { day: params.day });
+  const big = reservations
+    .filter((r) => (r.seats || 0) >= min)
+    .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+  const covers = big.reduce((s, r) => s + (r.seats || 0), 0);
+  const missing_deposit = big.filter((r) => r.deposit === "missing").length;
+  return { day, source, min, count: big.length, covers, missing_deposit, reservations: big };
+}
 // סועדים + מספר הזמנות ליום, אופציונלית בטווח שעות (למשל ערב = from 18:00).
 // הכל מחושב בקוד (דטרמיניסטי) - הבוט לא מסכם בעצמו.
 async function actCoversSummary(page, params) {
@@ -688,6 +700,7 @@ async function run(page, cmd, me) {
   switch (cmd.action) {
     case "health": return actHealth(page);
     case "read_day": return actReadDay(page, cmd.params || {});
+    case "big_tables": return actBigTables(page, cmd.params || {});
     case "covers_summary": return actCoversSummary(page, cmd.params || {});
     case "deposit_summary": return actDepositSummary(page, cmd.params || {});
     case "get_deposit_link": return actGetDepositLink(page, cmd.params || {});

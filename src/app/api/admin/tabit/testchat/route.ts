@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { isMasterAuthorized } from "@/lib/admin-auth";
 import { runCommand, type TabitAction } from "@/lib/tabit-queue";
+import { recordLlmUsage } from "@/lib/usage";
 
 /**
  * צ'אט בדיקות מבודד לטאביט - למנהל הראשי בלבד.
@@ -15,7 +16,9 @@ import { runCommand, type TabitAction } from "@/lib/tabit-queue";
 export const runtime = "nodejs";
 export const maxDuration = 200;
 
-const MODEL = process.env.CHATBOT_MODEL ?? "claude-sonnet-4-6";
+// מודל ייעודי למעבדה, נפרד מהבוט הציבורי (CHATBOT_MODEL). ברירת מחדל Haiku -
+// זו סביבת בדיקה פנימית ולא צריך את Sonnet, וזה זול פי כמה. אפשר לעקוף ב-TABIT_LAB_MODEL.
+const MODEL = process.env.TABIT_LAB_MODEL ?? "claude-haiku-4-5-20251001";
 
 function israelNow(): string {
   return new Intl.DateTimeFormat("he-IL", {
@@ -26,7 +29,8 @@ function israelNow(): string {
 
 const TOOLS: Anthropic.Tool[] = [
   { name: "tabit_health", description: "בדוק את החיבור לטאביט: טוען נתונים ומחזיר כמה הזמנות נטענו וגרסת שרת. השתמש כשמבקשים לוודא שהחיבור עובד.", input_schema: { type: "object", properties: {} } },
-  { name: "tabit_read_day", description: "קרא את ההזמנות של יום מסוים מטאביט. day = \"today\" | \"tomorrow\" | \"YYYY-MM-DD\".", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
+  { name: "tabit_read_day", description: "קרא את ההזמנות של יום מסוים מטאביט. day = \"today\" | \"tomorrow\" | \"yesterday\" | \"YYYY-MM-DD\". ימי עבר נקראים מהארכיון אוטומטית.", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
+  { name: "tabit_big_tables", description: "שולחנות גדולים ליום - הרשימה **מסוננת, ממוינת וספורה בקוד** (לא על ידך). ברירת מחדל 8+ סועדים (אפשר min אחר). מחזיר count, covers, missing_deposit והרשימה עצמה - מוכנים. זה הכלי הנכון לכל שאלה על 'שולחנות/הזמנות גדולות'. אל תסנן/תספור בעצמך, קח את מה שחוזר. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" }, min: { type: "number" } }, required: ["day"] } },
   { name: "tabit_covers_summary", description: "כמה אנשים (סה\"כ סועדים) וכמה הזמנות יש ביום, אופציונלית בטווח שעות. from/to בפורמט HH:MM (ערב = from \"18:00\"; צהריים = to \"18:00\"). מחזיר count ו-covers מחושבים בקוד - קח אותם כמו שהם, אל תסכם בעצמך. השתמש בזה לכל שאלת 'כמה אנשים/מוזמנים' (בשעה/בערב/בטווח).", input_schema: { type: "object", properties: { day: { type: "string" }, from: { type: "string" }, to: { type: "string" } }, required: ["day"] } },
   { name: "tabit_deposit_summary", description: "סיכום פיקדונות ליום: כמה מובטחים וכמה חסרים, ורשימת החסרים. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
   { name: "tabit_get_deposit_link", description: "שלוף את קישור הפיקדון של הזמנה לפי reservationId.", input_schema: { type: "object", properties: { reservationId: { type: "string" } }, required: ["reservationId"] } },
@@ -43,6 +47,7 @@ const TOOLS: Anthropic.Tool[] = [
 const TOOL_TO_ACTION: Record<string, TabitAction> = {
   tabit_health: "health",
   tabit_read_day: "read_day",
+  tabit_big_tables: "big_tables",
   tabit_covers_summary: "covers_summary",
   tabit_deposit_summary: "deposit_summary",
   tabit_get_deposit_link: "get_deposit_link",
@@ -63,6 +68,7 @@ const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למע
 הכלים שלך:
 - tabit_health: בדיקת חיבור.
 - tabit_read_day / tabit_deposit_summary: קריאת הזמנות וסטטוס פיקדונות ליום.
+- tabit_big_tables: שולחנות גדולים ליום (8+ כברירת מחדל) - מסונן וספור בקוד. הכלי לכל שאלה על הזמנות גדולות.
 - tabit_covers_summary: כמה אנשים/הזמנות ביום או בטווח שעות (ערב=from 18:00) - מספרים מחושבים מוכנים.
 - tabit_get_deposit_link: קישור פיקדון להזמנה.
 - tabit_create_reservation: יצירת הזמנה חדשה (הוספה בלבד).
@@ -83,13 +89,11 @@ const SYSTEM = `אתה עוזר בדיקות פנימי של החיבור למע
 2. יצירת הזמנה - אסוף את הפרטים: שם, טלפון, מספר סועדים, תאריך, שעה, **בפנים או בחוץ** (seating: inside/outside; אם אומרים "בר" - אמור שזה לא נתמך כרגע ובקש פנים/חוץ), ו**האם לשלוח ללקוח קישור פיקדון** (send_deposit_link). הצג סיכום קצר של כל אלה, וצור רק אחרי אישור מפורש. אל תשאל על שולחן ספציפי - השיוך אוטומטי וחכם לפי האזור.
 3. כשכלי נכשל - דווח בבירור מה נכשל ומה השגיאה. זו כל המטרה של סביבת הבדיקה.
 4. ענה תמציתי וברור, בעברית.
-5. שלמות הנתונים מעל הכל - אתה כלי בדיקה, לא תקציר שיווקי. כשמציגים רשימה, הצג את **כולה** ואל תקצר בשקט. "הזמנות גדולות" בלי מספר מפורש = 8+ סועדים כברירת מחדל; רשום את כל ההזמנות שעומדות בסף, ואם יש הרבה - אמור כמה יש ואל תשמיט.
+5. שלמות הנתונים מעל הכל - אתה כלי בדיקה, לא תקציר שיווקי. כשמציגים רשימה, הצג את **כולה** ואל תקצר בשקט. "הזמנות גדולות" בלי מספר מפורש = 8+ סועדים כברירת מחדל. **לשאלות על שולחנות/הזמנות גדולות קרא ל-tabit_big_tables** (הוא מסנן, ממיין וסופר בקוד) - אל תסנן את tabit_read_day בעצמך. רשום את כל מה שהכלי החזיר, ואם יש הרבה - אמור כמה יש ואל תשמיט.
 6. פיקדון הוא מידע קריטי: בכל רשימת הזמנות, סמן במפורש אילו **חסרות פיקדון**, ואם יש ולו אחת חסרה - אמור זאת בבירור בסיכום (אל תיתן רושם שהכל מכוסה כשלא).
 7. **לעולם אל תחשב או תסכם מספרים בעצמך** (סה"כ סועדים, כמה מובטחים וכו') - זה מקור לטעויות. השתמש אך ורק בשדות המחושבים שהכלי מחזיר: count, covers, secured, missing. לשאלת "כמה אנשים/מוזמנים" בשעה/בערב/בטווח - קרא ל-**tabit_covers_summary** עם from/to (ערב = from "18:00", צהריים = to "18:00") וקח את covers כמו שהוא. אל תסכם ידנית רשימת הזמנות אף פעם.
 8. **ענה ישיר וקצר.** כשמבקשים מספר - **המשפט הראשון הוא המספר** (למשל: "היום מ-18:00 יש 84 סועדים ב-19 הזמנות"). בלי הקדמות ארוכות, בלי לתאר את התהליך שעשית, בלי תשובות מסובכות. פרט נוסף רק אם ביקשו או אם באמת עוזר.
-9. **פורמט:** התשובות מיועדות להעתקה לוואטסאפ. אל תשתמש לעולם במקפים ארוכים (—) ולא בחצים (←, →) - הם נשברים בוואטסאפ; במקומם השתמש בפסיק, נקודה מפרידה (·), או ניסוח רגיל. הדגשה ב-**כוכביות**. מותר להשתמש בטבלת markdown לרשימות (הממשק מרנדר אותה יפה וההעתקה ממירה אותה אוטומטית לשורות). כשאתה מציג רשימת הזמנות כטבלה, סדר העמודות הוא: שם, שעה, סועדים, שולחנות, **טלפון**, פיקדון - כלול את הטלפון (שדה phone) בעמודה שלפני הפיקדון.
-
-השעה בישראל כעת: ${israelNow()}.`;
+9. **פורמט:** התשובות מיועדות להעתקה לוואטסאפ. אל תשתמש לעולם במקפים ארוכים (—) ולא בחצים (←, →) - הם נשברים בוואטסאפ; במקומם השתמש בפסיק, נקודה מפרידה (·), או ניסוח רגיל. הדגשה ב-**כוכביות**. מותר להשתמש בטבלת markdown לרשימות (הממשק מרנדר אותה יפה וההעתקה ממירה אותה אוטומטית לשורות). כשאתה מציג רשימת הזמנות כטבלה, סדר העמודות הוא: שם, שעה, סועדים, שולחנות, **טלפון**, פיקדון - כלול את הטלפון (שדה phone) בעמודה שלפני הפיקדון.`;
 
 async function dispatch(name: string, input: Record<string, unknown>): Promise<unknown> {
   const action = TOOL_TO_ACTION[name];
@@ -116,8 +120,18 @@ export async function POST(req: NextRequest) {
   const msgs: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
   const toolLog: { tool: string; params: unknown; ok: boolean; result?: unknown; error?: string }[] = [];
 
+  // הפרומפט+כלים הסטטיים נשמרים במטמון (ttl 1h) - חוסך את מחיר הקלט המלא בכל קריאה
+  // חוזרת בסשן בדיקה. השעה הדינמית נשארת מחוץ למטמון (בלוק נפרד), אחרת המטמון
+  // היה מפוספס בכל דקה. (זה גם מתקן טעות קודמת שבה השעה "נתקעה" על זמן העלייה של השרת.)
+  const system: Anthropic.TextBlockParam[] = [
+    { type: "text", text: SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text", text: `השעה בישראל כעת: ${israelNow()}.` },
+  ];
+
   for (let i = 0; i < 5; i++) {
-    const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 3000, system: SYSTEM, tools: TOOLS, messages: msgs });
+    const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 3000, system, tools: TOOLS, messages: msgs });
+    // רישום למד השימוש (כמו הבוט הציבורי). countsAsReply=false: זו בדיקה פנימית, לא מענה ללקוח.
+    await recordLlmUsage(MODEL, resp.usage, false);
     const toolUses = resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     msgs.push({ role: "assistant", content: resp.content });
 

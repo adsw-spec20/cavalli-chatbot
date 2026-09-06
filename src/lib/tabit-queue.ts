@@ -15,6 +15,7 @@ import { getRepo } from "./db";
 export type TabitAction =
   | "health"
   | "read_day"
+  | "big_tables"
   | "covers_summary"
   | "deposit_summary"
   | "get_deposit_link"
