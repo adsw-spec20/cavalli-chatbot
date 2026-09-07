@@ -437,24 +437,30 @@ export class PostgresRepository implements Repository {
   async getConversationSummaries(): Promise<ConversationSummary[]> {
     await this.init();
     try {
-      // שאילתה אחת במקום משיכת כל ההודעות: הודעה אחרונה + זמן לקוח אחרון
-      // דרך subqueries ממופתחות (idx_messages_conv_ts), ופרטי הלקוח ב-JOIN.
-      // ביצועים: בלי COUNT להודעות (ה-UI לא מציג אותו וזו הייתה סריקה לכל
-      // שיחה), ותקרה של 300 השיחות האחרונות - הרשימה לא תופחת לנצח עם השנים.
+      // תקרה של 300 השיחות האחרונות כדי שהרשימה לא תופחת לנצח - אבל שיחות
+      // שדורשות בן אדם (אצל נציג / הוסלמו / הבוט מושהה, ושאינן סגורות) **תמיד**
+      // נכללות, גם אם הן ישנות מ-300, כדי שלקוח שממתין לנציג לא ייעלם מהפאנל.
+      // ה"תמיד נכללות" הן מעטות (רק פתוחות שדורשות טיפול), אז אפס העמסה.
       const rows = await this.sql`
+        WITH keep AS (
+          SELECT id FROM conversations
+          WHERE status <> 'closed' AND (status = 'human' OR bot_paused = true OR escalated = true)
+          UNION
+          (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 300)
+        )
         SELECT c.*,
                cu.name AS cust_name, cu.vip AS cust_vip, cu.tags AS cust_tags,
                lm.content AS last_content, lm.role AS last_role,
                (SELECT MAX(ts) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user') AS last_user_ts
         FROM conversations c
+        JOIN keep k ON k.id = c.id
         LEFT JOIN customers cu ON cu.id = c.customer_id
         LEFT JOIN LATERAL (
           SELECT content, role FROM messages m
           WHERE m.conversation_id = c.id AND m.role <> 'system'
           ORDER BY m.ts DESC LIMIT 1
         ) lm ON true
-        ORDER BY c.updated_at DESC
-        LIMIT 300`;
+        ORDER BY c.updated_at DESC`;
       return rows.map((r) => ({
         conversation: this.toConversation(r),
         customerName: (r.cust_name as string) ?? undefined,
