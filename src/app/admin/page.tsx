@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import dynamic from "next/dynamic";
+import { resyncPush } from "./push-sync";
 import { Heebo, Rubik } from "next/font/google";
 import { api, type ConvItem, type QuickReply, type PanelSettings } from "./types";
 import { unsavedChanges, setUnsaved } from "./dirty";
@@ -378,6 +379,21 @@ export default function AdminPage() {
   useEffect(() => localStorage.setItem("admin_theme_v2", theme), [theme]);
   useEffect(() => localStorage.setItem("agent_name", agentName), [agentName]);
   useEffect(() => localStorage.setItem("admin_voice", voice ? "1" : "0"), [voice]);
+
+  // רישום-מחדש אוטומטי של התראות פוש (self-heal): iOS/דפדפנים פוסלים מנויים
+  // אחרי חוסר-פעילות והשרת גוזם אותם, אז ההתראות מפסיקות בשקט. מסנכרנים את
+  // המנוי חזרה לשרת בכל פתיחה, בכל חזרה לאפליקציה, וכל 6 שעות. שקט ובלי הרשאה.
+  useEffect(() => {
+    if (authed !== true || !token) return;
+    resyncPush(token);
+    const onVis = () => { if (document.visibilityState === "visible") resyncPush(token); };
+    document.addEventListener("visibilitychange", onVis);
+    const iv = setInterval(() => resyncPush(token), 6 * 60 * 60 * 1000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      clearInterval(iv);
+    };
+  }, [authed, token]);
 
   // גובה אמיתי של אזור התצוגה: כשמקלדת המובייל נפתחת, ה-visual viewport מתכווץ
   // אבל dvh לא (iOS). מעדכנים משתנה CSS כדי ששדה ההקלדה יישאר מעל המקלדת.
