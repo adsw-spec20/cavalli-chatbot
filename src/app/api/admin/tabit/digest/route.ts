@@ -33,12 +33,19 @@ function authed(req: NextRequest): boolean {
   return safeTokenEqual(secret, given);
 }
 
-function line(r: Row): string {
-  const tbl = r.tables && r.tables.length ? ` •• ש׳ ${r.tables.join(",")}` : "";
-  const ph = r.phone ? ` •• ${fmtPhone(r.phone)}` : "";
-  // ✅ פיקדון מובטח · ⚠️ חסר · ריק = אין פיקדון בהזמנה (לא מסמנים ✅ מטעה)
-  const dep = r.deposit === "missing" ? " •• ⚠️ חסר פיקדון" : r.deposit === "secured" ? " •• ✅" : "";
-  return `*${r.time}* •• ${r.name || "(ללא שם)"} •• ${r.seats} סועדים${tbl}${ph}${dep}`;
+// כל שולחן = שתי שורות (ולפעמים שלוש):
+//   שורה 1 (מודגשת): שעה · שם · N סועדים
+//   שורה 2: ש׳ שולחנות | טלפון | ✅   (✅ רק כשהפיקדון מובטח)
+//   שורה 3 (רק אם חסר פיקדון): ⚠️ *חסר פיקדון*
+function block(r: Row): string {
+  const l1 = `*${r.time} · ${r.name || "(ללא שם)"} · ${r.seats} סועדים*`;
+  const parts: string[] = [];
+  if (r.tables && r.tables.length) parts.push(`ש׳ ${r.tables.join(",")}`);
+  if (r.phone) parts.push(fmtPhone(r.phone));
+  if (r.deposit === "secured") parts.push("✅");
+  const l2 = parts.join(" | ");
+  const l3 = r.deposit === "missing" ? "\n⚠️ *חסר פיקדון*" : "";
+  return `${l1}\n${l2}${l3}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -72,11 +79,14 @@ export async function GET(req: NextRequest) {
   const evening = big.filter((r) => r.time >= "18:00");
 
   const missingCount = big.filter((r) => r.deposit === "missing").length;
+  const footer =
+    `*סה״כ:* ${big.length} שולחנות גדולים` +
+    (missingCount ? `\n⚠️ ${missingCount} ${missingCount === 1 ? "ממתין" : "ממתינים"} לפיקדון` : "");
   const text =
-    `*שולחנות גדולים למחר* (${min}+ סועדים)\n\n` +
-    `*🌅 בוקר*\n${morning.length ? morning.map(line).join("\n") : "—"}\n\n` +
-    `*🌆 ערב*\n${evening.length ? evening.map(line).join("\n") : "—"}\n\n` +
-    `סה״כ ${big.length} שולחנות גדולים${missingCount ? ` •• ⚠️ ${missingCount} חסרי פיקדון` : ""}`;
+    `*שולחנות גדולים למחר* (${min}+)\n\n` +
+    `🌅 *בוקר*\n\n${morning.length ? morning.map(block).join("\n\n") : "—"}\n\n` +
+    `🌆 *ערב*\n\n${evening.length ? evening.map(block).join("\n\n") : "—"}\n\n` +
+    footer;
 
   return NextResponse.json(
     {
