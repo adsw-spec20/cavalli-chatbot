@@ -1770,17 +1770,6 @@ export async function handleIncomingMessage(
     console.error("[conversation-service] generateReply נכשל אחרי ניסיונות חוזרים:", err);
     await namePromise.catch(() => undefined);
 
-    // 🚨 אזעקת מערכת לפאנל: נרשמת בכל כשל מודל, עם זיהוי מיוחד לקרדיטים שאזלו.
-    // הפאנל מציג באנר אדום לכל הצוות (ההפקה מהתקרית של 3.8: יום שלם בלי שאף אחד ידע).
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const alarmReason = /credit balance/i.test(errMsg) ? "credit" : "api";
-    alarmRaised = true;
-    await repo
-      .setSetting("api_alarm", JSON.stringify({ ts: Date.now(), reason: alarmReason, sample: errMsg.slice(0, 180) }))
-      .catch(() => undefined);
-    // התראת וואטסאפ לצוות (מווסתת לאחת בשעה) - שידעו על התקלה גם בלי פאנל פתוח
-    sendSystemAlarmWhatsApp(alarmReason).catch(() => undefined);
-
     // אם בינתיים הגיעה הודעה חדשה יותר, נטוש (הקריאה החדשה תטפל)
     if (await hasNewerUserMessage(conversation.id, myTs, myMsg.id)) {
       return { conversationId: conversation.id, reply: null, status: conversation.status };
@@ -1795,6 +1784,19 @@ export async function handleIncomingMessage(
     } catch {
       /* אם הבדיקה נכשלה, ממשיכים למסלול הגיבוי הרגיל */
     }
+
+    // 🚨 רק עכשיו - אחרי שעברנו את כל הבדיקות ואנחנו באמת עומדים לשלוח ללקוח
+    // הודעת תקלה ולהסלים - מרימים את אזעקת המערכת (באנר בפאנל + וואטסאפ לצוות).
+    // כך היא מופיעה רק כשלקוח אמיתי נפגע, ולא על בליפ רגעי שהתאושש (עיבוד כפול /
+    // הודעה חדשה שנטשה). זיהוי מיוחד לקרדיטים שאזלו. (מקור: התקרית של 3.8.)
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const alarmReason = /credit balance/i.test(errMsg) ? "credit" : "api";
+    alarmRaised = true;
+    await repo
+      .setSetting("api_alarm", JSON.stringify({ ts: Date.now(), reason: alarmReason, sample: errMsg.slice(0, 180) }))
+      .catch(() => undefined);
+    sendSystemAlarmWhatsApp(alarmReason).catch(() => undefined);
+
     const cfg = await loadBusinessConfig();
     const phone = cfg.contact.phone;
     const fallback =
