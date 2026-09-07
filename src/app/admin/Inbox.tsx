@@ -285,6 +285,7 @@ export default function Inbox({
   // מסננים וחיפוש שורדים מעבר בין מסכים (session) - כך שחזרה מהדשבורד לא מאפסת.
   // נטענים ב-effect (ולא באתחול ה-state) כדי לא ליצור hydration mismatch מול ה-SSR.
   const [search, setSearch] = useState("");
+  const [serverResults, setServerResults] = useState<ConvItem[] | null>(null);
   const [channelFilter, setChannelFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<Filter>("all");
   const storageHydrated = useRef(false);
@@ -327,6 +328,29 @@ export default function Inbox({
   useEffect(() => {
     if (storageHydrated.current) writeStorage("session", "inbox_q", search);
   }, [search]);
+
+  // חיפוש צד-שרת: כשמקלידים 2+ תווים, שולחים לשרת (עם debounce) והוא מחזיר
+  // התאמות מכל הזמנים (לא מוגבל ל-300 האחרונות). ריק/קצר - חוזרים לרשימה הרגילה.
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) {
+      setServerResults(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const res = await api<ConvItem[]>(token, `/conversations?q=${encodeURIComponent(q)}`);
+        if (!cancelled) setServerResults(res);
+      } catch {
+        if (!cancelled) setServerResults(null);
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [search, token]);
   useEffect(() => {
     if (storageHydrated.current) writeStorage("session", "inbox_ch", channelFilter);
   }, [channelFilter]);
@@ -591,6 +615,8 @@ export default function Inbox({
   }
 
   const filtered = useMemo(() => {
+    // חיפוש צד-שרת פעיל: מציגים את כל ההתאמות שהשרת החזיר (מכל הזמנים), בלי סינון נוסף
+    if (serverResults) return serverResults;
     const q = search.trim().toLowerCase();
     return convs.filter((c) => {
       if (statusFilter === "starred") {
@@ -614,7 +640,7 @@ export default function Inbox({
       }
       return true;
     });
-  }, [convs, search, channelFilter, statusFilter]);
+  }, [serverResults, convs, search, channelFilter, statusFilter]);
 
   // ביצועים (מובייל): מרנדרים רק את 60 השיחות הראשונות + כפתור "הצג עוד".
   // סינון/חיפוש חדשים מתחילים שוב מ-60 - הרינדור נשאר קטן ומהיר.

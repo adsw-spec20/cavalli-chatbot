@@ -155,6 +155,8 @@ export interface Repository {
   listConversations(filter?: ConversationFilter): Promise<Conversation[]>;
   /** רשימת שיחות + נתוני תצוגה לאינבוקס בשאילתה יעילה אחת */
   getConversationSummaries(): Promise<ConversationSummary[]>;
+  /** חיפוש שיחות בכל הזמנים (לא מוגבל ל-300) לפי שם/טלפון/תוכן - מחזיר רק התאמות. */
+  searchConversationSummaries(query: string, limit?: number): Promise<ConversationSummary[]>;
   /** מחיקה לצמיתות של שיחה והודעותיה; לקוח שנשאר בלי שיחות נמחק גם הוא */
   deleteConversation(id: string): Promise<void>;
 

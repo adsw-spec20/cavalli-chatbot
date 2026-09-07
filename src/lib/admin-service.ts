@@ -22,7 +22,7 @@ import { countPendingReservations, loadReservations, reservationDateLabel } from
 import { israelDateISO } from "./business-hours";
 import type { BusinessConfig } from "./business-config";
 import { AGENT_MSG_PREFIX, type ChannelAdapter, type ConversationMessage } from "./channels/types";
-import type { Conversation, Customer, LearnedQA, StoredMessage } from "./db";
+import type { Conversation, ConversationSummary, Customer, LearnedQA, StoredMessage } from "./db";
 
 const STOPWORDS = new Set([
   "של", "עם", "מה", "יש", "לי", "אני", "הוא", "היא", "את", "על", "או", "גם",
@@ -56,32 +56,40 @@ export interface ConversationListItem {
   lastRole?: string;
 }
 
+function summaryToListItem(s: ConversationSummary): ConversationListItem {
+  const c = s.conversation;
+  return {
+    id: c.id,
+    channel: c.channel,
+    status: c.status,
+    escalated: c.escalated,
+    escalationReason: c.escalationReason,
+    urgent: (c.meta as { urgent?: boolean } | undefined)?.urgent,
+    starred: (c.meta as { starred?: boolean } | undefined)?.starred,
+    botPaused: c.botPaused,
+    customerName: s.customerName,
+    customerId: c.customerId,
+    vip: s.customerVip,
+    tags: s.customerTags,
+    updatedAt: c.updatedAt,
+    lastMessage: s.lastMessage,
+    lastUserTs: s.lastUserTs,
+    messageCount: s.messageCount,
+    awaiting: s.lastMessageRole === "user",
+    lastRole: s.lastMessageRole,
+  };
+}
+
 export async function listConversations(): Promise<ConversationListItem[]> {
   // שאילתת סיכום אחת (בלי למשוך את כל ההודעות) - נשאר מהיר גם עם אלפי הודעות
   const summaries = await getRepo().getConversationSummaries();
-  return summaries.map((s) => {
-    const c = s.conversation;
-    return {
-      id: c.id,
-      channel: c.channel,
-      status: c.status,
-      escalated: c.escalated,
-      escalationReason: c.escalationReason,
-      urgent: (c.meta as { urgent?: boolean } | undefined)?.urgent,
-      starred: (c.meta as { starred?: boolean } | undefined)?.starred,
-      botPaused: c.botPaused,
-      customerName: s.customerName,
-      customerId: c.customerId,
-      vip: s.customerVip,
-      tags: s.customerTags,
-      updatedAt: c.updatedAt,
-      lastMessage: s.lastMessage,
-      lastUserTs: s.lastUserTs,
-      messageCount: s.messageCount,
-      awaiting: s.lastMessageRole === "user",
-      lastRole: s.lastMessageRole,
-    };
-  });
+  return summaries.map(summaryToListItem);
+}
+
+/** חיפוש שיחות בכל הזמנים (לא מוגבל ל-300) לפי שם/טלפון/תוכן - מחזיר רק התאמות. */
+export async function searchConversations(query: string): Promise<ConversationListItem[]> {
+  const summaries = await getRepo().searchConversationSummaries(query, 50);
+  return summaries.map(summaryToListItem);
 }
 
 /** כפתור כיבוי: האם הבוט פעיל */

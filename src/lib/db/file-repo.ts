@@ -131,7 +131,8 @@ export class FileRepository implements Repository {
     const store = await this.load();
     const existing = store.conversations[id];
     if (!existing) return null;
-    const updated: Conversation = { ...existing, ...patch, updatedAt: Date.now() };
+    // ראה הערה ב-postgres-repo: קורא יכול לשמר updatedAt (סימון כוכב)
+    const updated: Conversation = { ...existing, ...patch, updatedAt: patch.updatedAt ?? Date.now() };
     store.conversations[id] = updated;
     await this.persist();
     return updated;
@@ -189,6 +190,27 @@ export class FileRepository implements Repository {
           messageCount: msgs.length,
         };
       });
+  }
+
+  async searchConversationSummaries(query: string, limit = 50): Promise<ConversationSummary[]> {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const digits = q.replace(/\D/g, "");
+    const store = await this.load();
+    const convWithText = new Set<string>();
+    for (const m of store.messages) {
+      if ((m.content ?? "").toLowerCase().includes(q)) convWithText.add(m.conversationId);
+    }
+    const all = await this.getConversationSummaries();
+    return all
+      .filter((s) => {
+        const name = (s.customerName ?? "").toLowerCase();
+        const cid = s.conversation.customerId.toLowerCase();
+        if (name.includes(q) || cid.includes(q)) return true;
+        if (digits.length >= 7 && cid.replace(/\D/g, "").includes(digits.slice(-9))) return true;
+        return convWithText.has(s.conversation.id);
+      })
+      .slice(0, limit);
   }
 
   async addMessage(msg: Omit<StoredMessage, "id">): Promise<StoredMessage | null> {

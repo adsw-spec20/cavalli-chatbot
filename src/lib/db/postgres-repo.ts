@@ -315,7 +315,10 @@ export class PostgresRepository implements Repository {
     await this.init();
     const existing = await this.getConversation(id);
     if (!existing) return null;
-    const m = { ...existing, ...patch, updatedAt: Date.now() };
+    // updatedAt מתעדכן אוטומטית, אלא אם הקורא ביקש במפורש לשמר אותו. זה נדרש
+    // לעדכונים שהם "סימון" ולא פעילות אמיתית בשיחה (כוכב), שאחרת היו מקפיצים
+    // את השיחה לראש האינבוקס כאילו הגיעה הודעה חדשה.
+    const m = { ...existing, ...patch, updatedAt: patch.updatedAt ?? Date.now() };
     const rows = await this.sql`
       UPDATE conversations SET
         status = ${m.status},
@@ -465,6 +468,50 @@ export class PostgresRepository implements Repository {
       // רשת ביטחון: אם השאילתה המהירה נכשלת, האינבוקס ממשיך לעבוד בדרך האיטית
       console.error("[postgres] summary query failed, falling back:", err);
       return this.summariesFallback();
+    }
+  }
+
+  async searchConversationSummaries(query: string, limit = 50): Promise<ConversationSummary[]> {
+    await this.init();
+    const q = query.trim();
+    if (!q) return [];
+    const pat = `%${q}%`;
+    // חיפוש טלפון: אם המחרוזת מכילה מספיק ספרות, מחפשים גם לפי 9 הספרות האחרונות
+    // (מכסה 972.../ 0.../ עם או בלי מקפים במזהה הלקוח). אחרת - חיפוש טקסט רגיל.
+    const digits = q.replace(/\D/g, "");
+    const digitPat = digits.length >= 7 ? `%${digits.slice(-9)}%` : pat;
+    try {
+      const rows = await this.sql`
+        SELECT c.*,
+               cu.name AS cust_name, cu.vip AS cust_vip, cu.tags AS cust_tags,
+               lm.content AS last_content, lm.role AS last_role,
+               (SELECT MAX(ts) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user') AS last_user_ts
+        FROM conversations c
+        LEFT JOIN customers cu ON cu.id = c.customer_id
+        LEFT JOIN LATERAL (
+          SELECT content, role FROM messages m
+          WHERE m.conversation_id = c.id AND m.role <> 'system'
+          ORDER BY m.ts DESC LIMIT 1
+        ) lm ON true
+        WHERE cu.name ILIKE ${pat}
+           OR cu.channel_user_id ILIKE ${pat}
+           OR cu.channel_user_id ILIKE ${digitPat}
+           OR c.customer_id ILIKE ${pat}
+           OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content ILIKE ${pat})
+        ORDER BY c.updated_at DESC
+        LIMIT ${limit}`;
+      return rows.map((r) => ({
+        conversation: this.toConversation(r),
+        customerName: (r.cust_name as string) ?? undefined,
+        customerVip: (r.cust_vip as boolean) ?? undefined,
+        customerTags: this.parseTags(r.cust_tags),
+        lastMessage: r.last_content ? (r.last_content as string).slice(0, 80) : undefined,
+        lastMessageRole: (r.last_role as StoredMessage["role"]) ?? undefined,
+        lastUserTs: r.last_user_ts ? Number(r.last_user_ts) : undefined,
+      }));
+    } catch (err) {
+      console.error("[postgres] search query failed:", err);
+      return [];
     }
   }
 
