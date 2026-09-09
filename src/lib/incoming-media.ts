@@ -160,22 +160,16 @@ async function uploadToBlob(
   const { put } = await import("@vercel/blob");
   const safeHint = hint.replace(/[^\w.\-]/g, "").slice(0, 40) || "file";
   const key = `incoming/${new Date().toISOString().slice(0, 10)}/${safeHint}.${extFromMime(mime)}`;
-  // מנסים אחסון **פרטי** (קבצי לקוחות - קבלות, צילומי מסך). אם זה נכשל (למשל
-  // החנות/החשבון לא תומכים בפרטי) נופלים ל**ציבורי** עם סיומת אקראית, כדי
-  // שהתמונה בכל זאת תוצג לצוות. עיקרון: כשלון לעולם לא מבליע את הקובץ בשקט.
-  // בציבורי לא מחזירים pathname - וכך ההצגה בפאנל מצביעה ישירות לכתובת (לא לראוט הפרטי).
+  // אחסון **ציבורי** עם סיומת אקראית (כתובת לא-ניתנת-לניחוש). זו ההתנהגות
+  // שעבדה לפני 9.9. הניסיון לעבור לאחסון פרטי נכשל בפרודקשן (תמונות לקוחות
+  // פשוט לא הוצגו), ואמינות התצוגה חשובה מפרטיות-הכתובת. בלי pathname => הפאנל
+  // מציג ישירות מהכתובת. אפשר לחזור לפרטי בעתיד אחרי אימות שחנות ה-Blob תומכת.
   try {
-    const blob = await put(key, bytes, { access: "private", addRandomSuffix: true, contentType: mime });
-    return { url: blob.url, pathname: blob.pathname };
-  } catch (errPrivate) {
-    console.error("[incoming-media] העלאה פרטית נכשלה, נופל לציבורי:", errPrivate);
-    try {
-      const blob = await put(key, bytes, { access: "public", addRandomSuffix: true, contentType: mime });
-      return { url: blob.url };
-    } catch (errPublic) {
-      console.error("[incoming-media] העלאה ל-Blob נכשלה (פרטי וציבורי):", errPublic);
-      return null;
-    }
+    const blob = await put(key, bytes, { access: "public", addRandomSuffix: true, contentType: mime });
+    return { url: blob.url };
+  } catch (err) {
+    console.error("[incoming-media] העלאה ל-Blob נכשלה:", err);
+    return null;
   }
 }
 
