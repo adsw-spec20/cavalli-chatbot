@@ -171,6 +171,7 @@ function normalizeForSnapshot(list, tables) {
         deposit: depositStatus(r),
         notes: ((d.notes || "") + (d.personal_message ? ` | ${d.personal_message}` : "")).trim(),
         manageUrl: (r.links && r.links.management) || null,
+        depositLink: (r.links && r.links.deposit) || null,
       };
     })
     .filter((r) => r.fromISO);
@@ -253,7 +254,7 @@ async function actDepositSummary(page, params) {
   const { day, covers, reservations } = await actReadDay(page, params);
   const missing = reservations.filter((r) => r.deposit === "missing");
   const secured = reservations.filter((r) => r.deposit === "secured").length;
-  return { day, total: reservations.length, covers, secured, missing: missing.length, missingList: missing.map((r) => ({ id: r.id, name: r.name, seats: r.seats, time: r.time })) };
+  return { day, total: reservations.length, covers, secured, missing: missing.length, missingList: missing.map((r) => ({ id: r.id, name: r.name, seats: r.seats, time: r.time, phone: r.phone, tables: r.tables })) };
 }
 async function actGetDepositLink(page, params) {
   for (let i = 0; i < 4; i++) {
@@ -320,7 +321,9 @@ function comboByProximity(free, party) {
  * צמודים, אך ורק מתוך שולחנות פנויים בחלון הזמן ובאזור המבוקש (פנים/חוץ),
  * ולא נעולים. seatingPref: "inside" | "outside" | null (הכל).
  */
-function pickTables(tables, allReservations, fromISO, untilISO, party, seatingPref) {
+// כל השולחנות הפנויים בחלון הזמן ובאזור המבוקש (בלי סינון לפי גודל קבוצה) -
+// הבסיס גם לשיוך (pickTables) וגם לרשימת הזמינות המלאה (check_availability).
+function computeFreeTables(tables, allReservations, fromISO, untilISO, seatingPref) {
   const fromT = new Date(fromISO).getTime();
   const untilT = new Date(untilISO).getTime();
   const occupied = new Set();
@@ -335,11 +338,14 @@ function pickTables(tables, allReservations, fromISO, untilISO, party, seatingPr
   // הגבלה לאזור מבוקש לפי החלוקה של קוואלי
   if (seatingPref === "outside") free = free.filter((t) => isOutside(t));
   else if (seatingPref === "inside") free = free.filter((t) => !isOutside(t));
+  return free;
+}
+function pickTables(tables, allReservations, fromISO, untilISO, party, seatingPref) {
+  const free = computeFreeTables(tables, allReservations, fromISO, untilISO, seatingPref);
   // שולחן בודד: הקטן ביותר שמכיל את הקבוצה
   const singles = free.filter((t) => (t.seats || 0) >= party).sort((a, b) => a.seats - b.seats);
   if (singles.length) return { ids: [singles[0]._id], numbers: [singles[0].number] };
-  // צירוף לקבוצה גדולה: אשכול של שולחנות צמודים פיזית (לפי מיקום), עם התאמה
-  // הדוקה לגודל. כך 10 סועדים יקבלו שילוב קומפקטי של שולחנות סמוכים.
+  // צירוף לקבוצה גדולה: אשכול של שולחנות צמודים פיזית (לפי מיקום), עם התאמה הדוקה לגודל.
   const combo = comboByProximity(free, party);
   if (combo) return { ids: combo.map((t) => t._id), numbers: combo.map((t) => t.number) };
   return { ids: [], numbers: [] };
@@ -527,13 +533,38 @@ async function actBookingSources(page, params) {
 
 const TABLE_STATUS_HE = { available: "פנוי", occupied: "תפוס", reserved: "שמור", dirty: "מלוכלך", seated: "תפוס", cleaning: "בניקוי" };
 async function actTablesStatus(page) {
-  const tables = await getTables(page);
+  const [tables, list] = [await getTables(page), await getReservations(page)];
   const active = tables.filter((t) => !t.disabled);
   const counts = {};
   let seats = 0;
-  for (const t of active) { const s = t.status || "?"; counts[s] = (counts[s] || 0) + 1; seats += t.seats || 0; }
+  for (const t of active) { const s = t.status || "unknown"; counts[s] = (counts[s] || 0) + 1; seats += t.seats || 0; }
   const by_status = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([status, count]) => ({ status, label: TABLE_STATUS_HE[status] || status, count }));
-  return { total_tables: active.length, total_seats: seats, by_status };
+
+  // שולחנות תפוסים + כמה זמן יושבים ודגל התפנות, לפי ההזמנה שיושבת בהם עכשיו.
+  // אין חיזוי - רק הזמן שחלף מול הזמן שהוקצב (reserved_from/until). אינדיקציה, לא הבטחה.
+  const now = Date.now();
+  const byId = new Map(active.map((t) => [t._id, t]));
+  const occupied_detail = [];
+  for (const r of list) {
+    const d = r.reservation_details || {};
+    if (r.state === "cancelled" || !d.reserved_from) continue;
+    const f = new Date(d.reserved_from).getTime();
+    if (f > now) continue; // עוד לא התיישבו
+    const u = d.reserved_until ? new Date(d.reserved_until).getTime() : f + 120 * 60000;
+    for (const id of d.reserved_tables_ids || []) {
+      const t = byId.get(id);
+      if (!t || !["occupied", "seated"].includes(t.status)) continue;
+      const remaining = Math.round((u - now) / 60000);
+      occupied_detail.push({
+        table: t.number, seats: t.seats || 0,
+        seated_min: Math.round((now - f) / 60000),
+        remaining_min: remaining,
+        flag: remaining <= 0 ? "מעבר לזמן" : remaining <= 20 ? "לקראת סיום" : "יושבים",
+      });
+    }
+  }
+  occupied_detail.sort((a, b) => a.remaining_min - b.remaining_min);
+  return { total_tables: active.length, total_seats: seats, by_status, occupied_detail };
 }
 
 async function actCustomerLookup(page, params) {
@@ -578,19 +609,23 @@ async function actCheckAvailability(page, params) {
   const from = ilToUtcISO(date, time);
   const until = new Date(new Date(from).getTime() + 120 * 60000).toISOString();
   const seatingPref = seating === "inside" ? "inside" : seating === "outside" ? "outside" : null;
+  const party = Number(seats);
   const [tables, allRes] = [await getTables(page), await getReservations(page)];
-  const picked = pickTables(tables, allRes, from, until, Number(seats), seatingPref);
-  const areaOfPicked = picked.numbers.length ? (OUTSIDE_NUMS.has(picked.numbers[0]) ? "חוץ" : "פנים") : null;
-  const reqAreaHe = seatingPref === "outside" ? "חוץ" : seatingPref === "inside" ? "פנים" : null;
+  const free = computeFreeTables(tables, allRes, from, until, seatingPref);
+  const areaOf = (n) => (OUTSIDE_NUMS.has(n) ? "חוץ" : "פנים");
+  // כל השולחנות הפנויים במשבצת (הבוט מציג את כולם, לא רק אחד - עדיין לא שומרים מקום)
+  const freeList = free.slice().sort((a, b) => (a.number || 0) - (b.number || 0)).map((t) => ({ number: t.number, seats: t.seats || 0, area: areaOf(t.number) }));
+  const fitsSingle = freeList.filter((t) => t.seats >= party).map((t) => t.number);
+  const picked = pickTables(tables, allRes, from, until, party, seatingPref);
+  const reqAreaHe = seatingPref === "outside" ? "חוץ" : seatingPref === "inside" ? "פנים" : "כל אזור";
   return {
-    date, time, seats: Number(seats),
-    requested_area: reqAreaHe || "כל אזור",
+    date, time, seats: party,
+    requested_area: reqAreaHe,
     available: picked.ids.length > 0,
-    tables: picked.numbers,
-    area: areaOfPicked,
-    note: picked.ids.length
-      ? `יש מקום ב${areaOfPicked}: שולחן ${picked.numbers.join(", ")}`
-      : (reqAreaHe ? `אין שולחן פנוי ב${reqAreaHe} בשעה הזאת` : "אין שולחן פנוי מתאים בשעה הזאת"),
+    free_tables: freeList,
+    fits_single: fitsSingle,
+    needs_combo: picked.ids.length > 0 && fitsSingle.length === 0,
+    recommended: picked.numbers,
   };
 }
 

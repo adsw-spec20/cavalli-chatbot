@@ -168,13 +168,13 @@ interface Msg {
 }
 
 const SUGGESTIONS = [
-  "מה ההזמנות הגדולות מחר?",
-  "למי חסר פיקדון מחר?",
-  "יש מקום ל-8 אנשים בשבת ב-20:00?",
-  "מצב השולחנות עכשיו",
-  "כמה אי-הגעות וביטולים היו החודש?",
-  "פילוח מקורות ההזמנות",
-  "צור הזמנת בדיקה על השם שלי מחר ב-20:00 ל-2 אנשים",
+  "כמה מוזמנים יש היום בערב?",
+  "כמה שולחנות גדולים יש היום?",
+  "איזה הזמנות לא שילמו פיקדון להיום?",
+  "תמצא לי את ההזמנה של ",
+  "תבדוק אם יש מקום ל",
+  "כמה אי הגעות וביטולים היו החודש?",
+  "מה מצב השולחנות עכשיו במסעדה?",
 ];
 
 function ToolLog({ tools }: { tools: ToolEntry[] }) {
@@ -213,6 +213,20 @@ export default function TabitTestChat({ token }: { token: string }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // לחיצה על צ'יפ ממלאת את תיבת הצ'אט (לא שולחת) כדי שאפשר לערוך/להשלים לפני שליחה
+  function fillFromChip(text: string) {
+    setInput(text);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        const end = el.value.length;
+        el.setSelectionRange(end, end);
+      }
+    });
+  }
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -260,7 +274,7 @@ export default function TabitTestChat({ token }: { token: string }) {
               <div>שלח הודעה כדי לבדוק את החיבור לטאביט 👇</div>
               <div className="flex flex-wrap gap-2 justify-center">
                 {SUGGESTIONS.map((s) => (
-                  <button key={s} onClick={() => send(s)} className="text-xs border border-[var(--border)] rounded-full px-3 py-1.5 hover:border-[var(--accent)] hover:text-[var(--accent)]">
+                  <button key={s} onClick={() => fillFromChip(s)} className="text-xs border border-[var(--border)] rounded-full px-3 py-1.5 hover:border-[var(--accent)] hover:text-[var(--accent)]">
                     {s}
                   </button>
                 ))}
@@ -287,6 +301,7 @@ export default function TabitTestChat({ token }: { token: string }) {
         </div>
         <div className="border-t border-[var(--border)] p-2.5 flex gap-2">
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send()}

@@ -31,6 +31,12 @@ export const PROACTIVE_TEMPLATES = {
     template: "payment_reminder_v2",
     logText: "💳 נשלחה ללקוח תזכורת להשלמת תשלום הפיקדון בוואטסאפ (שליחה יזומה)",
   },
+  payment_link: {
+    // v3 = תזכורת פיקדון עם משתנה {{1}} = קישור התשלום האמיתי של ההזמנה.
+    // דורש אישור מטא לפני שימוש (ראה מרכז טאביט > תזכורת פיקדון).
+    template: "payment_reminder_v3",
+    logText: "💳 נשלחה ללקוח תזכורת פיקדון עם קישור תשלום בוואטסאפ (שליחה יזומה)",
+  },
 } satisfies Record<string, ProactiveTemplate>;
 
 export type ProactiveKind = keyof typeof PROACTIVE_TEMPLATES;
@@ -58,6 +64,8 @@ export async function sendProactiveTemplate(args: {
   kind: ProactiveKind;
   phone: string;
   agentName?: string;
+  /** ערכים למשתני גוף התבנית ({{1}}, {{2}}...) - למשל קישור הפיקדון בתבנית payment_link */
+  bodyParams?: string[];
 }): Promise<ProactiveResult> {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -68,6 +76,16 @@ export async function sendProactiveTemplate(args: {
   if (!to) return { ok: false, status: 400, error: "מספר טלפון לא תקין" };
 
   const { template, logText } = PROACTIVE_TEMPLATES[args.kind];
+  const templateObj: {
+    name: string;
+    language: { code: string };
+    components?: { type: "body"; parameters: { type: "text"; text: string }[] }[];
+  } = { name: template, language: { code: "he" } };
+  if (args.bodyParams?.length) {
+    templateObj.components = [
+      { type: "body", parameters: args.bodyParams.map((t) => ({ type: "text", text: t })) },
+    ];
+  }
   const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -76,7 +94,7 @@ export async function sendProactiveTemplate(args: {
       recipient_type: "individual",
       to,
       type: "template",
-      template: { name: template, language: { code: "he" } },
+      template: templateObj,
     }),
   });
 
