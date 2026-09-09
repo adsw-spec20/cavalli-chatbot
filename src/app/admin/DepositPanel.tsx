@@ -161,7 +161,7 @@ export default function DepositPanel({
                           <div className="flex-1 min-w-0">
                             <div className="font-medium truncate">{r.name || "(ללא שם)"}</div>
                             <div className="text-xs text-[var(--muted)]" style={{ fontVariantNumeric: "tabular-nums" }}>
-                              {r.time} · {r.seats} סועדים · <span dir="ltr">{fmtPhone(r.phone)}</span>
+                              {r.time} · {r.seats} סועדים · <a href={`tel:${r.phone}`} dir="ltr" className="text-[var(--accent)] underline">{fmtPhone(r.phone)}</a>
                             </div>
                           </div>
                           {state === "ok" ? (

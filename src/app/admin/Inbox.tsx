@@ -26,7 +26,7 @@ import DepositPanel from "./DepositPanel";
 const PROACTIVE = {
   parking: {
     endpoint: "/send-parking",
-    label: "📍 שלח חניה",
+    label: "📍 חניה",
     title: "שליחת הוראות הגעה וחניה בוואטסאפ ללקוח שהתקשר",
     hint: "הלקוח יקבל בוואטסאפ את הכתובת, ניווט ב-Waze וסרטון הדרך לחניה - והשיחה תתועד כאן בפאנל.",
   },
@@ -143,6 +143,15 @@ function writeStorage(store: "session" | "local", key: string, value: string) {
 }
 
 type Filter = "all" | "awaiting" | "escalated" | "human" | "closed" | "starred";
+
+/**
+ * נעוצה בפועל: שיחה אצל נציג / מוסלמת נעוצה כברירת מחדל (תמיד בראש), עד שנציג
+ * מבטל לה את הנעיצה ידנית. tri-state של meta.starred: true=נעיצה מפורשת,
+ * false=ביטול מפורש, undefined=ברירת מחדל (נעוץ אם אצל נציג).
+ */
+function effPinned(c: { starred?: boolean; status?: string; escalated?: boolean }): boolean {
+  return c.starred !== undefined ? c.starred : c.status === "human" || !!c.escalated;
+}
 export interface InboxFilterIntent {
   status?: Filter;
   /** פתיחה ישירה של שיחה ספציפית (קפיצה מ"ידע"/"הזמנות") */
@@ -207,20 +216,20 @@ const ConvRow = memo(function ConvRow({
             <span
               role="button"
               tabIndex={0}
-              aria-pressed={!!c.starred}
+              aria-pressed={effPinned(c)}
               onClick={(e) => {
                 e.stopPropagation();
-                onToggleStar(c.id, !c.starred);
+                onToggleStar(c.id, !effPinned(c));
               }}
               onKeyDown={(e) => {
                 if (e.key !== "Enter" && e.key !== " ") return;
                 e.preventDefault();
                 e.stopPropagation();
-                onToggleStar(c.id, !c.starred);
+                onToggleStar(c.id, !effPinned(c));
               }}
-              title={c.starred ? "בטל נעיצה" : "נעץ שיחה"}
+              title={effPinned(c) ? "בטל נעיצה" : "נעץ שיחה"}
               className={`text-sm leading-none cursor-pointer transition ${
-                c.starred ? "" : "opacity-20 grayscale hover:opacity-70"
+                effPinned(c) ? "" : "opacity-20 grayscale hover:opacity-70"
               }`}
             >
               📌
@@ -541,7 +550,7 @@ export default function Inbox({
       const next = { ...m };
       let changed = false;
       for (const c of conversations) {
-        if (c.id in next && !!c.starred === next[c.id]) {
+        if (c.id in next && c.starred === next[c.id]) {
           delete next[c.id];
           changed = true;
         }
@@ -588,7 +597,7 @@ export default function Inbox({
       // הוסלמה, או שהלקוח כתב ואף אחד לא ענה
       human: open.filter((c) => c.status === "human" || c.escalated || c.awaiting).length,
       // נספרים על כל השיחות ולא רק על הפתוחות - שני המסננים כוללים גם סגורות
-      starred: convs.filter((c) => c.starred).length,
+      starred: convs.filter((c) => effPinned(c)).length,
     };
   }, [convs]);
 
@@ -615,11 +624,11 @@ export default function Inbox({
     // חיפוש צד-שרת פעיל: מציגים את כל ההתאמות שהשרת החזיר (מכל הזמנים), בלי סינון נוסף
     if (serverResults) return serverResults;
     const q = search.trim().toLowerCase();
-    return convs.filter((c) => {
+    const base = convs.filter((c) => {
       if (statusFilter === "starred") {
         // נעוצות חוצה מצבים בכוונה: הנקודה של נעיצה היא למצוא את השיחה שוב,
         // וגם שיחה סגורה שננעצה חייבת להישאר נגישה דרך המסנן הזה.
-        if (!c.starred) return false;
+        if (!effPinned(c)) return false;
       } else if (statusFilter === "closed") {
         if (c.status !== "closed") return false;
       } else {
@@ -637,6 +646,8 @@ export default function Inbox({
       }
       return true;
     });
+    // נעוצות (אצל נציג + נעיצה ידנית) תמיד בראש; מיון יציב שומר על סדר הזמן בכל קבוצה
+    return base.slice().sort((a, b) => Number(effPinned(b)) - Number(effPinned(a)));
   }, [serverResults, convs, search, channelFilter, statusFilter]);
 
   // ביצועים (מובייל): מרנדרים רק את 60 השיחות הראשונות + כפתור "הצג עוד".

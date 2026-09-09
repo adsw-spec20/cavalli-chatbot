@@ -316,8 +316,9 @@ export async function setConversationStarred(id: string, starred: boolean) {
   const existing = await getRepo().getConversation(id);
   if (!existing) throw new Error("conversation not found");
   const meta = { ...(existing.meta ?? {}) };
-  if (starred) meta.starred = true;
-  else delete meta.starred;
+  // שומרים גם false במפורש (לא מוחקים): שיחות אצל נציג נעוצות כברירת מחדל,
+  // וכדי שביטול-נעיצה ידני ישרוד (ולא יחזור לאוטו-נעיצה) צריך לזכור את ה-false.
+  meta.starred = starred;
   return getRepo().updateConversation(id, { meta, updatedAt: existing.updatedAt });
 }
 
