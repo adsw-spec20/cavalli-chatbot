@@ -152,24 +152,30 @@ async function uploadToBlob(
   bytes: ArrayBuffer,
   mime: string,
   hint: string
-): Promise<{ url: string; pathname: string } | null> {
+): Promise<{ url: string; pathname?: string } | null> {
   if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) {
     console.error("[incoming-media] אין הגדרות Blob - הקובץ לא נשמר");
     return null;
   }
+  const { put } = await import("@vercel/blob");
+  const safeHint = hint.replace(/[^\w.\-]/g, "").slice(0, 40) || "file";
+  const key = `incoming/${new Date().toISOString().slice(0, 10)}/${safeHint}.${extFromMime(mime)}`;
+  // מנסים אחסון **פרטי** (קבצי לקוחות - קבלות, צילומי מסך). אם זה נכשל (למשל
+  // החנות/החשבון לא תומכים בפרטי) נופלים ל**ציבורי** עם סיומת אקראית, כדי
+  // שהתמונה בכל זאת תוצג לצוות. עיקרון: כשלון לעולם לא מבליע את הקובץ בשקט.
+  // בציבורי לא מחזירים pathname - וכך ההצגה בפאנל מצביעה ישירות לכתובת (לא לראוט הפרטי).
   try {
-    const { put } = await import("@vercel/blob");
-    const safeHint = hint.replace(/[^\w.\-]/g, "").slice(0, 40) || "file";
-    const day = new Date().toISOString().slice(0, 10);
-    const blob = await put(`incoming/${day}/${safeHint}.${extFromMime(mime)}`, bytes, {
-      access: "private",
-      addRandomSuffix: true,
-      contentType: mime,
-    });
+    const blob = await put(key, bytes, { access: "private", addRandomSuffix: true, contentType: mime });
     return { url: blob.url, pathname: blob.pathname };
-  } catch (err) {
-    console.error("[incoming-media] העלאה ל-Blob נכשלה:", err);
-    return null;
+  } catch (errPrivate) {
+    console.error("[incoming-media] העלאה פרטית נכשלה, נופל לציבורי:", errPrivate);
+    try {
+      const blob = await put(key, bytes, { access: "public", addRandomSuffix: true, contentType: mime });
+      return { url: blob.url };
+    } catch (errPublic) {
+      console.error("[incoming-media] העלאה ל-Blob נכשלה (פרטי וציבורי):", errPublic);
+      return null;
+    }
   }
 }
 
