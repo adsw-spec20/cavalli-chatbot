@@ -5,7 +5,6 @@ import Tabit from "./Tabit";
 import TabitTestChat from "./TabitTestChat";
 import FloorMap from "./FloorMap";
 import Revenue from "./Revenue";
-import DepositReminder from "./DepositReminder";
 
 /**
  * מרכז טאביט - טאב אחד שמאחד את כל תת-התצוגות (שלב 1, קריאה בלבד):
@@ -17,12 +16,11 @@ const VIEWS = [
   { key: "day", label: "יום" },
   { key: "floor", label: "מפת רצפה" },
   { key: "revenue", label: "הכנסות" },
-  { key: "deposit", label: "תזכורת פיקדון" },
   { key: "lab", label: "מעבדה" },
 ] as const;
 type ViewKey = (typeof VIEWS)[number]["key"];
 
-export default function TabitHub({ token, agentName }: { token: string; agentName?: string }) {
+export default function TabitHub({ token }: { token: string }) {
   const [view, setView] = useState<ViewKey>(() => {
     try {
       const v = localStorage.getItem("tabit_hub_view");
@@ -57,7 +55,6 @@ export default function TabitHub({ token, agentName }: { token: string; agentNam
       {view === "day" && <Tabit token={token} />}
       {view === "floor" && <FloorMap token={token} />}
       {view === "revenue" && <Revenue token={token} />}
-      {view === "deposit" && <DepositReminder token={token} agentName={agentName} />}
       {view === "lab" && <TabitTestChat token={token} />}
     </div>
   );

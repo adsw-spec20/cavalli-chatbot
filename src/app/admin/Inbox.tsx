@@ -14,6 +14,7 @@ import {
   type QuickReply,
 } from "./types";
 import { parseMemory } from "@/lib/customer-memory-format";
+import DepositPanel from "./DepositPanel";
 
 /* ============================== עזרים ============================== */
 
@@ -28,12 +29,6 @@ const PROACTIVE = {
     label: "📍 שלח חניה",
     title: "שליחת הוראות הגעה וחניה בוואטסאפ ללקוח שהתקשר",
     hint: "הלקוח יקבל בוואטסאפ את הכתובת, ניווט ב-Waze וסרטון הדרך לחניה - והשיחה תתועד כאן בפאנל.",
-  },
-  payment: {
-    endpoint: "/send-payment-reminder",
-    label: "💳 תזכורת תשלום",
-    title: "תזכורת בוואטסאפ ללקוח שההזמנה שלו ממתינה להשלמת הפיקדון",
-    hint: 'הלקוח יקבל תזכורת שההזמנה ממתינה להשלמת פיקדון של 100 ש"ח בקישור ששלחתם לו קודם.',
   },
 } as const;
 
@@ -497,6 +492,8 @@ export default function Inbox({
   const [proactivePhone, setProactivePhone] = useState("");
   const [proactiveBusy, setProactiveBusy] = useState(false);
   const [proactiveMsg, setProactiveMsg] = useState("");
+  // כפתור "פיקדון": חלון עם רשימת חסרי-הפיקדון (לכל הצוות), בחירה ושליחת תזכורת עם קישור
+  const [depositOpen, setDepositOpen] = useState(false);
   async function sendProactive() {
     if (!proactive || !proactivePhone.trim() || proactiveBusy) return;
     setProactiveBusy(true);
@@ -945,6 +942,13 @@ export default function Inbox({
                   {PROACTIVE[k].label}
                 </button>
               ))}
+              <button
+                onClick={() => setDepositOpen(true)}
+                title="רשימת ההזמנות שחסר בהן פיקדון - בחירה ושליחת תזכורת עם קישור תשלום"
+                className="rounded-lg px-2.5 py-1.5 bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)]"
+              >
+                💳 פיקדון
+              </button>
             </div>
           </div>
           {proactive && (
@@ -974,6 +978,7 @@ export default function Inbox({
               <div className="text-[10px] text-[var(--muted)]">{PROACTIVE[proactive].hint}</div>
             </div>
           )}
+          {depositOpen && <DepositPanel token={token} agentName={agentName} onClose={() => setDepositOpen(false)} />}
           <div className="flex gap-1 flex-wrap text-xs">
             <button
               onClick={() => setChannelFilter("all")}
