@@ -177,9 +177,17 @@ function normalizeForSnapshot(list, tables) {
 }
 async function pushSnapshot(page, cfg) {
   const [list, tables] = [await getReservations(page), await getTables(page)];
-  const snapshot = { generatedAt: Date.now(), reservations: normalizeForSnapshot(list, tables) };
+  // מעשירים את ה-snapshot בדשבורד המשמרת ובמפת הרצפה של היום - מחושבים מאותם
+  // נתונים שכבר נמשכו (אפס קריאות API נוספות), כדי שהפאנל יציג אותם מיידית בלי
+  // סבב מול הסוכן ובלי לשרוף CPU בפולינג.
+  const snapshot = {
+    generatedAt: Date.now(),
+    reservations: normalizeForSnapshot(list, tables),
+    dashboard: computeDashboard(list, tables, todayIL(), Date.now(), "live"),
+    floor: computeFloor(tables),
+  };
   const res = await fetch(cfg.url, { method: "POST", headers: { "content-type": "application/json", "x-tabit-sync-secret": cfg.secret }, body: JSON.stringify(snapshot) });
-  console.log(`[snapshot] ${snapshot.reservations.length} reservations -> ${res.status}`);
+  console.log(`[snapshot] ${snapshot.reservations.length} reservations, dashboard+floor -> ${res.status}`);
 }
 
 async function actHealth(page) {
@@ -696,7 +704,163 @@ async function actCancelReservation(page, params) {
   };
 }
 
+// ===== קבוצה ב': יכולות קריאה חדשות (שלב 1) =====
+
+// סיווג מזדמן: type=walked_in (מזדמן מובהק) או פער < 30 דק' בין יצירת ההזמנה
+// לשעת הישיבה. מבוסס-נתונים: בארכיון מזדמנים = פער 0-5 דק', הזמנות מראש = 476+
+// דק' (8 שעות ומעלה). 30 דק' הוא סף בטוח עם מרווח עצום בין שתי האוכלוסיות.
+function isWalkin(r) {
+  if (r.type === "walked_in") return true;
+  const d = r.reservation_details || {};
+  if (!r.created || !d.reserved_from) return false;
+  const gapMin = (new Date(d.reserved_from).getTime() - new Date(r.created).getTime()) / 60000;
+  return gapMin < 30;
+}
+
+// דשבורד משמרת: האריחים מהמסך "משמרת" של טאביט - הכל מחושב בקוד (דטרמיניסטי).
+// הליבה היא פונקציה טהורה (list+tables) כדי שגם ה-snapshot (כל 5 דק') יחשב אותה
+// בלי קריאות API נוספות, וגם השאילתה לפי-דרישה ליום כלשהו תשתמש בה.
+function computeDashboard(list, tables, day, now, source) {
+  const totalSeats = tables.filter((t) => !t.disabled).reduce((s, t) => s + (t.seats || 0), 0);
+  const inDay = list.filter((r) => {
+    const d = r.reservation_details || {};
+    return d.reserved_from && dayFmt.format(new Date(d.reserved_from)) === day;
+  });
+  const cancelled = inDay.filter((r) => r.state === "cancelled" || REAL_CANCEL.has(r.archived_reason || ""));
+  const active = inDay.filter((r) => r.state !== "cancelled" && !REAL_CANCEL.has(r.archived_reason || ""));
+  const booked = active.filter((r) => !isWalkin(r));
+  const walkins = active.filter((r) => isWalkin(r));
+  const seatsOf = (r) => (r.reservation_details || {}).seats_count || 0;
+  const sum = (arr) => arr.reduce((s, r) => s + seatsOf(r), 0);
+  const fromT = (r) => new Date((r.reservation_details || {}).reserved_from).getTime();
+  const arrived = booked.filter((r) => fromT(r) <= now);
+  const expected = booked.filter((r) => fromT(r) > now);
+  const seatedNow = active.filter((r) => {
+    const d = r.reservation_details || {};
+    const f = new Date(d.reserved_from).getTime();
+    const u = d.reserved_until ? new Date(d.reserved_until).getTime() : f + 120 * 60000;
+    return f <= now && u > now;
+  });
+  const missingDeposit = booked.filter((r) => depositStatus(r) === "missing");
+  return {
+    day, source,
+    reservations_count: booked.length, covers: sum(booked),
+    arrived_count: arrived.length, arrived_covers: sum(arrived),
+    expected_count: expected.length, expected_covers: sum(expected),
+    walkins_count: walkins.length, walkins_covers: sum(walkins),
+    cancelled_count: cancelled.length,
+    missing_deposit: missingDeposit.length,
+    total_seats: totalSeats, seated_now_covers: sum(seatedNow),
+    occupancy_pct: totalSeats ? Math.round((sum(seatedNow) / totalSeats) * 100) : 0,
+  };
+}
+async function actShiftDashboard(page, params) {
+  const day = resolveDay(params.day);
+  let list, source;
+  if (day < todayIL()) {
+    const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
+    list = arch.items.filter((r) => r.archived_reason !== "idle-temp-reservation");
+    source = "archive";
+  } else {
+    list = await getReservations(page);
+    source = "live";
+  }
+  return computeDashboard(list, await getTables(page), day, Date.now(), source);
+}
+
+// אנליטיקת הכנסות מהארכיון (נתוני ה-order של הזמנות ששילמו). כספים באגורות -> ש"ח.
+async function actRevenueSummary(page, params) {
+  let items, label;
+  const isDate = params.day && params.day !== "today" && params.day !== "tomorrow";
+  if (isDate) {
+    const day = resolveDay(params.day);
+    const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
+    items = arch.items.filter((r) => {
+      const d = r.reservation_details || {};
+      return d.reserved_from && dayFmt.format(new Date(d.reserved_from)) === day;
+    });
+    label = day;
+  } else {
+    const days = Number(params.days) || 7;
+    const arch = await getArchived(page, new Date(Date.now() - days * 86400000).toISOString());
+    items = arch.items;
+    label = `${days} ימים אחרונים (מכוסה בפועל: ${coveredDays(arch.from)})`;
+  }
+  const paid = items.filter((r) => r.order && (r.order.paid || (r.order.lifeCycle && r.order.lifeCycle.name === "billed")));
+  let revenue = 0, tips = 0, covers = 0;
+  for (const r of paid) {
+    const o = r.order, t = o.totals || {}, ps = o.paymentSummary || {};
+    revenue += ps.paidAmount || t.totalAmount || 0;
+    tips += t.totalTips || 0;
+    covers += (r.reservation_details || {}).seats_count || (o.orderer && o.orderer.orderedDiners) || 0;
+  }
+  const ils = (n) => Math.round(n || 0) / 100;
+  return {
+    period: label, source: "archive",
+    orders: paid.length, covers,
+    revenue_ils: ils(revenue), tips_ils: ils(tips),
+    avg_check_ils: paid.length ? ils(revenue / paid.length) : 0,
+    per_person_ils: covers ? ils(revenue / covers) : 0,
+    tip_pct: revenue ? Math.round((tips / revenue) * 1000) / 10 : 0,
+  };
+}
+
+// סטטוס תזכורת/פיקדון: מה נשלח ללקוח ומתי (מלוג ההתראות של טאביט).
+async function actNotificationStatus(page, params) {
+  let items;
+  if (params.reservationId) {
+    items = (await getReservations(page)).filter((r) => r._id === params.reservationId);
+  } else {
+    const day = resolveDay(params.day);
+    let list;
+    if (day < todayIL()) list = (await getArchived(page, ilToUtcISO(day, "00:00"))).items;
+    else list = await getReservations(page);
+    items = list.filter((r) => {
+      const d = r.reservation_details || {};
+      return d.reserved_from && dayFmt.format(new Date(d.reserved_from)) === day && r.type !== "walked_in" && r.state !== "cancelled";
+    });
+  }
+  const rows = items.map((r) => {
+    const d = r.reservation_details || {};
+    return {
+      name: (d.customer && d.customer.name) || "", time: d.reserved_from ? timeFmt.format(new Date(d.reserved_from)) : "",
+      seats: d.seats_count || 0, deposit: depositStatus(r),
+      deposit_link_sent: !!r.notified_deposit, reminder_sent: !!r.reminded,
+      events_count: (r.notifications || []).length,
+    };
+  }).sort((a, b) => (a.time < b.time ? -1 : 1));
+  return { count: rows.length, reservations: rows };
+}
+
+// מפת רצפה: כל שולחן פעיל עם מיקום, מקומות, סטטוס ואזור (לחלוקת קוואלי).
+// פונקציה טהורה כדי שגם ה-snapshot יחשב אותה מהשולחנות שכבר נמשכו.
+function computeFloor(tables) {
+  const active = tables.filter((t) => !t.disabled);
+  const rows = active.map((t) => ({
+    number: t.number, seats: t.seats || 0, status: t.status || "unknown",
+    label: TABLE_STATUS_HE[t.status] || t.status || "",
+    x: t.location && t.location.x, y: t.location && t.location.y,
+    area: OUTSIDE_NUMS.has(t.number) ? "חוץ" : "פנים",
+    dirty: !!t.dirty,
+  }));
+  const counts = {};
+  for (const t of rows) counts[t.status] = (counts[t.status] || 0) + 1;
+  return { total: rows.length, total_seats: rows.reduce((s, t) => s + t.seats, 0), by_status: counts, tables: rows };
+}
+async function actFloorMap(page) {
+  return computeFloor(await getTables(page));
+}
+
+// שלב 1: השכבה האחרונה והקשוחה ביותר - הסוכן עצמו מסרב לכל פעולת כתיבה מול
+// טאביט אלא אם TABIT_WRITES_ENABLED="true". גם אם השרת יבקש create/modify/cancel,
+// כאן זה נעצר. זה מה שמבטיח "קריאה בלבד" בפועל, לא רק בהצהרה.
+const WRITE_ACTIONS = new Set(["create_reservation", "modify_reservation", "cancel_reservation"]);
+const WRITES_ENABLED = process.env.TABIT_WRITES_ENABLED === "true";
+
 async function run(page, cmd, me) {
+  if (WRITE_ACTIONS.has(cmd.action) && !WRITES_ENABLED) {
+    throw new Error("פעולות כתיבה מושבתות בשלב 1 (קריאה בלבד). להפעלה: TABIT_WRITES_ENABLED=true");
+  }
   switch (cmd.action) {
     case "health": return actHealth(page);
     case "read_day": return actReadDay(page, cmd.params || {});
@@ -712,6 +876,10 @@ async function run(page, cmd, me) {
     case "check_availability": return actCheckAvailability(page, cmd.params || {});
     case "modify_reservation": return actModifyReservation(page, cmd.params || {}, me);
     case "cancel_reservation": return actCancelReservation(page, cmd.params || {});
+    case "shift_dashboard": return actShiftDashboard(page, cmd.params || {});
+    case "revenue_summary": return actRevenueSummary(page, cmd.params || {});
+    case "notification_status": return actNotificationStatus(page, cmd.params || {});
+    case "floor_map": return actFloorMap(page);
     default: throw new Error(`פעולה לא מוכרת: ${cmd.action}`);
   }
 }

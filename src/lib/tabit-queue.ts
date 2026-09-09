@@ -26,7 +26,11 @@ export type TabitAction =
   | "no_show_summary"
   | "booking_sources"
   | "modify_reservation"
-  | "cancel_reservation";
+  | "cancel_reservation"
+  | "shift_dashboard"
+  | "revenue_summary"
+  | "notification_status"
+  | "floor_map";
 
 export type TabitCommandStatus = "pending" | "running" | "done" | "error";
 

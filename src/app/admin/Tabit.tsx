@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, relTime } from "./types";
 import { SectionCard } from "./ui";
+import { coversByTimeSlot } from "@/lib/tabit-chart";
 
 /**
  * מסך "טאביט" - למנהל הראשי בלבד (מוגן פעמיים: השרת מחזיר רק ל-master,
@@ -34,10 +35,24 @@ interface TabitReservation {
   manageUrl?: string | null;
 }
 
+/** דשבורד משמרת "היום" - מגיע מעושר ב-snapshot מהגשר (computeDashboard). */
+interface Dashboard {
+  arrived_count: number;
+  arrived_covers: number;
+  expected_count: number;
+  expected_covers: number;
+  walkins_count: number;
+  walkins_covers: number;
+  occupancy_pct: number;
+  missing_deposit: number;
+  cancelled_count: number;
+}
+
 interface Snapshot {
   generatedAt: number;
   receivedAt: number;
   reservations: TabitReservation[];
+  dashboard?: Dashboard;
 }
 
 /** תאריך היום בישראל בפורמט YYYY-MM-DD */
@@ -127,6 +142,39 @@ function NotesLine({ notes }: { notes?: string }) {
     <div className="text-xs bg-amber-500/10 border border-amber-500/20 text-[var(--text)] rounded-lg px-2.5 py-1 inline-flex items-start gap-1 max-w-full">
       <span aria-hidden>💬</span>
       <span className="truncate">{notes}</span>
+    </div>
+  );
+}
+
+/** גרף עומס: עמודות סועדים לפי פרוסות 30 דק', מחושב בצד הלקוח מהזמנות היום. */
+function RushChart({ reservations }: { reservations: { time: string; seats: number }[] }) {
+  const points = coversByTimeSlot(reservations, 30);
+  if (points.length < 2) return null;
+  const max = Math.max(...points.map((p) => p.value), 1);
+  return (
+    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-3">
+      <div className="text-[11px] text-[var(--muted)] mb-2">עומס לפי שעה (סועדים)</div>
+      <div className="flex items-end gap-1 h-28">
+        {points.map((p) => (
+          <div key={p.label} className="flex-1 flex flex-col items-center justify-end gap-1 h-full min-w-0">
+            {p.value > 0 && (
+              <span className="text-[9px] text-[var(--muted)]" style={{ fontVariantNumeric: "tabular-nums" }}>{p.value}</span>
+            )}
+            <div
+              className="w-full rounded-t bg-[var(--accent)]"
+              style={{ height: `${Math.max(2, (p.value / max) * 100)}%` }}
+              title={`${p.label} · ${p.value} סועדים`}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-1 mt-1">
+        {points.map((p, i) => (
+          <span key={p.label} className="flex-1 text-center text-[8px] text-[var(--muted)] min-w-0" style={{ fontVariantNumeric: "tabular-nums" }}>
+            {i % 2 === 0 ? p.label : ""}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -309,6 +357,19 @@ export default function Tabit({ token }: { token: string }) {
             <StatTile label={`שולחנות גדולים (${threshold}+)`} value={dayBig.length} tone="accent" />
             <StatTile label="חסרי פיקדון" value={dayMissing.length} tone={dayMissing.length > 0 ? "danger" : undefined} />
           </div>
+
+          {/* ===== דשבורד משמרת חי (רק כשהיום הנבחר הוא היום) ===== */}
+          {selectedDay === todayIL() && snapshot.dashboard && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <StatTile label="כבר הגיעו (סועדים)" value={snapshot.dashboard.arrived_covers} />
+              <StatTile label="עוד צפויים (סועדים)" value={snapshot.dashboard.expected_covers} tone="accent" />
+              <StatTile label="מזדמנים היום" value={snapshot.dashboard.walkins_covers} />
+              <StatTile label="תפוסה כרגע" value={`${snapshot.dashboard.occupancy_pct}%`} />
+            </div>
+          )}
+
+          {/* ===== גרף עומס ===== */}
+          {dayAll.length > 1 && <RushChart reservations={dayAll.map((r) => ({ time: r.time, seats: r.seats }))} />}
 
           {/* ===== חסר פיקדון - ליום הנבחר ===== */}
           <SectionCard

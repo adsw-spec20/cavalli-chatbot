@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
-  const b = body as { reservations?: unknown; generatedAt?: unknown };
+  const b = body as { reservations?: unknown; generatedAt?: unknown; dashboard?: unknown; floor?: unknown };
   if (!Array.isArray(b.reservations)) {
     return NextResponse.json({ error: "missing reservations[]" }, { status: 400 });
   }
@@ -43,10 +43,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "too many reservations" }, { status: 413 });
   }
 
+  // dashboard + floor מעושרים בגשר (אם קיימים) - שדות אובייקט קטנים, מועברים כמו שהם
+  const isObj = (v: unknown) => !!v && typeof v === "object" && !Array.isArray(v);
   const snapshot = {
     generatedAt: typeof b.generatedAt === "number" ? b.generatedAt : Date.now(),
     receivedAt: Date.now(),
     reservations: b.reservations,
+    ...(isObj(b.dashboard) ? { dashboard: b.dashboard } : {}),
+    ...(isObj(b.floor) ? { floor: b.floor } : {}),
   };
 
   await getRepo().setSetting("tabit_snapshot", JSON.stringify(snapshot));
