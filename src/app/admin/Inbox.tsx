@@ -694,7 +694,21 @@ export default function Inbox({
                   {renderContent(m.content)}
                 </div>
                 {m.media?.map((md, j) =>
-                  md.type === "video" ? (
+                  md.type === "document" ? (
+                    // מסמך (PDF שלקוח שלח - קבלה/חשבונית): אין מה להציג בתצוגה
+                    // מקדימה, אז כרטיס קישור שנפתח בלשונית חדשה
+                    <a
+                      key={j}
+                      href={md.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 text-xs hover:border-[var(--accent)] transition"
+                    >
+                      <span className="text-base leading-none">📄</span>
+                      <span className="truncate">{md.label || "מסמך"}</span>
+                      <span className="mr-auto text-[10px] text-[var(--accent)]">פתח</span>
+                    </a>
+                  ) : md.type === "video" ? (
                     <video
                       key={j}
                       src={md.url}

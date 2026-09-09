@@ -12,6 +12,7 @@
 
 import type {
   ChannelAdapter,
+  IncomingMediaRef,
   IncomingMessage,
 } from "./types";
 import { transcribeAudio } from "../transcription";
@@ -58,6 +59,23 @@ export function parseIncoming(payload: unknown): IncomingMessage[] {
               messageId: msg.id,
               timestamp: ts,
             });
+          } else {
+            // מדיה נכנסת (תוקן 9.9): עד כאן כל הודעה שאינה טקסט/אודיו נזרקה
+            // בשקט - לקוחה ששלחה צילום קבלה קיבלה שתיקה מוחלטת, כי בלי רשומה
+            // כאן המוח בכלל לא רץ. עכשיו מייצרים הודעה עם הפניה לקובץ.
+            const ref = mediaRefFrom(msg);
+            if (ref) {
+              messages.push({
+                channel: "whatsapp",
+                senderId: msg.from,
+                senderName: nameByWaId.get(msg.from),
+                // כיתוב שמצורף לתמונה/סרטון הוא טקסט לכל דבר ("מצ\"ב הקבלה")
+                text: captionFrom(msg),
+                media: [ref],
+                messageId: msg.id,
+                timestamp: ts,
+              });
+            }
           }
         }
       }
@@ -178,6 +196,51 @@ export const whatsappAdapter: ChannelAdapter = {
 
 // ---- טיפוסים חלקיים של מבנה ה-webhook של מטא (רק מה שאנחנו צורכים) ----
 
+interface WhatsAppMediaPayload {
+  id?: string;
+  mime_type?: string;
+  caption?: string;
+  filename?: string;
+}
+
+/** ההודעה כפי שוואטסאפ שולחת אותה, לצורך חילוץ מדיה */
+type WhatsAppIncomingMsg = {
+  type: string;
+  image?: WhatsAppMediaPayload;
+  video?: WhatsAppMediaPayload;
+  document?: WhatsAppMediaPayload;
+  sticker?: WhatsAppMediaPayload;
+};
+
+/**
+ * מיפוי הודעת מדיה להפניה אחידה. מדבקות נכללות בכוונה: הן מגיעות כתמונה,
+ * ולקוח ששולח רק מדבקה עדיין מצפה למענה ולא לשתיקה.
+ */
+function mediaRefFrom(msg: WhatsAppIncomingMsg): IncomingMediaRef | null {
+  const map: Array<[WhatsAppMediaPayload | undefined, IncomingMediaRef["kind"]]> = [
+    [msg.image, "image"],
+    [msg.sticker, "image"],
+    [msg.video, "video"],
+    [msg.document, "document"],
+  ];
+  for (const [payload, kind] of map) {
+    if (payload?.id) {
+      return { mediaId: payload.id, mime: payload.mime_type, filename: payload.filename, kind };
+    }
+  }
+  return null;
+}
+
+/** הכיתוב שהלקוח צירף לתמונה/סרטון/מסמך (אם צירף) */
+function captionFrom(msg: WhatsAppIncomingMsg): string {
+  return (
+    msg.image?.caption ||
+    msg.video?.caption ||
+    msg.document?.caption ||
+    ""
+  ).trim();
+}
+
 interface WhatsAppWebhookBody {
   entry?: Array<{
     changes?: Array<{
@@ -193,6 +256,11 @@ interface WhatsAppWebhookBody {
           type: string;
           text?: { body: string };
           audio?: { id: string; mime_type?: string; voice?: boolean };
+          // מדיה נכנסת: לכולם אותו מבנה, ולתמונה/סרטון/מסמך יש גם caption
+          image?: WhatsAppMediaPayload;
+          video?: WhatsAppMediaPayload;
+          document?: WhatsAppMediaPayload;
+          sticker?: WhatsAppMediaPayload;
         }>;
         statuses?: Array<{
           id: string;

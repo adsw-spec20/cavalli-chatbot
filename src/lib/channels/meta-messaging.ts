@@ -8,7 +8,7 @@
  *  (אם זה אותו עמוד, יכול להיות אותו טוקן.)
  */
 
-import type { Channel, ChannelAdapter, IncomingMessage } from "./types";
+import type { Channel, ChannelAdapter, IncomingMediaRef, IncomingMessage } from "./types";
 import { getRepo } from "../db";
 
 const GRAPH_API_VERSION = "v21.0";
@@ -121,6 +121,27 @@ export function parseMetaMessaging(
               senderId: ev.sender.id,
               text: "",
               audio: { url: audio.payload.url },
+              messageId: ev.message.mid,
+              timestamp: ev.timestamp ?? Date.now(),
+            });
+            continue;
+          }
+          // מדיה נכנסת (תוקן 9.9): עד כאן רק אודיו נקלט, וכל תמונה או סרטון
+          // שלקוח שלח נזרק בשקט - בלי רשומה כאן המוח בכלל לא רץ והלקוח קיבל
+          // שתיקה. הכתובות של מטא פגות, ולכן הקובץ מועתק אלינו ב-webhook.
+          const media = ev.message.attachments
+            .flatMap((a): IncomingMediaRef[] => {
+              if (!a.payload?.url) return [];
+              const kind =
+                a.type === "video" ? "video" : a.type === "image" ? "image" : a.type === "file" ? "document" : null;
+              return kind ? [{ url: a.payload.url, kind }] : [];
+            });
+          if (media.length) {
+            out.push({
+              channel,
+              senderId: ev.sender.id,
+              text: "",
+              media,
               messageId: ev.message.mid,
               timestamp: ev.timestamp ?? Date.now(),
             });

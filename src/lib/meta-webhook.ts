@@ -10,6 +10,7 @@ import { maybeUpdateCustomerMemory } from "./customer-memory";
 import { parseMetaMessaging } from "./channels/meta-messaging";
 import { verifyMetaSignature } from "./meta-signature";
 import { transcribeFromUrl } from "./transcription";
+import { describeIncomingMedia, ingestIncomingMedia } from "./incoming-media";
 import type { ChannelAdapter } from "./channels/types";
 
 export function handleVerify(req: NextRequest, verifyToken: string): NextResponse {
@@ -80,9 +81,21 @@ export async function handleReceive(
               meta = { transcribedFromVoice: true, voiceTranscriptionFailed: true };
             }
           }
+          // מדיה שהלקוח שלח: הכתובות של מטא פגות, ולכן מעתיקים ל-Blob שלנו
+          // כדי שהצוות עדיין יראה את הקובץ בפאנל מחר (תוקן 9.9)
+          if (msg.media?.length) {
+            const { stored, failed } = await ingestIncomingMedia(msg.media);
+            meta = {
+              ...(meta || {}),
+              ...(stored.length ? { customerMedia: stored } : {}),
+              ...(failed ? { customerMediaFailed: failed } : {}),
+            };
+            if (!text) text = describeIncomingMedia(stored.length ? stored : msg.media.map((m) => ({ type: m.kind })));
+          }
+
           if (!text) {
             stopTyping();
-            return; // הודעה שאינה טקסט/אודיו - מתעלמים
+            return; // הודעה שאינה טקסט/אודיו/מדיה - מתעלמים
           }
 
           const result = await handleIncomingMessage({

@@ -7,6 +7,7 @@ import {
   releaseConversation,
   takeoverConversation,
   setConversationBotPaused,
+  setConversationStarred,
 } from "@/lib/admin-service";
 import { isAdminAuthorized, isMasterAuthorized } from "@/lib/admin-auth";
 
@@ -35,6 +36,10 @@ export async function POST(
         return NextResponse.json(await setConversationBotPaused(id, true));
       case "resumeBot":
         return NextResponse.json(await setConversationBotPaused(id, false));
+      case "star":
+        return NextResponse.json(await setConversationStarred(id, true));
+      case "unstar":
+        return NextResponse.json(await setConversationStarred(id, false));
       case "delete":
         // מחיקה לצמיתות - מנהל ראשי בלבד
         if (!isMasterAuthorized(req)) {

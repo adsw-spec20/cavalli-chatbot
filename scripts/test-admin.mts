@@ -221,6 +221,172 @@ await test("reservationDateLabel: תווית קנונית", () => {
   assert.equal(reservationDateLabel("garbage"), undefined);
 });
 
+// ===================== מדיה נכנסת מלקוחות (9.9) =====================
+// הבאג: parseIncoming טיפל רק ב-text וב-audio, וכל הודעת תמונה/מסמך נזרקה
+// בשקט לפני שהגיעה לשרת. לקוחה ששלחה צילום קבלה קיבלה שתיקה מוחלטת.
+console.log("\n== מדיה נכנסת מלקוחות ==");
+
+const { parseIncoming } = await import("../src/lib/channels/whatsapp");
+const { parseMetaMessaging } = await import("../src/lib/channels/meta-messaging");
+const { describeIncomingMedia, mediaLabel } = await import("../src/lib/incoming-media");
+
+/** עוטף הודעת וואטסאפ אחת במעטפת ה-webhook המלאה */
+function waPayload(msg: Record<string, unknown>) {
+  return {
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              contacts: [{ wa_id: "972501234567", profile: { name: "ילנה" } }],
+              messages: [{ from: "972501234567", id: "wamid.1", timestamp: "1757400000", ...msg }],
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+await test("וואטסאפ: תמונה עם כיתוב נקלטת, והכיתוב הוא הטקסט", () => {
+  const [m] = parseIncoming(waPayload({ type: "image", image: { id: "MID1", mime_type: "image/jpeg", caption: 'מצ"ב קבלה' } }));
+  assert.ok(m, "ההודעה נזרקה במקום להיקלט");
+  assert.equal(m.text, 'מצ"ב קבלה');
+  assert.equal(m.media?.length, 1);
+  assert.equal(m.media?.[0].mediaId, "MID1");
+  assert.equal(m.media?.[0].kind, "image");
+  assert.equal(m.senderName, "ילנה");
+});
+
+await test("וואטסאפ: תמונה בלי כיתוב נקלטת עם טקסט ריק", () => {
+  const [m] = parseIncoming(waPayload({ type: "image", image: { id: "MID2", mime_type: "image/png" } }));
+  assert.ok(m, "תמונה בלי כיתוב נזרקה - זה בדיוק המקרה של שתיקה מוחלטת");
+  assert.equal(m.text, "");
+  assert.equal(m.media?.[0].kind, "image");
+});
+
+await test("וואטסאפ: מסמך נקלט עם שם הקובץ", () => {
+  const [m] = parseIncoming(waPayload({ type: "document", document: { id: "D1", mime_type: "application/pdf", filename: "kabala.pdf" } }));
+  assert.equal(m.media?.[0].kind, "document");
+  assert.equal(m.media?.[0].filename, "kabala.pdf");
+});
+
+await test("וואטסאפ: סרטון ומדבקה נקלטים גם הם", () => {
+  const [v] = parseIncoming(waPayload({ type: "video", video: { id: "V1", mime_type: "video/mp4" } }));
+  assert.equal(v.media?.[0].kind, "video");
+  const [s] = parseIncoming(waPayload({ type: "sticker", sticker: { id: "S1", mime_type: "image/webp" } }));
+  assert.equal(s.media?.[0].kind, "image");
+});
+
+await test("וואטסאפ: טקסט ואודיו לא נשברו", () => {
+  const [t] = parseIncoming(waPayload({ type: "text", text: { body: "היי" } }));
+  assert.equal(t.text, "היי");
+  assert.equal(t.media, undefined);
+  const [a] = parseIncoming(waPayload({ type: "audio", audio: { id: "A1", mime_type: "audio/ogg" } }));
+  assert.equal(a.audio?.mediaId, "A1");
+  assert.equal(a.media, undefined);
+});
+
+await test("וואטסאפ: סוג לא מוכר בלי מדיה לא מייצר הודעה", () => {
+  assert.equal(parseIncoming(waPayload({ type: "reaction" })).length, 0);
+  assert.equal(parseIncoming(waPayload({ type: "image", image: {} })).length, 0);
+});
+
+/** עוטף אירוע מסנג'ר/אינסטגרם אחד */
+function metaPayload(message: Record<string, unknown>) {
+  return { entry: [{ messaging: [{ sender: { id: "PSID1" }, timestamp: 1757400000000, message: { mid: "m.1", ...message } }] }] };
+}
+
+await test("מטא: תמונה נקלטת עם הכתובת הזמנית", () => {
+  const [m] = parseMetaMessaging(
+    metaPayload({ attachments: [{ type: "image", payload: { url: "https://cdn.fbsbx.com/x.jpg" } }] }),
+    "messenger"
+  );
+  assert.ok(m, "תמונה במסנג'ר נזרקה");
+  assert.equal(m.media?.[0].url, "https://cdn.fbsbx.com/x.jpg");
+  assert.equal(m.media?.[0].kind, "image");
+});
+
+await test("מטא: אודיו עדיין מקבל קדימות על פני מדיה", () => {
+  const [m] = parseMetaMessaging(
+    metaPayload({ attachments: [{ type: "audio", payload: { url: "https://cdn.fbsbx.com/a.mp4" } }] }),
+    "instagram"
+  );
+  assert.equal(m.audio?.url, "https://cdn.fbsbx.com/a.mp4");
+  assert.equal(m.media, undefined, "אודיו לא אמור להיקלט גם כמדיה להצגה");
+});
+
+await test("מטא: קובץ וסרטון ממופים נכון, וכמה קבצים בהודעה אחת", () => {
+  const [m] = parseMetaMessaging(
+    metaPayload({
+      attachments: [
+        { type: "image", payload: { url: "https://cdn.fbsbx.com/1.jpg" } },
+        { type: "file", payload: { url: "https://cdn.fbsbx.com/2.pdf" } },
+        { type: "video", payload: { url: "https://cdn.fbsbx.com/3.mp4" } },
+      ],
+    }),
+    "messenger"
+  );
+  assert.equal(m.media?.length, 3);
+  assert.deepEqual(m.media?.map((x) => x.kind), ["image", "document", "video"]);
+});
+
+await test("מטא: attachment בלי url לא מייצר הודעה ריקה", () => {
+  assert.equal(parseMetaMessaging(metaPayload({ attachments: [{ type: "image", payload: {} }] }), "messenger").length, 0);
+});
+
+await test("תיאור מדיה: טקסט מציין להודעה בלי מילים", () => {
+  assert.equal(describeIncomingMedia([{ type: "image" }]), "[הלקוח שלח תמונה]");
+  assert.equal(describeIncomingMedia([{ type: "document" }]), "[הלקוח שלח מסמך]");
+  assert.equal(describeIncomingMedia([{ type: "image" }, { type: "image" }]), "[הלקוח שלח 2 קבצים]");
+  assert.equal(describeIncomingMedia([]), "");
+});
+
+await test("תווית מדיה לצוות", () => {
+  assert.equal(mediaLabel("image"), "📷 תמונה");
+  assert.equal(mediaLabel("video"), "🎥 סרטון");
+  assert.equal(mediaLabel("document"), "📄 מסמך");
+});
+
+// מיפוי התצוגה: קובץ פרטי מוגש דרך ראוט מאומת, וקובץ ישן (מלפני המעבר
+// לאחסון פרטי) עדיין מוצג מהכתובת הציבורית שלו במקום להישבר.
+await test("תצוגה: קובץ פרטי עובר דרך הראוט, ורשומה ישנה נשארת כמו שהיא", async () => {
+  const { getConversationDetail } = await import("../src/lib/admin-service");
+  await repo.upsertCustomer({
+    id: "whatsapp:972500000001",
+    channel: "whatsapp",
+    channelUserId: "972500000001",
+    firstSeen: Date.now(),
+    lastSeen: Date.now(),
+  });
+  const conv = await repo.createConversation({
+    id: "c-media-map",
+    channel: "whatsapp",
+    customerId: "whatsapp:972500000001",
+    status: "bot",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  await repo.addMessage({
+    conversationId: conv.id,
+    role: "user",
+    content: "[הלקוח שלח תמונה]",
+    ts: Date.now(),
+    meta: {
+      customerMedia: [
+        { url: "https://blob.example/private.jpg", pathname: "incoming/2026-09-09/a.jpg", type: "image", label: "📷 תמונה" },
+        { url: "https://blob.example/legacy-public.jpg", type: "image", label: "📷 תמונה" },
+      ],
+    },
+  });
+
+  const detail = await getConversationDetail(conv.id);
+  const media = detail?.messages.find((m) => m.role === "user")?.media ?? [];
+  assert.equal(media.length, 2);
+  assert.equal(media[0].url, "/api/admin/incoming-media/incoming/2026-09-09/a.jpg", "קובץ פרטי חייב לעבור דרך הראוט המאומת");
+  assert.equal(media[1].url, "https://blob.example/legacy-public.jpg", "רשומה ישנה נשברה במקום להישאר כמו שהיא");
+});
+
 console.log(`\n${passed} עברו, ${failed} נכשלו`);
 process.chdir(os.tmpdir()); // לצאת מהתיקייה לפני מחיקתה (Windows)
 try {

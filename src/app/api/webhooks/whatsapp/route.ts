@@ -18,6 +18,7 @@ import {
 import { handleIncomingMessage } from "@/lib/conversation-service";
 import { maybeUpdateCustomerMemory } from "@/lib/customer-memory";
 import { verifyMetaSignature } from "@/lib/meta-signature";
+import { describeIncomingMedia, ingestIncomingMedia } from "@/lib/incoming-media";
 import { getRepo } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -112,7 +113,20 @@ export async function POST(req: NextRequest) {
               meta = { transcribedFromVoice: true, voiceTranscriptionFailed: true };
             }
           }
-          if (!text) return; // הודעה שאינה טקסט/אודיו - מתעלמים
+          // מדיה שהלקוח שלח: מורידים ומעתיקים ל-Blob כדי שהצוות יראה בפאנל.
+          // נעשה לפני הקריאה למוח, כי גם התשובה ללקוח תלויה בזה שידוע שהגיע קובץ.
+          if (msg.media?.length) {
+            const { stored, failed } = await ingestIncomingMedia(msg.media);
+            meta = {
+              ...(meta || {}),
+              ...(stored.length ? { customerMedia: stored } : {}),
+              ...(failed ? { customerMediaFailed: failed } : {}),
+            };
+            // הודעה בלי כיתוב מקבלת טקסט מציין, אחרת המוח נעצר על טקסט ריק
+            if (!text) text = describeIncomingMedia(stored.length ? stored : msg.media.map((m) => ({ type: m.kind })));
+          }
+
+          if (!text) return; // הודעה שאינה טקסט/אודיו/מדיה - מתעלמים
 
           const result = await handleIncomingMessage({
             channel: "whatsapp",

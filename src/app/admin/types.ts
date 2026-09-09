@@ -10,6 +10,8 @@ export interface ConvItem {
   escalated?: boolean;
   escalationReason?: string;
   urgent?: boolean;
+  /** סימון כוכב של הצוות (משותף לכל המכשירים) */
+  starred?: boolean;
   botPaused?: boolean;
   customerName?: string;
   customerId: string;
@@ -55,7 +57,7 @@ export interface DetailMessage {
   ts: number;
   meta?: Record<string, unknown>;
   /** מדיה שנשלחה עם ההודעה (מועשר בשרת מ-meta.sentMedia) - להצגה בפאנל */
-  media?: { url: string; type: "image" | "video"; label?: string }[];
+  media?: { url: string; type: "image" | "video" | "document"; label?: string }[];
 }
 export interface Detail {
   conversation: {

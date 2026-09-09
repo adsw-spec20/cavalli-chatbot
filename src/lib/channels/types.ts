@@ -23,6 +23,19 @@ export interface ConversationMessage {
 export const AGENT_MSG_PREFIX = "[הודעה שנשלחה על ידי נציג אנושי מהצוות]: ";
 
 /** הודעה נכנסת אחרי נרמול מהערוץ */
+/** קובץ יחיד שהלקוח שלח, כפי שהערוץ מוסר אותו לפני ההורדה */
+export interface IncomingMediaRef {
+  /** וואטסאפ: מזהה מדיה שדורש שתי קריאות ל-Graph כדי להגיע לבייטים */
+  mediaId?: string;
+  /** מטא: כתובת זמנית שפגה תוך זמן קצר */
+  url?: string;
+  mime?: string;
+  /** שם הקובץ המקורי (מסמכים בוואטסאפ) */
+  filename?: string;
+  /** הסיווג לפי הערוץ, לפני שמאמתים אותו מול ה-mime בפועל */
+  kind: "image" | "video" | "document";
+}
+
 export interface IncomingMessage {
   channel: Channel;
   /** מזהה ייחודי של השולח בתוך הערוץ (מספר טלפון / PSID / IG id) */
@@ -33,6 +46,12 @@ export interface IncomingMessage {
   text: string;
   /** הודעה קולית/אודיו נכנסת - לתמלול. וואטסאפ נותן mediaId, מטא נותן URL ישיר. */
   audio?: { mediaId?: string; url?: string; mime?: string };
+  /**
+   * מדיה שהלקוח שלח (תמונה/סרטון/מסמך) - להצגה לצוות בפאנל.
+   * כמו באודיו: וואטסאפ נותן mediaId שדורש שתי קריאות ל-Graph, מטא נותן URL
+   * זמני שפג. בשני המקרים הקובץ מועתק ל-Blob לפני שנשמר (ראה incoming-media.ts).
+   */
+  media?: IncomingMediaRef[];
   /** מזהה ההודעה המקורית בערוץ (אם קיים) */
   messageId?: string;
   /** חותמת זמן (ms) */

@@ -100,9 +100,12 @@ export async function setBotEnabled(enabled: boolean): Promise<void> {
   await getRepo().setSetting("bot_enabled", enabled ? "true" : "false");
 }
 
-/** הודעה להצגה בפאנל: מועשרת בכתובות המדיה שנשלחה איתה (אם נשלחה) */
+/**
+ * הודעה להצגה בפאנל: מועשרת בכתובות המדיה שנשלחה איתה (אם נשלחה).
+ * "document" קיים רק בכיוון הנכנס - לקוחות שולחים PDF (קבלה, חשבונית).
+ */
 export interface PanelMessage extends StoredMessage {
-  media?: { url: string; type: "image" | "video"; label?: string }[];
+  media?: { url: string; type: "image" | "video" | "document"; label?: string }[];
 }
 
 export interface ConversationDetail {
@@ -149,6 +152,27 @@ export async function getConversationDetail(
   for (const msg of messages) {
     const own = msg.meta?.agentMedia as { url: string; type: "image" | "video" }[] | undefined;
     if (own?.length) msg.media = [...(msg.media ?? []), ...own];
+  }
+  // מדיה שהלקוח שלח אלינו (customerMedia, נוסף 9.9). זה המקור השלישי: קודם
+  // הוצגו רק קבצים יוצאים - מהספרייה של הבוט ומנציגים - ולכן צילום קבלה
+  // שלקוחה שלחה פשוט לא הופיע, והנציגה ביקשה ממנה את המידע שוב.
+  for (const msg of messages) {
+    const incoming = msg.meta?.customerMedia as
+      | { url: string; pathname?: string; type: "image" | "video" | "document"; label?: string }[]
+      | undefined;
+    if (incoming?.length) {
+      msg.media = [
+        ...(msg.media ?? []),
+        // מסמך (PDF) אינו נגן ואינו תמונה - הפאנל מקבל את הסוג כפי שהוא.
+        // pathname קיים = הקובץ באחסון פרטי ומוגש דרך ראוט מאומת. רשומות
+        // מלפני המעבר לפרטי נשארות עם הכתובת הציבורית שלהן.
+        ...incoming.map((m) => ({
+          url: m.pathname ? `/api/admin/incoming-media/${m.pathname}` : m.url,
+          type: m.type,
+          label: m.label,
+        })),
+      ];
+    }
   }
   return { conversation, customer, messages, hasOlder };
 }
