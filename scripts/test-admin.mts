@@ -387,6 +387,90 @@ await test("תצוגה: קובץ פרטי עובר דרך הראוט, ורשומ
   assert.equal(media[1].url, "https://blob.example/legacy-public.jpg", "רשומה ישנה נשברה במקום להישאר כמו שהיא");
 });
 
+// ===================== אזעקת מערכת (9.9) =====================
+// הכלל של בעל העסק: תקלה רגעית שהסתדרה לא מצדיקה באנר; תקלה שנמשכת כן,
+// והיא צריכה להישאר. הבאג: הבאנר כובה אחרי הצלחה בודדת, ולכן נפילת
+// הקרדיטים הארוכה של 9.9 נראתה כמו סדרת בליפים ואף אחד לא ראה התראה.
+console.log("\n== אזעקת מערכת ==");
+
+const { getRepo } = await import("../src/lib/db");
+const alarmRepo = getRepo(); // המודול קורא דרך getRepo, לא דרך repo של הבדיקות
+const alarmMod = await import("../src/lib/system-alarm");
+const { recordModelFailure, readActiveAlarm, clearAlarm } = alarmMod;
+
+await test("כשל בודד לא מרים באנר", async () => {
+  await clearAlarm();
+  const r = await recordModelFailure("api", "boom");
+  assert.equal(r.becameSustained, false, "כשל בודד לא אמור להיחשב תקלה נמשכת");
+  assert.equal(await readActiveAlarm(), null, "כשל בודד לא אמור להציג באנר");
+});
+
+await test("שלושה לקוחות שנפגעו = תקלה נמשכת, והבאנר עולה", async () => {
+  await clearAlarm();
+  await recordModelFailure("api", "boom");
+  await recordModelFailure("api", "boom");
+  const third = await recordModelFailure("api", "boom");
+  assert.equal(third.becameSustained, true, "הכשל השלישי אמור לחצות את הסף");
+  const active = await readActiveAlarm();
+  assert.ok(active, "הבאנר לא עלה אחרי שלושה כשלים");
+  assert.equal(active!.count, 3);
+});
+
+await test("וואטסאפ לצוות נשלח פעם אחת, לא בכל כשל", async () => {
+  await clearAlarm();
+  const flags: boolean[] = [];
+  for (let i = 0; i < 5; i++) flags.push((await recordModelFailure("credit")).becameSustained);
+  assert.deepEqual(flags, [false, false, true, false, false], "ההתראה אמורה לצאת רק ברגע החצייה");
+});
+
+await test("רצף ארוך: כשלים רחוקים בזמן עדיין נחשבים נמשכים", async () => {
+  await clearAlarm();
+  // מדמים כשל ראשון מלפני שתי דקות, ואז כשל נוסף עכשיו
+  await alarmRepo.setSetting(
+    "api_alarm",
+    JSON.stringify({ firstTs: Date.now() - 120_000, lastTs: Date.now() - 120_000, count: 1, reason: "credit" })
+  );
+  const r = await recordModelFailure("credit");
+  assert.equal(r.becameSustained, true, "פער של שתי דקות בין כשלים הוא תקלה נמשכת");
+  assert.ok(await readActiveAlarm(), "הבאנר אמור להופיע");
+});
+
+await test("הבאנר יורד מעצמו אחרי חלון שקט בלי כשלים", async () => {
+  await clearAlarm();
+  // רצף נמשך שהאירוע האחרון בו היה לפני 11 דקות
+  await alarmRepo.setSetting(
+    "api_alarm",
+    JSON.stringify({ firstTs: Date.now() - 900_000, lastTs: Date.now() - 660_000, count: 9, reason: "api" })
+  );
+  assert.equal(await readActiveAlarm(), null, "אחרי חלון שקט הבאנר אמור לרדת לבד");
+});
+
+await test("כשל חדש אחרי שקט ארוך פותח רצף נקי", async () => {
+  await clearAlarm();
+  await alarmRepo.setSetting(
+    "api_alarm",
+    JSON.stringify({ firstTs: Date.now() - 900_000, lastTs: Date.now() - 660_000, count: 9, reason: "api" })
+  );
+  const r = await recordModelFailure("api");
+  assert.equal(r.becameSustained, false, "רצף חדש מתחיל מכשל בודד, לא ממשיך את הישן");
+  assert.equal(await readActiveAlarm(), null);
+});
+
+await test("רשומה בפורמט הישן לא שוברת ולא מציגה באנר שווא", async () => {
+  await clearAlarm();
+  await alarmRepo.setSetting("api_alarm", JSON.stringify({ ts: Date.now(), reason: "credit", sample: "old" }));
+  assert.equal(await readActiveAlarm(), null, "רשומה ישנה = כשל בודד, בלי באנר");
+});
+
+await test("כיבוי ידני מהפאנל מנקה הכל", async () => {
+  await recordModelFailure("api");
+  await recordModelFailure("api");
+  await recordModelFailure("api");
+  assert.ok(await readActiveAlarm(), "הכנה: הבאנר אמור להיות דלוק");
+  await clearAlarm();
+  assert.equal(await readActiveAlarm(), null, "כיבוי ידני לא ניקה");
+});
+
 console.log(`\n${passed} עברו, ${failed} נכשלו`);
 process.chdir(os.tmpdir()); // לצאת מהתיקייה לפני מחיקתה (Windows)
 try {

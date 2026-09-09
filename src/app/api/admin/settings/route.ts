@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBotEnabled, setBotEnabled } from "@/lib/admin-service";
 import { getAuthInfo, isMasterAuthorized } from "@/lib/admin-auth";
 import { getRepo } from "@/lib/db";
+import { clearAlarm, readActiveAlarm } from "@/lib/system-alarm";
 
 export const runtime = "nodejs";
 
@@ -13,25 +14,17 @@ export async function GET(req: NextRequest) {
   // role+name: הפאנל משתמש בזה כדי לדעת מי מחובר (מנהל/איש צוות)
   // alertEmail/alertPhones: יעדי ההתראות - מוצגים לעריכה למנהל בלבד
   // ביצועים: כל השאילתות במקביל - כל await עוקב היה עוד נסיעת רשת ל-DB
-  const [alertEmailRaw, alertPhonesRaw, alarmRaw, botEnabled] = await Promise.all([
+  const [alertEmailRaw, alertPhonesRaw, activeAlarm, botEnabled] = await Promise.all([
     auth.role === "master" ? getRepo().getSetting("alert_email") : Promise.resolve(null),
     auth.role === "master" ? getRepo().getSetting("alert_phones") : Promise.resolve(null),
-    getRepo().getSetting("api_alarm"),
+    // תקלה רגעית שהסתדרה לא מחזירה כאן כלום; רק תקלה נמשכת מחזירה באנר,
+    // והוא יורד מעצמו אחרי חלון שקט (ראה system-alarm.ts)
+    readActiveAlarm(),
     getBotEnabled(),
   ]);
   const alertEmail = auth.role === "master" ? (alertEmailRaw ?? "") : undefined;
   const alertPhones = auth.role === "master" ? (alertPhonesRaw ?? "") : undefined;
-  // אזעקת מערכת (כשל מודל / קרדיטים שאזלו) - מוצגת כבאנר אדום לכל הצוות
-  let alarm: { ts: number; reason: string } | undefined;
-  try {
-    if (alarmRaw) {
-      const parsed = JSON.parse(alarmRaw) as { ts: number; reason: string };
-      // רלוונטית רק אם טרייה (עד 24 שעות) - אחרת מתעלמים
-      if (parsed?.ts && Date.now() - parsed.ts < 24 * 3600_000) alarm = parsed;
-    }
-  } catch {
-    /* אין אזעקה */
-  }
+  const alarm = activeAlarm ?? undefined;
   return NextResponse.json({
     botEnabled,
     role: auth.role,
@@ -57,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   // כיבוי ידני של אזעקת המערכת (אחרי שטופלה)
   if (body.clearAlarm === true) {
-    await getRepo().setSetting("api_alarm", "");
+    await clearAlarm();
     return NextResponse.json({ cleared: true });
   }
 

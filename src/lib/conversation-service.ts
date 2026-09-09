@@ -12,6 +12,7 @@ import { generateReply } from "./claude";
 import { loadBusinessConfig } from "./business-config-store";
 import { loadMedia, isMediaRelevant, type MediaItem } from "./media-store";
 import { sendEscalationEmail, sendHumanFollowUpPush, sendSystemAlarmWhatsApp } from "./alerts";
+import { recordModelFailure } from "./system-alarm";
 import { processGapQuestion } from "./knowledge-filter";
 import {
   createReservation,
@@ -54,9 +55,6 @@ const GAP_PATTERNS = [
 function detectKnowledgeGap(reply: string): boolean {
   return GAP_PATTERNS.some((p) => reply.includes(p));
 }
-
-/** דגל בזיכרון המופע: הוקפצה אזעקת מערכת? (לכיבוי אוטומטי כשהמודל מתאושש) */
-let alarmRaised = false;
 
 /**
  * רישום שאלה פתוחה דרך "המסנן החכם" (ראה knowledge-filter.ts):
@@ -1791,11 +1789,10 @@ export async function handleIncomingMessage(
     // הודעה חדשה שנטשה). זיהוי מיוחד לקרדיטים שאזלו. (מקור: התקרית של 3.8.)
     const errMsg = err instanceof Error ? err.message : String(err);
     const alarmReason = /credit balance/i.test(errMsg) ? "credit" : "api";
-    alarmRaised = true;
-    await repo
-      .setSetting("api_alarm", JSON.stringify({ ts: Date.now(), reason: alarmReason, sample: errMsg.slice(0, 180) }))
-      .catch(() => undefined);
-    sendSystemAlarmWhatsApp(alarmReason).catch(() => undefined);
+    // רושמים את הכשל; המודול מחליט לבד אם זה בליפ או תקלה נמשכת. וואטסאפ
+    // לצוות נשלח רק ברגע שהרצף הופך לנמשך - לא על כל כשל בודד.
+    const { becameSustained } = await recordModelFailure(alarmReason, errMsg.slice(0, 180));
+    if (becameSustained) sendSystemAlarmWhatsApp(alarmReason).catch(() => undefined);
 
     const cfg = await loadBusinessConfig();
     const phone = cfg.contact.phone;
@@ -1822,12 +1819,10 @@ export async function handleIncomingMessage(
   }
   await namePromise;
 
-  // המודל חזר לעבוד אחרי כשל - מכבים את אזעקת המערכת בפאנל
-  if (alarmRaised) {
-    alarmRaised = false;
-    await repo.setSetting("api_alarm", "").catch(() => undefined);
-  }
-
+  // אין כאן כיבוי אזעקה בכוונה (שונה 9.9). קודם הצלחה בודדת כיבתה את הבאנר
+  // לכולם, ולכן נפילה ארוכה שבה חלק מהבקשות בכל זאת עברו נראתה כמו סדרת
+  // בליפים והבאנר לא נשאר. עכשיו האזעקה יורדת מעצמה אחרי חלון שקט בלי כשלים,
+  // וההחלטה נגזרת מהנתונים ב-DB (ראה system-alarm.ts) ולא מזיכרון של מופע.
   // הבראה-עצמית: אם השיחה סומנה כהסלמה בגלל תקלת מערכת קודמת, והמודל שוב עונה
   // כרגיל - מנקים את הדגל, כדי שלא תישאר תקועה ב"אצל נציג" על בליפ שכבר חלף.
   // (רק דגל תקלת-המערכת שלנו; הסלמות אמיתיות של נציג/תלונה לא נוגעים בהן.)
