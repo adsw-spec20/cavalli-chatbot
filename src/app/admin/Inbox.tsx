@@ -595,7 +595,7 @@ export default function Inbox({
       escalated: open.filter((c) => c.escalated).length,
       // "אצל נציג" = הדלי המאוחד של כל מה שדורש בן אדם: נלקחה ע"י נציג,
       // הוסלמה, או שהלקוח כתב ואף אחד לא ענה
-      human: open.filter((c) => c.status === "human" || c.escalated || c.awaiting).length,
+      human: open.filter((c) => c.status === "human" || c.escalated).length,
       // נספרים על כל השיחות ולא רק על הפתוחות - שני המסננים כוללים גם סגורות
       starred: convs.filter((c) => effPinned(c)).length,
     };
@@ -636,8 +636,9 @@ export default function Inbox({
         if (c.status === "closed") return false;
         if (statusFilter === "awaiting" && !c.awaiting) return false;
         if (statusFilter === "escalated" && !c.escalated) return false;
-        // "אצל נציג" (הדלי המאוחד): אצל נציג / הוסלמה / ממתינה למענה
-        if (statusFilter === "human" && !(c.status === "human" || c.escalated || c.awaiting)) return false;
+        // "אצל נציג" = אצל נציג בפועל או מוסלמת בלבד. לא כולל "ממתינה למענה"
+        // (awaiting) - אחרת שיחה שחזרה לבוט והלקוח כתב "תודה" נתקעת כאן לנצח.
+        if (statusFilter === "human" && !(c.status === "human" || c.escalated)) return false;
       }
       if (channelFilter !== "all" && c.channel !== channelFilter) return false;
       if (q) {
