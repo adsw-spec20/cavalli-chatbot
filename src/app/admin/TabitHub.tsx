@@ -20,7 +20,7 @@ const VIEWS = [
 ] as const;
 type ViewKey = (typeof VIEWS)[number]["key"];
 
-export default function TabitHub({ token }: { token: string }) {
+export default function TabitHub({ token, agentName }: { token: string; agentName?: string }) {
   const [view, setView] = useState<ViewKey>(() => {
     try {
       const v = localStorage.getItem("tabit_hub_view");
@@ -52,7 +52,7 @@ export default function TabitHub({ token }: { token: string }) {
         ))}
       </div>
 
-      {view === "day" && <Tabit token={token} />}
+      {view === "day" && <Tabit token={token} agentName={agentName} />}
       {view === "floor" && <FloorMap token={token} />}
       {view === "revenue" && <Revenue token={token} />}
       {view === "lab" && <TabitTestChat token={token} />}

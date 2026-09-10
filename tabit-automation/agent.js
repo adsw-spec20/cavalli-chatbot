@@ -163,6 +163,7 @@ function normalizeForSnapshot(list, tables) {
         phone: (d.customer && d.customer.phone) || "",
         seats: d.seats_count || 0,
         fromISO: from || null,
+        untilISO: d.reserved_until || null,
         day: from ? dayFmt.format(new Date(from)) : null,
         time: from ? timeFmt.format(new Date(from)) : "",
         tables: (d.reserved_tables_ids || []).map((id) => tableNum.get(id)).filter((n) => n != null),
@@ -185,7 +186,7 @@ async function pushSnapshot(page, cfg) {
     generatedAt: Date.now(),
     reservations: normalizeForSnapshot(list, tables),
     dashboard: computeDashboard(list, tables, todayIL(), Date.now(), "live"),
-    floor: computeFloor(tables),
+    floor: computeFloor(tables, list, Date.now(), await ensureMapConfig(page)),
   };
   const res = await fetch(cfg.url, { method: "POST", headers: { "content-type": "application/json", "x-tabit-sync-secret": cfg.secret }, body: JSON.stringify(snapshot) });
   console.log(`[snapshot] ${snapshot.reservations.length} reservations, dashboard+floor -> ${res.status}`);
@@ -867,23 +868,105 @@ async function actNotificationStatus(page, params) {
   return { count: rows.length, reservations: rows };
 }
 
-// מפת רצפה: כל שולחן פעיל עם מיקום, מקומות, סטטוס ואזור (לחלוקת קוואלי).
-// פונקציה טהורה כדי שגם ה-snapshot יחשב אותה מהשולחנות שכבר נמשכו.
-function computeFloor(tables) {
+// ----- קונפיג המפה של טאביט (צורות שולחנות + מידות הקנבס) -----
+// נמשך פעם בכמה שעות מקונפיג הארגון; משמש את מפת הרצפה בפאנל כדי לצייר
+// עגול/מרובע ולמקם לפי אותה מערכת צירים כמו טאביט. כשל = פשוט בלי צורות.
+let MAP_CFG = null;
+let mapCfgAt = 0;
+async function ensureMapConfig(page) {
+  if (MAP_CFG && Date.now() - mapCfgAt < 6 * 3600_000) return MAP_CFG;
+  try {
+    const r = await apiFetch(page, "GET", `/organizations/${ORG_ID}/configuration`);
+    if (r.status === 200 && r.body && r.body.map) {
+      const m = r.body.map;
+      const shapes = {};
+      for (const [num, val] of Object.entries(m.tables_shapes_overrides || {})) {
+        shapes[num] = val === "round" ? "round" : "square";
+      }
+      MAP_CFG = {
+        canvas: m.canvas && m.canvas.width ? { w: m.canvas.width, h: m.canvas.height } : null,
+        defaultSquare: m.square_tables !== false,
+        shapes,
+      };
+      mapCfgAt = Date.now();
+    }
+  } catch (_) { /* לא קריטי - המפה תעבוד בלי צורות */ }
+  return MAP_CFG;
+}
+
+// מפת רצפה: כל שולחן פעיל עם מיקום, צורה, סטטוס, מי יושב עכשיו (כולל מזדמנים,
+// שלא נכנסים לרשימת ה-snapshot) וההזמנה הבאה של אותו שולחן היום.
+// פונקציה טהורה כדי שגם ה-snapshot יחשב אותה מהנתונים שכבר נמשכו.
+function computeFloor(tables, list, now, mapCfg) {
   const active = tables.filter((t) => !t.disabled);
+  const byId = new Map(active.map((t) => [t._id, t]));
+  const todayStr = dayFmt.format(new Date(now));
+
+  const currentByTable = new Map();
+  const nextByTable = new Map();
+  for (const r of list || []) {
+    const d = r.reservation_details || {};
+    if (r.state === "cancelled" || !d.reserved_from) continue;
+    const f = new Date(d.reserved_from).getTime();
+    const u = d.reserved_until ? new Date(d.reserved_until).getTime() : f + 120 * 60000;
+    const name = (d.customer && d.customer.name) || (r.type === "walked_in" ? "מזדמן" : "");
+    const phone = (d.customer && d.customer.phone) || "";
+    for (const id of d.reserved_tables_ids || []) {
+      if (!byId.has(id)) continue;
+      if (f <= now && u > now) {
+        const remaining = Math.round((u - now) / 60000);
+        currentByTable.set(id, {
+          name, phone, seats: d.seats_count || 0,
+          seated_min: Math.round((now - f) / 60000),
+          remaining_min: remaining,
+          flag: remaining <= 0 ? "מעבר לזמן" : remaining <= 20 ? "לקראת סיום" : "יושבים",
+        });
+      } else if (f > now && dayFmt.format(new Date(f)) === todayStr) {
+        const prev = nextByTable.get(id);
+        if (!prev || f < prev.f) {
+          nextByTable.set(id, { f, next: { time: timeFmt.format(new Date(f)), name, phone, seats: d.seats_count || 0 } });
+        }
+      }
+    }
+  }
+
+  const shapeOf = (num) => {
+    const s = mapCfg && mapCfg.shapes ? mapCfg.shapes[String(num)] : null;
+    if (s) return s;
+    return mapCfg && mapCfg.defaultSquare === false ? "round" : "square";
+  };
   const rows = active.map((t) => ({
     number: t.number, seats: t.seats || 0, status: t.status || "unknown",
     label: TABLE_STATUS_HE[t.status] || t.status || "",
     x: t.location && t.location.x, y: t.location && t.location.y,
     area: OUTSIDE_NUMS.has(t.number) ? "חוץ" : "פנים",
+    shape: shapeOf(t.number),
     dirty: !!t.dirty,
+    current: currentByTable.get(t._id) || null,
+    next: (nextByTable.get(t._id) || {}).next || null,
   }));
   const counts = {};
   for (const t of rows) counts[t.status] = (counts[t.status] || 0) + 1;
-  return { total: rows.length, total_seats: rows.reduce((s, t) => s + t.seats, 0), by_status: counts, tables: rows };
+  return {
+    total: rows.length,
+    total_seats: rows.reduce((s, t) => s + t.seats, 0),
+    by_status: counts,
+    canvas: (mapCfg && mapCfg.canvas) || null,
+    tables: rows,
+  };
 }
 async function actFloorMap(page) {
-  return computeFloor(await getTables(page));
+  const [tables, list] = [await getTables(page), await getReservations(page)];
+  return computeFloor(tables, list, Date.now(), await ensureMapConfig(page));
+}
+
+// רענון חי: הפאנל מבקש snapshot עכשיו במקום לחכות למחזור ה-5 דקות.
+// AGENT_CFG נקבע ב-main (מכיל את כתובת ה-ingest והסוד).
+let AGENT_CFG = null;
+async function actRefreshSnapshot(page) {
+  if (!AGENT_CFG) throw new Error("cfg not ready");
+  await pushSnapshot(page, AGENT_CFG);
+  return { ok: true, refreshedAt: Date.now() };
 }
 
 // שלב 1: השכבה האחרונה והקשוחה ביותר - הסוכן עצמו מסרב לכל פעולת כתיבה מול
@@ -915,6 +998,7 @@ async function run(page, cmd, me) {
     case "revenue_summary": return actRevenueSummary(page, cmd.params || {});
     case "notification_status": return actNotificationStatus(page, cmd.params || {});
     case "floor_map": return actFloorMap(page);
+    case "refresh_snapshot": return actRefreshSnapshot(page);
     default: throw new Error(`פעולה לא מוכרת: ${cmd.action}`);
   }
 }
@@ -967,6 +1051,7 @@ async function launchBrowser() {
 
 (async () => {
   const cfg = loadConfig();
+  AGENT_CFG = cfg;
   if (!cfg.agentUrl || !cfg.secret) { console.error("חסר TABIT_SYNC_URL / TABIT_SYNC_SECRET (או sync-config.json)"); process.exit(1); }
   if (anotherAgentAlive()) { console.error("סוכן אחר כבר רץ (agent.lock טרי). סגור אותו קודם. יוצא."); process.exit(1); }
   console.log("agent polling:", cfg.agentUrl);

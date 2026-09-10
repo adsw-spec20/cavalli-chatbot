@@ -30,7 +30,8 @@ export type TabitAction =
   | "shift_dashboard"
   | "revenue_summary"
   | "notification_status"
-  | "floor_map";
+  | "floor_map"
+  | "refresh_snapshot";
 
 export type TabitCommandStatus = "pending" | "running" | "done" | "error";
 

@@ -20,6 +20,8 @@ interface MissRes {
   time: string; // HH:MM
   seats: number;
   depositLink: string | null;
+  /** מתי נשלחה תזכורת פיקדון להזמנה הזאת (אם נשלחה) - שלא ישלחו פעמיים */
+  reminderSentAt?: number | null;
 }
 
 const todayIL = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
@@ -40,6 +42,14 @@ function fmtPhone(p: string): string {
   return /^0\d{9}$/.test(d) ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : (p || "").trim();
 }
 const last9 = (p: string) => (p || "").replace(/\D/g, "").slice(-9);
+
+/** "9.9 · 17:32" - מתי נשלחה התזכורת */
+function fmtSentAt(ts: number): string {
+  const d = new Date(ts);
+  const day = new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", day: "numeric", month: "numeric" }).format(d);
+  const time = new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+  return `${day} · ${time}`;
+}
 
 export default function DepositPanel({
   token,
@@ -98,9 +108,10 @@ export default function DepositPanel({
     try {
       await api(token, "/tabit/send-deposit-reminder", {
         method: "POST",
-        body: JSON.stringify({ phone: r.phone, link: r.depositLink, name: r.name, agentName }),
+        body: JSON.stringify({ phone: r.phone, link: r.depositLink, name: r.name, agentName, reservationId: r.id }),
       });
       setSent((s) => ({ ...s, [r.id]: "ok" }));
+      setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, reminderSentAt: Date.now() } : x)));
     } catch (e) {
       setSent((s) => ({ ...s, [r.id]: e instanceof Error ? e.message : "נכשל" }));
     } finally {
@@ -189,10 +200,13 @@ export default function DepositPanel({
                               title={r.depositLink ? "שלח תזכורת פיקדון" : "אין קישור פיקדון (הפעל מחדש את הסוכן)"}
                               className="text-xs rounded-lg px-2.5 py-1 border border-[var(--border)] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-40 shrink-0"
                             >
-                              💳 שלח
+                              {r.reminderSentAt ? "💳 שלח שוב" : "💳 שלח"}
                             </button>
                           )}
                         </div>
+                        {r.reminderSentAt ? (
+                          <div className="text-[11px] text-amber-500 mt-1">💳 נשלחה תזכורת · {fmtSentAt(r.reminderSentAt)}</div>
+                        ) : null}
                         {typeof state === "string" && state !== "ok" && (
                           <div className="text-[11px] text-red-400 mt-1">⚠ {state}</div>
                         )}

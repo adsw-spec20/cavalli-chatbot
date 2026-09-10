@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api } from "./types";
+import { api, relTime } from "./types";
 
 /** עיצוב טקסט inline: **מודגש** / *מודגש* -> bold */
 function renderInline(text: string, kp: string): ReactNode[] {
@@ -150,8 +150,9 @@ function AssistantContent({ text, tools }: { text: string; tools?: ToolEntry[] }
 
 /**
  * מעבדת טאביט - צ'אט AI מבודד לבדיקת החיבורים לטאביט (מנהל בלבד).
- * מבודד לגמרי מהצ'אטבוט הציבורי. כל קריאה/יצירה מבוצעת ע"י הסוכן המקומי,
- * ולוג הכלים מציג בדיוק מה רץ, מה חזר, ומה נכשל.
+ * מ-10.9 השיחות נשמרות בצד השרת: יציאה וחזרה ממשיכות את אותה שיחה,
+ * וכפתור "היסטוריה" מציג את כל השיחות (כולל של בוט הקבוצה בוואטסאפ) -
+ * למעקב ובקרה על התנהגות הבוט.
  */
 
 interface ToolEntry {
@@ -166,6 +167,19 @@ interface Msg {
   text: string;
   tools?: ToolEntry[];
 }
+interface SessionMeta {
+  id: string;
+  title: string;
+  source: "panel" | "group";
+  createdAt: number;
+  updatedAt: number;
+  count: number;
+}
+interface SessionFull extends SessionMeta {
+  messages: { role: "user" | "assistant"; content: string; ts: number; toolLog?: ToolEntry[] }[];
+}
+
+const LS_KEY = "tabit_lab_last_session";
 
 const SUGGESTIONS = [
   "כמה מוזמנים יש היום בערב?",
@@ -208,12 +222,70 @@ function ToolLog({ tools }: { tools: ToolEntry[] }) {
   );
 }
 
+const msgsFromSession = (s: SessionFull): Msg[] =>
+  s.messages.map((m) => ({ role: m.role, text: m.content, tools: m.toolLog }));
+
 export default function TabitTestChat({ token }: { token: string }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [msgs]);
+
+  // שחזור השיחה האחרונה - המעבדה לא מתאפסת כשיוצאים וחוזרים
+  useEffect(() => {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(LS_KEY); } catch { /* ignore */ }
+    if (!saved) return;
+    api<{ session: SessionFull }>(token, `/tabit/lab-sessions/${saved}`)
+      .then((d) => {
+        setMsgs(msgsFromSession(d.session));
+        setSessionId(d.session.id);
+      })
+      .catch(() => { try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ } });
+  }, [token]);
+
+  async function loadSessions() {
+    try {
+      const d = await api<{ sessions: SessionMeta[] }>(token, "/tabit/lab-sessions");
+      setSessions(d.sessions || []);
+    } catch { /* לא קריטי */ }
+  }
+  function openHistory() {
+    setConfirmDelete(null);
+    setHistoryOpen(true);
+    loadSessions();
+  }
+  async function openSession(id: string) {
+    try {
+      const d = await api<{ session: SessionFull }>(token, `/tabit/lab-sessions/${id}`);
+      setMsgs(msgsFromSession(d.session));
+      setSessionId(d.session.id);
+      try { localStorage.setItem(LS_KEY, d.session.id); } catch { /* ignore */ }
+      setHistoryOpen(false);
+    } catch { /* ignore */ }
+  }
+  async function removeSession(id: string) {
+    try {
+      await api(token, `/tabit/lab-sessions/${id}`, { method: "DELETE" });
+      setSessions((s) => s.filter((x) => x.id !== id));
+      setConfirmDelete(null);
+      if (id === sessionId) newChat();
+    } catch { /* ignore */ }
+  }
+  function newChat() {
+    setMsgs([]);
+    setSessionId(null);
+    try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ }
+  }
 
   // לחיצה על צ'יפ ממלאת את תיבת הצ'אט (לא שולחת) כדי שאפשר לערוך/להשלים לפני שליחה
   function fillFromChip(text: string) {
@@ -228,24 +300,22 @@ export default function TabitTestChat({ token }: { token: string }) {
     });
   }
 
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [msgs]);
-
   async function send(text?: string) {
     const content = (text ?? input).trim();
     if (!content || busy) return;
     setInput("");
-    const next = [...msgs, { role: "user" as const, text: content }];
-    setMsgs(next);
+    setMsgs((m) => [...m, { role: "user", text: content }]);
     setBusy(true);
     try {
-      const payload = next.map((m) => ({ role: m.role, content: m.text }));
-      const data = await api<{ reply: string; toolLog: ToolEntry[] }>(token, "/tabit/testchat", {
+      const data = await api<{ reply: string; toolLog: ToolEntry[]; sessionId: string }>(token, "/tabit/testchat", {
         method: "POST",
-        body: JSON.stringify({ messages: payload }),
+        body: JSON.stringify({ sessionId, message: content }),
       });
       setMsgs((m) => [...m, { role: "assistant", text: data.reply, tools: data.toolLog || [] }]);
+      if (data.sessionId) {
+        setSessionId(data.sessionId);
+        try { localStorage.setItem(LS_KEY, data.sessionId); } catch { /* ignore */ }
+      }
     } catch (e) {
       setMsgs((m) => [...m, { role: "assistant", text: `⚠ ${e instanceof Error ? e.message : "שגיאה"}`, tools: [] }]);
     } finally {
@@ -255,16 +325,24 @@ export default function TabitTestChat({ token }: { token: string }) {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <p className="text-xs text-[var(--muted)]">
-          צ'אט מבודד לבדיקת טאביט - קורא ויוצר הזמנות דרך הסוכן המקומי. לא נוגע בהזמנות קיימות ולא קשור לבוט הציבורי.
+          צ'אט מבודד לבדיקת טאביט - השיחות נשמרות אוטומטית, אפשר לצאת ולחזור להמשיך.
         </p>
-        <button
-          onClick={() => setMsgs([])}
-          className="shrink-0 text-xs text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-lg px-2.5 py-1.5"
-        >
-          שיחה חדשה
-        </button>
+        <div className="flex gap-1.5 shrink-0">
+          <button
+            onClick={openHistory}
+            className="text-xs text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-lg px-2.5 py-1.5"
+          >
+            🕘 היסטוריה
+          </button>
+          <button
+            onClick={newChat}
+            className="text-xs text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-lg px-2.5 py-1.5"
+          >
+            שיחה חדשה
+          </button>
+        </div>
       </div>
 
       <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl flex flex-col h-[calc(100dvh-250px)] md:h-[calc(100dvh-200px)]">
@@ -313,6 +391,51 @@ export default function TabitTestChat({ token }: { token: string }) {
           </button>
         </div>
       </div>
+
+      {/* היסטוריית שיחות - מעקב ובקרה (כולל שיחות בוט הקבוצה) */}
+      {historyOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={() => setHistoryOpen(false)}>
+          <div
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
+              <h2 className="font-semibold font-display text-base">🕘 היסטוריית שיחות</h2>
+              <span className="text-xs text-[var(--muted)]">{sessions.length}</span>
+              <button onClick={() => setHistoryOpen(false)} className="mr-auto text-[var(--muted)] hover:text-[var(--text)] rounded-lg px-2 py-1 border border-[var(--border)] text-sm">
+                ✕
+              </button>
+            </header>
+            <div className="flex-1 overflow-y-auto p-3">
+              {sessions.length === 0 ? (
+                <div className="text-sm text-[var(--muted)] text-center py-8">אין עדיין שיחות שמורות</div>
+              ) : (
+                <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
+                  {sessions.map((s) => (
+                    <div key={s.id} className={`px-3 py-2.5 flex items-center gap-2 ${s.id === sessionId ? "bg-[var(--panel2)]" : ""}`}>
+                      <button onClick={() => openSession(s.id)} className="flex-1 min-w-0 text-start">
+                        <div className="text-sm font-medium truncate">{s.title || "(ללא כותרת)"}</div>
+                        <div className="text-[11px] text-[var(--muted)]">
+                          {s.source === "group" ? "💬 קבוצה" : "🖥️ מעבדה"} · {relTime(s.updatedAt)} · {Math.ceil(s.count / 2)} חילופים
+                        </div>
+                      </button>
+                      {confirmDelete === s.id ? (
+                        <button onClick={() => removeSession(s.id)} className="shrink-0 text-[11px] text-red-400 border border-red-500/40 rounded-lg px-2 py-1">
+                          בטוח? מחק
+                        </button>
+                      ) : (
+                        <button onClick={() => setConfirmDelete(s.id)} title="מחק שיחה" className="shrink-0 text-[var(--muted)] hover:text-red-400 rounded-lg px-2 py-1 text-xs">
+                          🗑
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

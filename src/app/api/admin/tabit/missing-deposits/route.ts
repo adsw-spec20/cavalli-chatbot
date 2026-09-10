@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthorized } from "@/lib/admin-auth";
 import { getRepo } from "@/lib/db";
+import { loadDepositReminders } from "@/lib/deposit-reminders";
 
 /**
  * רשימת ההזמנות שחסר בהן פיקדון (לכפתור "פיקדון" בתיבת הפניות) - **נגיש לצוות**,
@@ -35,6 +36,7 @@ export async function GET(req: NextRequest) {
     snap = null;
   }
   const today = todayIL();
+  const reminders = await loadDepositReminders().catch(() => ({} as Record<string, number>));
   const reservations = (snap?.reservations || [])
     .filter((r) => r.deposit === "missing" && r.day && r.day >= today)
     .map((r) => ({
@@ -45,6 +47,8 @@ export async function GET(req: NextRequest) {
       time: r.time || "",
       seats: r.seats || 0,
       depositLink: r.depositLink || null,
+      // "נשלחה תזכורת" - כדי שהמארחת תראה שמישהי כבר שלחה, ומתי
+      reminderSentAt: (r.id && reminders[r.id]) || null,
     }))
     .sort((a, b) => (a.day + a.time < b.day + b.time ? -1 : 1));
 

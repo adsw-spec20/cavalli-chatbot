@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRepo } from "@/lib/db";
 import { runTabitChat } from "@/lib/tabit-lab";
 import { sendGreenMessage, greenApiConfigured } from "@/lib/green-api";
+import { appendLabExchange, type LabToolEntry } from "@/lib/tabit-lab-store";
 
 /**
  * בוט טאביט בקבוצת הוואטסAאפ (משטח B) - webhook נכנס מ-Green API.
@@ -36,7 +37,7 @@ interface GreenMessageData {
 interface GreenWebhook {
   typeWebhook?: string;
   idMessage?: string;
-  senderData?: { chatId?: string; sender?: string; senderName?: string };
+  senderData?: { chatId?: string; chatName?: string; sender?: string; senderName?: string };
   messageData?: GreenMessageData;
 }
 
@@ -110,8 +111,18 @@ export async function POST(req: NextRequest) {
   if (!greenApiConfigured()) return NextResponse.json({ ok: true, skip: "green api not configured" });
 
   try {
-    const { reply } = await runTabitChat([{ role: "user", content: question }], { forceReadOnly: true, extraSystem: GROUP_SYSTEM });
+    const { reply, toolLog } = await runTabitChat([{ role: "user", content: question }], { forceReadOnly: true, extraSystem: GROUP_SYSTEM });
     await sendGreenMessage(chatId, reply);
+    // תיעוד להיסטוריית המעבדה (מעקב ובקרה של המנהל) - סשן קבוע לכל קבוצה
+    const sender = body.senderData?.senderName || "חבר קבוצה";
+    await appendLabExchange({
+      sessionId: `grp-${chatId.replace(/\D/g, "").slice(-12) || "group"}`,
+      source: "group",
+      title: `וואטסאפ · ${body.senderData?.chatName || chatId}`.slice(0, 60),
+      userContent: `${sender}: ${question}`,
+      assistantContent: reply,
+      toolLog: toolLog as LabToolEntry[],
+    }).catch(() => {});
   } catch {
     // לא מפילים את הוובהוק (Green API יסמן טופל); מנסים להודיע בשקט בקבוצה
     try {

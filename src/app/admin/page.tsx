@@ -1094,7 +1094,7 @@ export default function AdminPage() {
           {tab === "reservations" && (
             <Reservations token={token} agentName={agentName} onOpenConversation={openConversation} />
           )}
-          {tab === "tabit" && role === "master" && <TabitHub token={token} />}
+          {tab === "tabit" && role === "master" && <TabitHub token={token} agentName={agentName} />}
           {tab === "knowledge" && (
             <Knowledge token={token} onMutate={loadConversations} onTest={openTest} onOpenConversation={openConversation} agentName={agentName} />
           )}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthorized } from "@/lib/admin-auth";
 import { sendProactiveTemplate } from "@/lib/proactive-send";
+import { recordDepositReminder } from "@/lib/deposit-reminders";
 
 /**
  * תזכורת פיקדון עם קישור תשלום אמיתי (כפתור "פיקדון" בתיבת הפניות, נגיש לצוות).
@@ -14,7 +15,13 @@ export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
   if (!(await isAdminAuthorized(req))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const body = (await req.json().catch(() => ({}))) as { phone?: string; link?: string; name?: string; agentName?: string };
+  const body = (await req.json().catch(() => ({}))) as {
+    phone?: string;
+    link?: string;
+    name?: string;
+    agentName?: string;
+    reservationId?: string;
+  };
   if (!body.phone || !body.link) {
     return NextResponse.json({ error: "חסר טלפון או קישור פיקדון" }, { status: 400 });
   }
@@ -24,7 +31,11 @@ export async function POST(req: NextRequest) {
     agentName: body.agentName,
     bodyParams: [body.link],
   });
+  if (r.ok && body.reservationId) {
+    // רישום "נשלחה תזכורת" - שהמסכים יציגו מתי, ולא יישלח כפול משתי מארחות
+    await recordDepositReminder(body.reservationId).catch(() => {});
+  }
   return r.ok
-    ? NextResponse.json({ ok: true })
+    ? NextResponse.json({ ok: true, sentAt: Date.now() })
     : NextResponse.json({ error: r.error, detail: r.detail }, { status: r.status });
 }
