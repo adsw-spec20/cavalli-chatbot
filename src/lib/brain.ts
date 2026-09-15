@@ -15,6 +15,7 @@ import { loadMedia } from "./media-store";
 import { buildSystemPrompt } from "./system-prompt";
 import { getRepo } from "./db";
 import { QUICK_ANSWER_CATALOG } from "./conversation-service";
+import { loadOverrides, applyPromptOverrides } from "./brain-store";
 
 export interface BrainItem {
   /** מזהה יציב לניווט ולעריכה עתידית */
@@ -28,6 +29,14 @@ export interface BrainItem {
   /** מאיפה זה מגיע, ולכן האם אפשר לערוך היום */
   origin: "code" | "config" | "learned" | "media" | "runtime";
   editable: boolean;
+  /** האם הפריט נערך בפאנל (ולכן דורס את ברירת המחדל שבקוד) */
+  edited?: boolean;
+  /** ברירת המחדל שבקוד - מוצגת לצד העריכה ומאפשרת חזרה */
+  defaultText?: string;
+  /** דריסה שהטקסט המקורי שלה כבר לא קיים בקוד, ולכן אינה מוחלת */
+  stale?: boolean;
+  /** לתבניות: מה מפעיל אותן (מוצג לצד העורך) */
+  matchNote?: string;
 }
 
 export interface BrainLayer {
@@ -52,6 +61,8 @@ export interface BrainSnapshot {
   estCostPerMessage: number;
   conflicts: BrainConflict[];
   matches?: { layer: string; id: string; title: string; excerpt: string }[];
+  editedCount: number;
+  staleIds: string[];
   generatedAt: number;
 }
 
@@ -68,7 +79,7 @@ function splitPrompt(prompt: string): BrainItem[] {
   let buf: string[] = [];
   const flush = () => {
     const body = buf.join("\n").trim();
-    if (body) items.push({ id, title, body, chars: body.length, tokens: tok(body), origin: "code", editable: false });
+    if (body) items.push({ id, title, body, chars: body.length, tokens: tok(body), origin: "code", editable: true });
     buf = [];
   };
   for (const ln of lines) {
@@ -97,7 +108,7 @@ function findConflicts(prompt: string, configText: string, learnedText: string):
   const out: BrainConflict[] = [];
 
   // 1. "טאביט" בהקשר פיקדון: הכלל אוסר, מקורות אחרים מורים להפך
-  const forbidsTabit = /אל תזכיר את המילה "?טאביט"? בהקשר הפיקדון/.test(prompt);
+  const forbidsTabit = /קרא לזה "?האתר"?, לא "?טאביט"?/.test(prompt);
   const configSaysTabit = /פיקדון[^.]{0,120}טאביט|טאביט[^.]{0,120}פיקדון/.test(configText);
   const learnedSaysTabit = /פיקדון[^.]{0,120}טאביט|טאביט[^.]{0,120}פיקדון/.test(learnedText);
   if (forbidsTabit && (configSaysTabit || learnedSaysTabit)) {
@@ -108,7 +119,7 @@ function findConflicts(prompt: string, configText: string, learnedText: string):
       severity: "high",
       topic: "המילה \"טאביט\" בהקשר הפיקדון",
       detail:
-        "כלל הברזל אוסר להזכיר \"טאביט\" כשמדברים על הפיקדון ומורה לומר \"קישור לתשלום\", אבל מקורות ידע אחרים אומרים לבוט בדיוק להפך. המודל יבחר לפי מה שבולט לו יותר באותו רגע, וזה לא צפוי.",
+        "כלל הברזל מורה לקרוא למערכת ההזמנות \"האתר\" ולא \"טאביט\", אבל מקורות ידע אחרים מנסחים דווקא \"קישור טאביט\". הבוט יבחר לפי מה שבולט לו באותו רגע, והניסוח ללקוח לא יהיה עקבי.",
       where,
     });
   }
@@ -155,22 +166,52 @@ function findConflicts(prompt: string, configText: string, learnedText: string):
 }
 
 export async function buildBrainSnapshot(query = ""): Promise<BrainSnapshot> {
-  const [config, media, qa] = await Promise.all([loadBusinessConfig(), loadMedia(), getRepo().listLearnedQA("answered").catch(() => [])]);
-  const prompt = buildSystemPrompt(config, media);
+  const [config, media, qa, overrides] = await Promise.all([
+    loadBusinessConfig(),
+    loadMedia(),
+    getRepo().listLearnedQA("answered").catch(() => []),
+    loadOverrides(),
+  ]);
+  const basePrompt = buildSystemPrompt(config, media);
+  // מה שמוצג הוא מה שהבוט באמת מקבל - כולל עריכות שכבר נשמרו
+  const { prompt, stale } = applyPromptOverrides(basePrompt, overrides);
 
-  // --- שכבה 1: כללי ברזל והוראות (מהקוד) ---
-  const ruleItems = splitPrompt(prompt);
+  // --- שכבה 1: כללי ברזל והוראות ---
+  // הסעיפים נחתכים מברירת המחדל (כדי שעוגן ה-base יישאר יציב), ומי שנערך
+  // מוצג עם הנוסח הפעיל ומסומן.
+  const defaults = new Map(splitPrompt(basePrompt).map((i) => [i.id, i.body]));
+  const ruleItems: BrainItem[] = splitPrompt(basePrompt).map((it) => {
+    const ov = overrides.items[it.id];
+    if (!ov) return it;
+    return {
+      ...it,
+      body: ov.text,
+      chars: ov.text.length,
+      tokens: tok(ov.text),
+      edited: true,
+      defaultText: defaults.get(it.id),
+      stale: stale.includes(it.id),
+    };
+  });
 
   // --- שכבה 2: מאגר התשובות החינמיות ---
-  const cannedItems: BrainItem[] = QUICK_ANSWER_CATALOG.map((c) => ({
-    id: `canned-${c.key}`,
-    title: c.title,
-    body: `מה תופס: ${c.patterns}\n\nמה יוצא ללקוח:\n${c.sample}`,
-    chars: c.sample.length,
-    tokens: tok(c.sample),
-    origin: "code",
-    editable: false,
-  }));
+  const cannedItems: BrainItem[] = QUICK_ANSWER_CATALOG.map((c) => {
+    const id = `canned-${c.key}`;
+    const ov = overrides.items[id];
+    const sample = ov?.text ?? c.sample;
+    return {
+      id,
+      title: c.title,
+      body: sample,
+      chars: sample.length,
+      tokens: tok(sample),
+      origin: "code" as const,
+      editable: true,
+      edited: !!ov,
+      defaultText: c.sample,
+      matchNote: c.patterns,
+    };
+  });
 
   // --- שכבה 3: מידע עסקי (ניתן לעריכה היום) ---
   const cfgItems: BrainItem[] = [
@@ -259,6 +300,8 @@ export async function buildBrainSnapshot(query = ""): Promise<BrainSnapshot> {
     estCostPerMessage: Math.round((totalTokens * 3.75) / 1e6 * 1e4) / 1e4,
     conflicts,
     matches,
+    editedCount: Object.keys(overrides.items).length,
+    staleIds: stale,
     generatedAt: Date.now(),
   };
 }
