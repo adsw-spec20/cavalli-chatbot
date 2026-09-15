@@ -65,6 +65,13 @@ export default function DepositPanel({
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  // Escape סוגר את המודל (בנוסף ללחיצה על הרקע ועל ✕)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [sent, setSent] = useState<Record<string, "ok" | string>>({});
 

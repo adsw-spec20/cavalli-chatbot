@@ -370,8 +370,14 @@ export default function AdminPage() {
   // קישור ייעודי לכל מסך: הטאב נשמר ב-hash של הכתובת (למשל /admin#tabit),
   // כך שרענון או שיתוף קישור פותחים את אותו מסך. בלי ניתוב/עמודים חדשים - אפס סיכון.
   useEffect(() => {
-    const h = window.location.hash.slice(1) as Tab;
-    if (h && TABS.some((t) => t.key === h)) setTab(h);
+    const applyHash = () => {
+      const h = window.location.hash.slice(1) as Tab;
+      if (h && TABS.some((t) => t.key === h)) setTab(h);
+    };
+    applyHash();
+    // גם שינוי hash תוך כדי (אחורה/קדימה בדפדפן, קישור פנימי) מחליף לשונית
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
   }, []);
   useEffect(() => {
     try { history.replaceState(null, "", `#${tab}`); } catch { /* ignore */ }

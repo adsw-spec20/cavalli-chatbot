@@ -322,7 +322,7 @@ export default function Knowledge({
                       disabled={busy === q.id || !(drafts[q.id] ?? "").trim()}
                       className="text-xs bg-[var(--accent)] text-[var(--accent-fg)] font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40"
                     >
-                      {busy === q.id ? "שומר…" : "שמור — הבוט ילמד"}
+                      {busy === q.id ? "שומר…" : "שמור - הבוט ילמד"}
                     </button>
                     <button
                       onClick={() => remove(q.id, "לסמן את השאלה כלא רלוונטית ולהסיר אותה?")}
