@@ -4,6 +4,7 @@ import { useState } from "react";
 import Tabit from "./Tabit";
 import TabitTestChat from "./TabitTestChat";
 import FloorMap from "./FloorMap";
+import TabitGuide from "./TabitGuide";
 
 /**
  * מרכז טאביט - טאב אחד שמאחד את כל תת-התצוגות (שלב 1, קריאה בלבד):
@@ -18,13 +19,14 @@ const VIEWS = [
   { key: "floor", label: "מפת רצפה" },
   { key: "lab", label: "מעבדה" },
 ] as const;
-type ViewKey = (typeof VIEWS)[number]["key"];
+// "guide" הוא כפתור נפרד בצד קבוצת הלשוניות (בקשת המנהל 15.9)
+type ViewKey = (typeof VIEWS)[number]["key"] | "guide";
 
 export default function TabitHub({ token, agentName, isMaster }: { token: string; agentName?: string; isMaster?: boolean }) {
   const [view, setView] = useState<ViewKey>(() => {
     try {
       const v = localStorage.getItem("tabit_hub_view");
-      if (v && VIEWS.some((x) => x.key === v)) return v as ViewKey;
+      if (v && (VIEWS.some((x) => x.key === v) || v === "guide")) return v as ViewKey;
     } catch {}
     return "day";
   });
@@ -37,24 +39,38 @@ export default function TabitHub({ token, agentName, isMaster }: { token: string
 
   return (
     <div className="space-y-4">
-      <div className="inline-flex rounded-xl border border-[var(--border)] overflow-hidden flex-wrap">
-        {VIEWS.map((v) => (
-          <button
-            key={v.key}
-            onClick={() => pick(v.key)}
-            aria-current={view === v.key ? "page" : undefined}
-            className={`px-4 py-2 text-sm ${
-              view === v.key ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "text-[var(--muted)] hover:text-[var(--text)]"
-            }`}
-          >
-            {v.label}
-          </button>
-        ))}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="inline-flex rounded-xl border border-[var(--border)] overflow-hidden flex-wrap">
+          {VIEWS.map((v) => (
+            <button
+              key={v.key}
+              onClick={() => pick(v.key)}
+              aria-current={view === v.key ? "page" : undefined}
+              className={`px-4 py-2 text-sm ${
+                view === v.key ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "text-[var(--muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => pick("guide")}
+          aria-current={view === "guide" ? "page" : undefined}
+          className={`rounded-xl border px-3.5 py-2 text-sm transition ${
+            view === "guide"
+              ? "bg-[var(--accent)] text-[var(--accent-fg)] border-transparent font-semibold"
+              : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"
+          }`}
+        >
+          📖 מדריך
+        </button>
       </div>
 
       {view === "day" && <Tabit token={token} agentName={agentName} />}
       {view === "floor" && <FloorMap token={token} />}
       {view === "lab" && <TabitTestChat token={token} isMaster={isMaster} />}
+      {view === "guide" && <TabitGuide />}
     </div>
   );
 }
