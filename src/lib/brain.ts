@@ -254,7 +254,8 @@ export async function buildBrainSnapshot(query = ""): Promise<BrainSnapshot> {
     chars: m.label.length + m.keywords.length,
     tokens: tok(m.label + m.keywords),
     origin: "media",
-    editable: true,
+    // המדיה מנוהלת בטאב "מדיה" (קבצים, לא טקסט) - עריכה כאן לא היתה עושה כלום
+    editable: false,
   }));
 
   // --- שכבה 6: הקשר דינמי שנוסף בזמן אמת ---
@@ -270,8 +271,8 @@ export async function buildBrainSnapshot(query = ""): Promise<BrainSnapshot> {
     { key: "rules", title: "כללי ברזל והוראות", note: "הליבה שמכתיבה איך הבוט מתנהג. יושב בקוד.", items: ruleItems },
     { key: "canned", title: "מאגר תשובות חינמיות", note: "שאלות שנענות בלי מודל, ולכן בעלות אפס.", items: cannedItems },
     { key: "config", title: "מידע עסקי", note: "תפריט, שעות, מדיניות. ניתן לעריכה בפאנל.", items: cfgItems },
-    { key: "learned", title: "ידע נלמד", note: "שאלות שהצוות ענה עליהן והבוט אימץ.", items: learnedItems },
-    { key: "media", title: "מדיה", note: "סרטונים ותמונות שהבוט יכול לשלוח.", items: mediaItems },
+    { key: "learned", title: "ידע נלמד", note: "שאלות שהצוות ענה עליהן והבוט אימץ. עריכה כאן משנה את התשובה עצמה.", items: learnedItems },
+    { key: "media", title: "מדיה", note: "סרטונים ותמונות שהבוט יכול לשלוח. הקבצים מנוהלים בטאב מדיה.", items: mediaItems },
     { key: "runtime", title: "הקשר דינמי", note: "מה שנוסף בזמן אמת לכל שיחה.", items: runtimeItems },
   ].map((l) => ({ ...l, tokens: l.items.reduce((s, i) => s + i.tokens, 0) }));
 

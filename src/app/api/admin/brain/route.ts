@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isMasterAuthorized } from "@/lib/admin-auth";
 import { buildBrainSnapshot } from "@/lib/brain";
 import { setOverride, listHistory, revertTo } from "@/lib/brain-store";
+import { getRepo } from "@/lib/db";
 
 /**
  * "מוח הבוט" - כל מה שהבוט יודע, במקום אחד. מנהל ראשי בלבד.
@@ -38,6 +39,15 @@ export async function PUT(req: NextRequest) {
   // מעקה: טקסט ארוך בטירוף כנראה הדבקה בטעות, והוא מייקר כל הודעה
   if (body.text.length > 20000) {
     return NextResponse.json({ error: "הטקסט ארוך מדי (מעל 20,000 תווים)" }, { status: 400 });
+  }
+  // ידע נלמד אינו חלק מהפרומפט הקבוע אלא רשומה בפני עצמה, ולכן דריסה עליו
+  // לא היתה מוחלת לעולם. עורכים את התשובה עצמה במקום.
+  // (נתפס בפועל 15.9: עריכה נשמרה, הוצגה כהצלחה, ולא השפיעה על כלום.)
+  if (body.id.startsWith("qa-")) {
+    const qaId = body.id.slice(3);
+    const updated = await getRepo().answerLearnedQA(qaId, body.text.trim());
+    if (!updated) return NextResponse.json({ error: "השאלה לא נמצאה" }, { status: 404 });
+    return NextResponse.json({ ok: true, target: "learned" });
   }
   const saved = await setOverride(body.id, body.text, body.base, body.note);
   return NextResponse.json({ ok: true, version: saved.version, edited: Object.keys(saved.items).length });
