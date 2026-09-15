@@ -44,9 +44,19 @@ export async function PUT(req: NextRequest) {
   // לא היתה מוחלת לעולם. עורכים את התשובה עצמה במקום.
   // (נתפס בפועל 15.9: עריכה נשמרה, הוצגה כהצלחה, ולא השפיעה על כלום.)
   if (body.id.startsWith("qa-")) {
+    // ריק היה מוחק תשובה קיימת מהידע (ל"חזרה לברירת מחדל" אין כאן משמעות -
+    // אין נוסח מקורי בקוד, התשובה עצמה היא המקור).
+    if (!body.text.trim()) {
+      return NextResponse.json(
+        { error: "אי אפשר לשמור תשובה ריקה. למחיקת שאלה מהידע יש להשתמש בטאב הידע." },
+        { status: 400 }
+      );
+    }
     const qaId = body.id.slice(3);
     const updated = await getRepo().answerLearnedQA(qaId, body.text.trim());
     if (!updated) return NextResponse.json({ error: "השאלה לא נמצאה" }, { status: 404 });
+    // ניקוי דריסה ישנה שנשמרה לפני התיקון ולא הוחלה מעולם
+    await setOverride(body.id, "", "");
     return NextResponse.json({ ok: true, target: "learned" });
   }
   const saved = await setOverride(body.id, body.text, body.base, body.note);
