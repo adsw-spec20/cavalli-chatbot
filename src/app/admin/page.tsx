@@ -38,13 +38,9 @@ const fontDisplay = Rubik({ subsets: ["hebrew", "latin"], weight: ["500", "600",
  * ה-substring על bg-[var(--panel)] - בלי לגעת בכל קומפוננטה.
  */
 const THEME_CSS = `
-[data-theme="dark"]{
-  --bg:#131110;--panel:#1c1917;--panel2:#272220;--border:#3a332c;
-  --text:#f1ede6;--muted:#a89f92;--accent:#d9a441;--accent-fg:#211a0e;
-  --ring:rgba(217,164,65,.45);
-  --shadow-card:0 1px 2px rgba(0,0,0,.4),0 10px 28px -14px rgba(0,0,0,.55);
-  --glow:radial-gradient(1100px 480px at 80% -10%,rgba(217,164,65,.08),transparent 62%);
-}
+/* מצב בהיר בלבד (הוסר המצב הכהה לבקשת המנהל 15.9): color-scheme נועל גם את
+   רכיבי הדפדפן המובנים (שדות, גלילה, מקלדת) לבהיר במכשירים שמוגדרים לכהה. */
+:root{color-scheme:light}
 [data-theme="light"]{
   --bg:#f8f5ef;--panel:#ffffff;--panel2:#f1ebe0;--border:#e2d9c8;
   --text:#241f19;--muted:#6d6355;--accent:#a3770f;--accent-fg:#ffffff;
@@ -314,7 +310,6 @@ export default function AdminPage() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [role, setRole] = useState<"master" | "agent">("agent");
 
-  const [theme, setTheme] = useState<"dark" | "light">("light");
   const [tab, setTab] = useState<Tab>("inbox");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [agentName, setAgentName] = useState("");
@@ -364,16 +359,12 @@ export default function AdminPage() {
 
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
-    // ברירת המחדל: בהיר. המפתח הוחלף (admin_theme_v2) כי הגרסה הישנה שמרה
-    // "כהה" אוטומטית אצל כולם - וזו לא הייתה בחירה אמיתית של המשתמש.
-    setTheme((localStorage.getItem("admin_theme_v2") as "dark" | "light") || "light");
     setAgentName(localStorage.getItem("agent_name") || "");
     setVoice(localStorage.getItem("admin_voice") === "1");
     setNotify(typeof Notification !== "undefined" && Notification.permission === "granted");
     if (!localStorage.getItem("admin_token")) setAuthed(false);
   }, []);
 
-  useEffect(() => localStorage.setItem("admin_theme_v2", theme), [theme]);
   useEffect(() => localStorage.setItem("agent_name", agentName), [agentName]);
   useEffect(() => localStorage.setItem("admin_voice", voice ? "1" : "0"), [voice]);
 
@@ -771,7 +762,7 @@ export default function AdminPage() {
   // ===== מסך התחברות =====
   if (authed === false) {
     return (
-      <div data-theme={theme} className={`min-h-dvh grid place-items-center bg-[var(--bg)] text-[var(--text)] p-4 ${fontBody.className}`} style={themeRootStyle} dir="rtl">
+      <div data-theme="light" className={`min-h-dvh grid place-items-center bg-[var(--bg)] text-[var(--text)] p-4 ${fontBody.className}`} style={themeRootStyle} dir="rtl">
         <style dangerouslySetInnerHTML={{ __html: THEME_CSS }} />
         <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-6 w-full max-w-sm space-y-3">
           <div className="text-center">
@@ -850,7 +841,7 @@ export default function AdminPage() {
 
   if (authed === null) {
     return (
-      <div data-theme={theme} className={`min-h-dvh grid place-items-center bg-[var(--bg)] text-[var(--muted)] ${fontBody.className}`} style={themeRootStyle} dir="rtl">
+      <div data-theme="light" className={`min-h-dvh grid place-items-center bg-[var(--bg)] text-[var(--muted)] ${fontBody.className}`} style={themeRootStyle} dir="rtl">
         <style dangerouslySetInnerHTML={{ __html: THEME_CSS }} />
         טוען…
       </div>
@@ -952,25 +943,20 @@ export default function AdminPage() {
       >
         {botEnabled ? "● בוט פעיל" : "○ בוט כבוי"}
       </button>
-      <div className="flex gap-1.5">
-        <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="flex-1 px-3 py-2 rounded-xl bg-[var(--panel2)] text-[var(--muted)] hover:text-[var(--text)]">
-          {theme === "dark" ? "☀ בהיר" : "☾ כהה"}
-        </button>
-        <button
-          onClick={logout}
-          className="flex-1 px-3 py-2 rounded-xl bg-[var(--panel2)] text-[var(--muted)] hover:text-red-400"
-          aria-label="התנתקות מהפאנל"
-        >
-          ⏻ התנתק
-        </button>
-      </div>
+      <button
+        onClick={logout}
+        className="w-full px-3 py-2 rounded-xl bg-[var(--panel2)] text-[var(--muted)] hover:text-red-400"
+        aria-label="התנתקות מהפאנל"
+      >
+        ⏻ התנתק
+      </button>
     </div>
   );
 
   // ===== הפאנל =====
   return (
     <div
-      data-theme={theme}
+      data-theme="light"
       className={`h-dvh overflow-hidden bg-[var(--bg)] text-[var(--text)] flex ${fontBody.className}`}
       style={{ ...themeRootStyle, height: "var(--app-h, 100dvh)" }}
       dir="rtl"

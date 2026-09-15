@@ -47,7 +47,7 @@ const VISUAL_META: Record<Visual, { label: string; box: string; dot: string }> =
   seated: { label: "תפוס",        box: "bg-zinc-500/25 border-zinc-500/60 text-[var(--muted)]",    dot: "bg-zinc-500" },
   ending: { label: "לקראת סיום",  box: "bg-amber-500/20 border-amber-500/70 text-amber-500",       dot: "bg-amber-500" },
   over:   { label: "מעבר לזמן",   box: "bg-red-500/20 border-red-500/70 text-red-500",             dot: "bg-red-500" },
-  dirty:  { label: "בניקוי",      box: "bg-stone-500/20 border-stone-500/50 text-stone-500",       dot: "bg-stone-500" },
+  dirty:  { label: "בניקוי",      box: "bg-violet-500/15 border-violet-500/60 text-violet-500",    dot: "bg-violet-500" },
 };
 
 /** דקות מהחצות, שעון ישראל */
