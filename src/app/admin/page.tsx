@@ -121,7 +121,7 @@ const BOTTOM_TABS: Tab[] = ["inbox", "knowledge", "reservations"];
 /** כותרת + תת-כותרת אחידה לכל עמוד (בדסקטופ) - נותן לכל מסך עוגן מסודר */
 const TAB_META: Record<Exclude<Tab, "inbox">, { title: string; subtitle: string }> = {
   reservations: { title: "הזמנות מקום", subtitle: "אישור בקשות, אג'נדת ההזמנות הקרובות והיסטוריה - הלקוח מקבל כל תשובה ישירות בצ'אט" },
-  tabit: { title: "מרכז טאביט", subtitle: "תמונה חיה מטאביט (קריאה בלבד, מנהל בלבד): יום והזמנות, מפת רצפה, ומעבדת צ'אט - הכל במקום אחד" },
+  tabit: { title: "מרכז טאביט", subtitle: "תמונה חיה מטאביט (קריאה בלבד): יום והזמנות, מפת רצפה, ומעבדת צ'אט - הכל במקום אחד" },
   brain: { title: "מוח הבוט", subtitle: "כל מה שהבוט יודע במקום אחד: הוראות, מאגר התשובות החינמיות, מידע עסקי וידע נלמד - עם חיפוש רוחבי וגלאי סתירות" },
   knowledge: { title: "ניהול ידע", subtitle: "שאלות שהבוט לא ידע לענות עליהן, והידע שכבר נלמד - כל תשובה שנשמרת נכנסת לתוקף מיד" },
   questionnaire: { title: "שאלון הידע", subtitle: "234 שאלות שנבנו מניתוח כל השיחות - כל תשובה נשמרת מיד ומוטמעת לבוט" },
@@ -894,9 +894,8 @@ export default function AdminPage() {
       {TABS.filter(
         (t) => !(t.key === "questionnaire" && (quizComplete || role !== "master"))
       )
-        // מרכז טאביט הוא כלי של המנהל הראשי בלבד (מידע רגיש) - מוסתר לצוות
-        .filter((t) => !(t.key === "tabit" && role !== "master"))
         // "מוח הבוט" חושף את כל ההוראות והידע - מנהל ראשי בלבד
+        // (מרכז טאביט נפתח לכל הצוות 15.9; היסטוריית המעבדה נשארה למנהל)
         .filter((t) => !(t.key === "brain" && role !== "master"))
         .map((t) => {
         const active = tab === t.key;
@@ -1091,7 +1090,7 @@ export default function AdminPage() {
           {tab === "reservations" && (
             <Reservations token={token} agentName={agentName} onOpenConversation={openConversation} />
           )}
-          {tab === "tabit" && role === "master" && <TabitHub token={token} agentName={agentName} />}
+          {tab === "tabit" && <TabitHub token={token} agentName={agentName} isMaster={role === "master"} />}
           {tab === "brain" && role === "master" && <Brain token={token} />}
           {tab === "knowledge" && (
             <Knowledge token={token} onMutate={loadConversations} onTest={openTest} onOpenConversation={openConversation} agentName={agentName} />

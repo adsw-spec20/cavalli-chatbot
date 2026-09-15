@@ -9,6 +9,7 @@ import FloorMap from "./FloorMap";
  * מרכז טאביט - טאב אחד שמאחד את כל תת-התצוגות (שלב 1, קריאה בלבד):
  * יום (הזמנות + עומס), מפת רצפה חיה, ומעבדת הצ'אט. כל תת-תצוגה מנהלת
  * את הריענון שלה בעצמה. פעולות כתיבה מושבתות בשרת ובסוכן (ראה testchat/agent).
+ * נפתח לכל הצוות (15.9); היסטוריית המעבדה ומחיקתה נשארו למנהל בלבד (isMaster).
  * (לשונית ההכנסות הוסרה לבקשת המנהל 15.9 - הקומפוננטה Revenue.tsx וה-API נשארו לשחזור עתידי.)
  */
 
@@ -19,7 +20,7 @@ const VIEWS = [
 ] as const;
 type ViewKey = (typeof VIEWS)[number]["key"];
 
-export default function TabitHub({ token, agentName }: { token: string; agentName?: string }) {
+export default function TabitHub({ token, agentName, isMaster }: { token: string; agentName?: string; isMaster?: boolean }) {
   const [view, setView] = useState<ViewKey>(() => {
     try {
       const v = localStorage.getItem("tabit_hub_view");
@@ -53,7 +54,7 @@ export default function TabitHub({ token, agentName }: { token: string; agentNam
 
       {view === "day" && <Tabit token={token} agentName={agentName} />}
       {view === "floor" && <FloorMap token={token} />}
-      {view === "lab" && <TabitTestChat token={token} />}
+      {view === "lab" && <TabitTestChat token={token} isMaster={isMaster} />}
     </div>
   );
 }

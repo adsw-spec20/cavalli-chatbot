@@ -166,7 +166,8 @@ function AssistantContent({ text, tools }: { text: string; tools?: ToolEntry[] }
 }
 
 /**
- * מעבדת טאביט - צ'אט AI מבודד לבדיקת החיבורים לטאביט (מנהל בלבד).
+ * מעבדת טאביט - צ'אט AI מבודד לבדיקת החיבורים לטאביט (לכל הצוות מ-15.9;
+ * כפתור ההיסטוריה - מנהל בלבד).
  * מ-10.9 השיחות נשמרות בצד השרת: יציאה וחזרה ממשיכות את אותה שיחה,
  * וכפתור "היסטוריה" מציג את כל השיחות (כולל של בוט הקבוצה בוואטסאפ) -
  * למעקב ובקרה על התנהגות הבוט.
@@ -242,7 +243,7 @@ function ToolLog({ tools }: { tools: ToolEntry[] }) {
 const msgsFromSession = (s: SessionFull): Msg[] =>
   s.messages.map((m) => ({ role: m.role, text: m.content, tools: m.toolLog }));
 
-export default function TabitTestChat({ token }: { token: string }) {
+export default function TabitTestChat({ token, isMaster }: { token: string; isMaster?: boolean }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -347,12 +348,15 @@ export default function TabitTestChat({ token }: { token: string }) {
           צ'אט מבודד לבדיקת טאביט - השיחות נשמרות אוטומטית, אפשר לצאת ולחזור להמשיך.
         </p>
         <div className="flex gap-1.5 shrink-0">
-          <button
-            onClick={openHistory}
-            className="text-xs text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-lg px-2.5 py-1.5"
-          >
-            🕘 היסטוריה
-          </button>
+          {/* היסטוריית כל השיחות (כולל בוט הקבוצה) - כלי בקרה של המנהל בלבד */}
+          {isMaster && (
+            <button
+              onClick={openHistory}
+              className="text-xs text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-lg px-2.5 py-1.5"
+            >
+              🕘 היסטוריה
+            </button>
+          )}
           <button
             onClick={newChat}
             className="text-xs text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-lg px-2.5 py-1.5"

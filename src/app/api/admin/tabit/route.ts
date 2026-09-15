@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isMasterAuthorized } from "@/lib/admin-auth";
+import { isAdminAuthorized } from "@/lib/admin-auth";
 import { getRepo } from "@/lib/db";
 import { loadDepositReminders } from "@/lib/deposit-reminders";
 
 /**
- * הגשת ה-snapshot מטאביט לפאנל - למנהל הראשי בלבד (isMasterAuthorized).
- * מכוון: מידע ההזמנות (שמות, טלפונים) לא נחשף לאנשי צוות רגילים, רק לך.
- * קריאה בלבד - הפאנל לא כותב שום דבר חזרה לטאביט.
+ * הגשת ה-snapshot מטאביט לפאנל - לכל הצוות (נפתח לבקשת המנהל 15.9;
+ * קודם היה מנהל בלבד). קריאה בלבד - הפאנל לא כותב שום דבר חזרה לטאביט.
  */
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  if (!isMasterAuthorized(req)) {
+  if (!(await isAdminAuthorized(req))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const configured = !!process.env.TABIT_SYNC_SECRET;

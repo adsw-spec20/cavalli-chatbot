@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isMasterAuthorized } from "@/lib/admin-auth";
+import { isAdminAuthorized } from "@/lib/admin-auth";
 import { runTabitChat, type TabitChatMessage } from "@/lib/tabit-lab";
 import { appendLabExchange, getLabSession, type LabToolEntry } from "@/lib/tabit-lab-store";
 
 /**
- * צ'אט מעבדת טאביט - למנהל הראשי בלבד. מבודד לחלוטין מהצ'אטבוט הציבורי.
+ * צ'אט מעבדת טאביט - לכל הצוות (נפתח 15.9). מבודד לחלוטין מהצ'אטבוט הציבורי.
  *
  * מ-10.9 השיחות נשמרות בצד השרת (tabit-lab-store): הלקוח שולח { sessionId?, message },
  * השרת טוען את ההיסטוריה, מריץ, שומר את החילופין ומחזיר { reply, toolLog, sessionId }.
@@ -18,7 +18,7 @@ export const maxDuration = 200;
 const HISTORY_FOR_MODEL = 30;
 
 export async function POST(req: NextRequest) {
-  if (!isMasterAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!(await isAdminAuthorized(req))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!process.env.ANTHROPIC_API_KEY) return NextResponse.json({ error: "missing ANTHROPIC_API_KEY" }, { status: 503 });
 
   let body: { sessionId?: string; message?: string; messages?: { role: "user" | "assistant"; content: string }[] } = {};

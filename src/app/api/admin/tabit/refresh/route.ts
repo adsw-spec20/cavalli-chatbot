@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isMasterAuthorized } from "@/lib/admin-auth";
+import { isAdminAuthorized } from "@/lib/admin-auth";
 import { runCommand } from "@/lib/tabit-queue";
 
 /**
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  if (!isMasterAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!(await isAdminAuthorized(req))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   try {
     const result = await runCommand("refresh_snapshot", {}, 40_000);
     return NextResponse.json({ ok: true, result }, { headers: { "Cache-Control": "no-store" } });
