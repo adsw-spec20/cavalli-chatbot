@@ -112,7 +112,10 @@ export function applyPromptOverrides(
   const stale: string[] = [];
   let out = prompt;
   for (const ov of Object.values(overrides.items)) {
-    if (!ov.id.startsWith("rule-") && !ov.id.startsWith("sec-") && ov.id !== "intro") continue;
+    // תשובות חינמיות מטופלות בנפרד (הן לא חלק מהפרומפט) - כל השאר, כולל
+    // טקסטים מהמידע העסקי שמוטמעים בפרומפט, נדרסים כאן לפי עוגן הטקסט.
+    // ⚠️ בלי זה עריכה של מדיניות/שעות היתה נשמרת ולא עושה כלום - הבטחה ריקה.
+    if (ov.id.startsWith("canned-")) continue;
     if (!ov.base || !out.includes(ov.base)) {
       stale.push(ov.id);
       continue;
