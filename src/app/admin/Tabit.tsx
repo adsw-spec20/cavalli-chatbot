@@ -615,12 +615,13 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
             <StatTile label="חסרי פיקדון" value={dayMissing.length} tone={dayMissing.length > 0 ? "danger" : undefined} onCopy={dayMissing.length ? copyDayMissing : undefined} copied={copiedTile === "missing"} />
           </div>
 
-          {/* ===== דשבורד משמרת חי (רק כשהיום הנבחר הוא היום) ===== */}
+          {/* ===== דשבורד משמרת חי (רק כשהיום הנבחר הוא היום) =====
+              "כבר הגיעו" ו"מזדמנים היום" הוסרו (15.9): הם נספרו מהפיד החי של
+              טאביט, שמוחק הזמנות שסיימו - אז המספרים ירדו במהלך היום והטעו.
+              נשארו רק שני המדדים האמינים. */}
           {isTodaySelected && snapshot.dashboard && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <StatTile label="כבר הגיעו (סועדים)" value={snapshot.dashboard.arrived_covers} />
+            <div className="grid grid-cols-2 gap-2">
               <StatTile label="עוד צפויים (סועדים)" value={snapshot.dashboard.expected_covers} tone="accent" />
-              <StatTile label="מזדמנים היום" value={snapshot.dashboard.walkins_covers} />
               <StatTile label="תפוסה כרגע" value={`${snapshot.dashboard.occupancy_pct}%`} />
             </div>
           )}

@@ -366,6 +366,20 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => localStorage.setItem("agent_name", agentName), [agentName]);
+
+  // קישור ייעודי לכל מסך: הטאב נשמר ב-hash של הכתובת (למשל /admin#tabit),
+  // כך שרענון או שיתוף קישור פותחים את אותו מסך. בלי ניתוב/עמודים חדשים - אפס סיכון.
+  useEffect(() => {
+    const h = window.location.hash.slice(1) as Tab;
+    if (h && TABS.some((t) => t.key === h)) setTab(h);
+  }, []);
+  useEffect(() => {
+    try { history.replaceState(null, "", `#${tab}`); } catch { /* ignore */ }
+  }, [tab]);
+  // מסכי מנהל בלבד: איש צוות שהגיע אליהם מקישור מוחזר לתיבת הפניות
+  useEffect(() => {
+    if (authed && role !== "master" && (tab === "brain" || tab === "questionnaire")) setTab("inbox");
+  }, [authed, role, tab]);
   useEffect(() => localStorage.setItem("admin_voice", voice ? "1" : "0"), [voice]);
 
   // רישום-מחדש אוטומטי של התראות פוש (self-heal): iOS/דפדפנים פוסלים מנויים
