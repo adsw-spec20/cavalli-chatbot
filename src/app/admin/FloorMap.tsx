@@ -96,44 +96,7 @@ const firstName = (n: string) => (n || "").trim().split(/\s+/)[0] || "";
 
 const clampNum = (v: number, lo: number, hi: number) => Math.min(Math.max(v, Math.min(lo, hi)), Math.max(lo, hi));
 
-/**
- * פיזור עדין: דוחף שולחנות חופפים זה מזה עד שיש ביניהם רווח מינימלי, עם תקרת
- * הזזה קטנה - כך המרכז הצפוף "נושם" בלי לשנות את הפריסה הכללית של הרצפה.
- */
-function relaxPositions(tables: FloorTable[]): Map<number, { x: number; y: number }> {
-  const GAP = 26;        // רווח מינימלי בין שולי שולחנות (יחידות קנבס)
-  const MAX_SHIFT = 70;  // כמה מותר להזיז שולחן מהמיקום האמיתי שלו
-  const pts = tables.map((t) => ({
-    n: t.number,
-    x0: t.x as number, y0: t.y as number,
-    x: t.x as number, y: t.y as number,
-    r: sizeUnits(t.seats) / 2,
-  }));
-  for (let iter = 0; iter < 60; iter++) {
-    let movedAny = false;
-    for (let i = 0; i < pts.length; i++) {
-      for (let j = i + 1; j < pts.length; j++) {
-        const a = pts[i], b = pts[j];
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const d = Math.hypot(dx, dy) || 0.01;
-        const minD = a.r + b.r + GAP;
-        if (d < minD) {
-          const push = (minD - d) / 2;
-          const ux = dx / d, uy = dy / d;
-          a.x = a.x0 + clampNum(a.x - ux * push - a.x0, -MAX_SHIFT, MAX_SHIFT);
-          a.y = a.y0 + clampNum(a.y - uy * push - a.y0, -MAX_SHIFT, MAX_SHIFT);
-          b.x = b.x0 + clampNum(b.x + ux * push - b.x0, -MAX_SHIFT, MAX_SHIFT);
-          b.y = b.y0 + clampNum(b.y + uy * push - b.y0, -MAX_SHIFT, MAX_SHIFT);
-          movedAny = true;
-        }
-      }
-    }
-    if (!movedAny) break;
-  }
-  return new Map(pts.map((p) => [p.n, { x: p.x, y: p.y }]));
-}
-
-const MIN_SCALE = 0.5;
+const MIN_SCALE = 0.25;
 const MAX_SCALE = 3;
 
 export default function FloorMap({ token }: { token: string }) {
@@ -146,15 +109,6 @@ export default function FloorMap({ token }: { token: string }) {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState("");
   const [zoomPct, setZoomPct] = useState(100);
-
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [wrapW, setWrapW] = useState(560);
-  useEffect(() => {
-    const measure = () => { if (wrapRef.current) setWrapW(wrapRef.current.clientWidth || 560); };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -201,22 +155,21 @@ export default function FloorMap({ token }: { token: string }) {
     [floor]
   );
 
-  /** מיקומים אחרי פיזור עדין (מפתח: מספר שולחן) */
-  const relaxed = useMemo(() => relaxPositions(positioned), [positioned]);
-
   const bounds = useMemo(() => {
     if (!positioned.length) return null;
-    const xs = positioned.map((t) => relaxed.get(t.number)?.x ?? (t.x as number));
-    const ys = positioned.map((t) => relaxed.get(t.number)?.y ?? (t.y as number));
-    const pad = 110;
+    const xs = positioned.map((t) => t.x as number);
+    const ys = positioned.map((t) => t.y as number);
+    const pad = 60;
     const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
     const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
     return { x0: minX, y0: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
-  }, [positioned, relaxed]);
+  }, [positioned]);
 
-  // הפריסה הבסיסית: ממלאת את רוחב הקונטיינר; זום/גרירה נעשים ב-transform מעליה
-  const mapW = Math.max(480, Math.min(920, wrapW - 4));
-  const scaleBase = bounds ? mapW / bounds.w : 1;
+  // קנה מידה אמיתי כמו בטאביט: מיקומים 1:1, לא דוחסים את הרצפה למסך אחד -
+  // מנווטים בגרירה ובזום (גם בטאביט לא רואים את כל השולחנות בבת אחת).
+  const TRUE_SCALE = 0.8;
+  const scaleBase = TRUE_SCALE;
+  const mapW = bounds ? bounds.w * scaleBase : 0;
   const mapH = bounds ? bounds.h * scaleBase : 0;
 
   /** מלבן אזור ה"פנים" (לפי השולחנות הפנימיים) - ההפרדה הוויזואלית פנים/חוץ */
@@ -224,9 +177,9 @@ export default function FloorMap({ token }: { token: string }) {
     if (!bounds) return null;
     const inside = positioned.filter((t) => t.area === "פנים");
     if (inside.length < 3) return null;
-    const pad = 70;
-    const xs = inside.map((t) => relaxed.get(t.number)?.x ?? (t.x as number));
-    const ys = inside.map((t) => relaxed.get(t.number)?.y ?? (t.y as number));
+    const pad = 45;
+    const xs = inside.map((t) => t.x as number);
+    const ys = inside.map((t) => t.y as number);
     const rOf = (t: FloorTable) => sizeUnits(t.seats) / 2;
     const minX = Math.min(...inside.map((t, i) => xs[i] - rOf(t))) - pad;
     const maxX = Math.max(...inside.map((t, i) => xs[i] + rOf(t))) + pad;
@@ -238,7 +191,7 @@ export default function FloorMap({ token }: { token: string }) {
       width: (maxX - minX) * scaleBase,
       height: (maxY - minY) * scaleBase,
     };
-  }, [positioned, relaxed, bounds, scaleBase]);
+  }, [positioned, bounds, scaleBase]);
 
   // ===== מצלמת המפה: גרירה + צביטה + גלגלת, ישירות על ה-DOM (חלק גם בנייד) =====
   const stageRef = useRef<HTMLDivElement>(null);
@@ -264,6 +217,17 @@ export default function FloorMap({ token }: { token: string }) {
   }, [mapW, mapH]);
 
   useEffect(() => { applyView(); }, [applyView]);
+
+  // תצוגת פתיחה: כמו בטאביט - קנה מידה מלא, ממורכז אופקית, מתחילים מלמעלה
+  const didInitRef = useRef(false);
+  useEffect(() => {
+    if (didInitRef.current || !bounds) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    didInitRef.current = true;
+    viewRef.current = { tx: Math.min((stage.clientWidth - mapW) / 2, 12), ty: 10, s: 1 };
+    applyView();
+  }, [bounds, mapW, applyView]);
 
   const localPoint = (clientX: number, clientY: number) => {
     const r = stageRef.current?.getBoundingClientRect();
@@ -357,7 +321,8 @@ export default function FloorMap({ token }: { token: string }) {
   }, [zoomAt]);
 
   function resetView() {
-    viewRef.current = { tx: 0, ty: 0, s: 1 };
+    const stage = stageRef.current;
+    viewRef.current = { tx: stage ? Math.min((stage.clientWidth - mapW) / 2, 12) : 0, ty: 10, s: 1 };
     applyView();
   }
 
@@ -456,7 +421,7 @@ export default function FloorMap({ token }: { token: string }) {
 
       {/* ===== במת המפה: גרירה חופשית + צביטה לזום ===== */}
       <div
-        ref={(el) => { stageRef.current = el; wrapRef.current = el; }}
+        ref={stageRef}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
@@ -472,8 +437,14 @@ export default function FloorMap({ token }: { token: string }) {
           {insideRect && (
             <>
               <div
-                className="absolute rounded-3xl border-2 border-[var(--border)] bg-[var(--panel2)]"
-                style={{ left: insideRect.left, top: insideRect.top, width: insideRect.width, height: insideRect.height, opacity: 0.55 }}
+                className="absolute rounded-md border-2"
+                style={{
+                  left: insideRect.left,
+                  top: insideRect.top,
+                  width: insideRect.width,
+                  height: insideRect.height,
+                  borderColor: "color-mix(in srgb, var(--text) 45%, transparent)",
+                }}
               />
               <div
                 className="absolute text-[11px] font-semibold text-[var(--muted)] bg-[var(--panel)] border border-[var(--border)] rounded-full px-2.5 py-0.5"
@@ -493,10 +464,9 @@ export default function FloorMap({ token }: { token: string }) {
           {positioned.map((t) => {
             const v = visualOf(t);
             const meta = VISUAL_META[v];
-            const pos = relaxed.get(t.number) ?? { x: t.x as number, y: t.y as number };
-            const size = Math.max(36, Math.min(96, sizeUnits(t.seats) * scaleBase));
-            const left = (pos.x - bounds.x0) * scaleBase - size / 2;
-            const top = (pos.y - bounds.y0) * scaleBase - size / 2;
+            const size = Math.max(30, sizeUnits(t.seats) * scaleBase);
+            const left = ((t.x as number) - bounds.x0) * scaleBase - size / 2;
+            const top = ((t.y as number) - bounds.y0) * scaleBase - size / 2;
             const dimmed = (areaFilter !== "all" && t.area !== areaFilter) || (visFilter !== null && v !== visFilter);
             const numPx = Math.max(11, Math.min(17, size * 0.3));
             return (
