@@ -6,7 +6,7 @@ import { api, relTime } from "./types";
 /**
  * מפת רצפה חיה - כמו בטאביט, אבל בנויה כמפה אמיתית לנייד/טאבלט:
  * - גרירה חופשית לכל כיוון + צביטה לזום (pinch) + גלגלת/דאבל-קליק בדסקטופ.
- * - פיזור עדין של שולחנות צפופים (relaxation) - הגיאומטריה נשמרת, החפיפות נעלמות.
+ * - מיקומים 1:1 מטאביט; השולחנות מצוירים מעט קטנים יחסית למרווחים - אוויר בלי לשנות סידור.
  * - תווית ברורה: מספר השולחן גדול, מספר הסועדים בשורה נפרדת ("X מק׳").
  * - אזור "פנים" מסומן כרצפה מוארת עם מסגרת - הפרדה ויזואלית מ"חוץ".
  * - לחיצה על שולחן פותחת כרטיס; לחיצה באוויר סוגרת אותו.
@@ -99,6 +99,12 @@ const clampNum = (v: number, lo: number, hi: number) => Math.min(Math.max(v, Mat
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 3;
 
+// קנה מידה כמו בטאביט: המיקומים 1:1 מהמקור (בהגדלה אחידה), אבל השולחנות מצוירים
+// מעט קטנים יחסית למרווחים - כך יש אוויר בין שולחנות צמודים בלי לשנות את הסידור.
+const POS_SCALE = 1.1; // יחידת קנבס של טאביט -> פיקסלים (מיקומים)
+const SIZE_SCALE = 0.7; // גודל שולחן מצויר, יחסית ליחידות הקנבס
+const tableSizePx = (seats: number) => Math.max(30, sizeUnits(seats) * SIZE_SCALE);
+
 export default function FloorMap({ token }: { token: string }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -165,10 +171,8 @@ export default function FloorMap({ token }: { token: string }) {
     return { x0: minX, y0: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
   }, [positioned]);
 
-  // קנה מידה אמיתי כמו בטאביט: מיקומים 1:1, לא דוחסים את הרצפה למסך אחד -
-  // מנווטים בגרירה ובזום (גם בטאביט לא רואים את כל השולחנות בבת אחת).
-  const TRUE_SCALE = 0.8;
-  const scaleBase = TRUE_SCALE;
+  // לא דוחסים את הרצפה למסך אחד - מנווטים בגרירה ובזום (כמו בטאביט).
+  const scaleBase = POS_SCALE;
   const mapW = bounds ? bounds.w * scaleBase : 0;
   const mapH = bounds ? bounds.h * scaleBase : 0;
 
@@ -177,20 +181,30 @@ export default function FloorMap({ token }: { token: string }) {
     if (!bounds) return null;
     const inside = positioned.filter((t) => t.area === "פנים");
     if (inside.length < 3) return null;
-    const pad = 45;
-    const xs = inside.map((t) => t.x as number);
-    const ys = inside.map((t) => t.y as number);
-    const rOf = (t: FloorTable) => sizeUnits(t.seats) / 2;
-    const minX = Math.min(...inside.map((t, i) => xs[i] - rOf(t))) - pad;
-    const maxX = Math.max(...inside.map((t, i) => xs[i] + rOf(t))) + pad;
-    const minY = Math.min(...inside.map((t, i) => ys[i] - rOf(t))) - pad;
-    const maxY = Math.max(...inside.map((t, i) => ys[i] + rOf(t))) + pad;
-    return {
-      left: (minX - bounds.x0) * scaleBase,
-      top: (minY - bounds.y0) * scaleBase,
-      width: (maxX - minX) * scaleBase,
-      height: (maxY - minY) * scaleBase,
-    };
+    const outside = positioned.filter((t) => t.area !== "פנים");
+    // הכל בפיקסלים של המפה (אחרי scaleBase), כולל הרדיוס המצויר בפועל
+    const px = (t: FloorTable) => ((t.x as number) - bounds.x0) * scaleBase;
+    const py = (t: FloorTable) => ((t.y as number) - bounds.y0) * scaleBase;
+    const rOf = (t: FloorTable) => tableSizePx(t.seats) / 2;
+    const minX = Math.min(...inside.map((t) => px(t) - rOf(t)));
+    const maxX = Math.max(...inside.map((t) => px(t) + rOf(t)));
+    const minY = Math.min(...inside.map((t) => py(t) - rOf(t)));
+    const maxY = Math.max(...inside.map((t) => py(t) + rOf(t)));
+    // ריפוד לכל צד בנפרד: עד MAX_PAD, אבל הקו נעצר באמצע המרווח אל שולחן החוץ
+    // הקרוב באותו צד - כך שולחנות חוץ צמודים (49-51) לא נבלעים חצי בפנים.
+    const MAX_PAD = 34;
+    const padFor = (gap: number) => clampNum(gap / 2, 2, MAX_PAD);
+    let pT = MAX_PAD, pB = MAX_PAD, pL = MAX_PAD, pR = MAX_PAD;
+    for (const o of outside) {
+      const ox = px(o), oy = py(o), orr = rOf(o);
+      const xOverlap = ox + orr > minX && ox - orr < maxX;
+      const yOverlap = oy + orr > minY && oy - orr < maxY;
+      if (xOverlap && oy < minY) pT = Math.min(pT, padFor(minY - (oy + orr)));
+      if (xOverlap && oy > maxY) pB = Math.min(pB, padFor((oy - orr) - maxY));
+      if (yOverlap && ox < minX) pL = Math.min(pL, padFor(minX - (ox + orr)));
+      if (yOverlap && ox > maxX) pR = Math.min(pR, padFor((ox - orr) - maxX));
+    }
+    return { left: minX - pL, top: minY - pT, width: maxX - minX + pL + pR, height: maxY - minY + pT + pB };
   }, [positioned, bounds, scaleBase]);
 
   // ===== מצלמת המפה: גרירה + צביטה + גלגלת, ישירות על ה-DOM (חלק גם בנייד) =====
@@ -464,7 +478,7 @@ export default function FloorMap({ token }: { token: string }) {
           {positioned.map((t) => {
             const v = visualOf(t);
             const meta = VISUAL_META[v];
-            const size = Math.max(30, sizeUnits(t.seats) * scaleBase);
+            const size = tableSizePx(t.seats);
             const left = ((t.x as number) - bounds.x0) * scaleBase - size / 2;
             const top = ((t.y as number) - bounds.y0) * scaleBase - size / 2;
             const dimmed = (areaFilter !== "all" && t.area !== areaFilter) || (visFilter !== null && v !== visFilter);
