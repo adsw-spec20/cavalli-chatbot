@@ -96,7 +96,6 @@ const firstName = (n: string) => (n || "").trim().split(/\s+/)[0] || "";
 
 const clampNum = (v: number, lo: number, hi: number) => Math.min(Math.max(v, Math.min(lo, hi)), Math.max(lo, hi));
 
-const MIN_SCALE = 0.25;
 const MAX_SCALE = 3;
 
 // קנה מידה כמו בטאביט: המיקומים 1:1 מהמקור (בהגדלה אחידה), אבל השולחנות מצוירים
@@ -216,32 +215,40 @@ export default function FloorMap({ token }: { token: string }) {
   const panRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const movedRef = useRef(false);
 
+  /** זום "100%" = המפה בדיוק ברוחב הבמה (כמו שהמנהל רואה בטאביט בנייד) */
+  const fitScale = useCallback(() => {
+    const cw = stageRef.current?.clientWidth ?? 0;
+    return mapW > 0 && cw > 0 ? cw / mapW : 1;
+  }, [mapW]);
+
   const applyView = useCallback(() => {
     const stage = stageRef.current, content = contentRef.current;
     if (!stage || !content) return;
     const v = viewRef.current;
-    const M = 70;
     const cw = stage.clientWidth, ch = stage.clientHeight;
-    v.s = clampNum(v.s, MIN_SCALE, MAX_SCALE);
-    v.tx = clampNum(v.tx, cw - mapW * v.s - M, M);
-    v.ty = clampNum(v.ty, ch - mapH * v.s - M, M);
+    const fit = fitScale();
+    v.s = clampNum(v.s, fit, MAX_SCALE);
+    const w = mapW * v.s, h = mapH * v.s;
+    // אופקי: כשהמפה לא רחבה מהבמה - נעולה במרכז (אין מה לגלול לצדדים);
+    // רק בזום-אין אפשר לגרור, ורק עד קצות המפה בדיוק.
+    v.tx = w <= cw + 1 ? (cw - w) / 2 : clampNum(v.tx, cw - w, 0);
+    v.ty = h <= ch ? Math.min((ch - h) / 2, 12) : clampNum(v.ty, ch - h - 12, 12);
     content.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.s})`;
-    const pct = Math.round(v.s * 100);
+    const pct = Math.round((v.s / fit) * 100);
     setZoomPct((p) => (p === pct ? p : pct));
-  }, [mapW, mapH]);
+  }, [mapW, mapH, fitScale]);
 
   useEffect(() => { applyView(); }, [applyView]);
 
-  // תצוגת פתיחה: כמו בטאביט - קנה מידה מלא, ממורכז אופקית, מתחילים מלמעלה
+  // תצוגת פתיחה: כל רוחב הרצפה במסך (fit-width), מתחילים מלמעלה
   const didInitRef = useRef(false);
   useEffect(() => {
     if (didInitRef.current || !bounds) return;
-    const stage = stageRef.current;
-    if (!stage) return;
+    if (!stageRef.current) return;
     didInitRef.current = true;
-    viewRef.current = { tx: Math.min((stage.clientWidth - mapW) / 2, 12), ty: 10, s: 1 };
+    viewRef.current = { tx: 0, ty: 12, s: fitScale() };
     applyView();
-  }, [bounds, mapW, applyView]);
+  }, [bounds, fitScale, applyView]);
 
   const localPoint = (clientX: number, clientY: number) => {
     const r = stageRef.current?.getBoundingClientRect();
@@ -250,12 +257,12 @@ export default function FloorMap({ token }: { token: string }) {
 
   const zoomAt = useCallback((px: number, py: number, newS: number) => {
     const v = viewRef.current;
-    const s = clampNum(newS, MIN_SCALE, MAX_SCALE);
+    const s = clampNum(newS, fitScale(), MAX_SCALE);
     v.tx = px - ((px - v.tx) / v.s) * s;
     v.ty = py - ((py - v.ty) / v.s) * s;
     v.s = s;
     applyView();
-  }, [applyView]);
+  }, [applyView, fitScale]);
 
   function beginGesture() {
     const pts = [...pointersRef.current.values()];
@@ -297,7 +304,7 @@ export default function FloorMap({ token }: { token: string }) {
       const [a, b] = pts;
       const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
       const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
-      const s = clampNum(pinch.startS * (dist / pinch.startDist), MIN_SCALE, MAX_SCALE);
+      const s = clampNum(pinch.startS * (dist / pinch.startDist), fitScale(), MAX_SCALE);
       // העוגן: הנקודה בעולם שהייתה מתחת לאמצע הצביטה נשארת מתחתיו (וגם נגררת איתו)
       v.tx = midX - ((pinch.midX - pinch.startTx) / pinch.startS) * s;
       v.ty = midY - ((pinch.midY - pinch.startTy) / pinch.startS) * s;
@@ -335,8 +342,7 @@ export default function FloorMap({ token }: { token: string }) {
   }, [zoomAt]);
 
   function resetView() {
-    const stage = stageRef.current;
-    viewRef.current = { tx: stage ? Math.min((stage.clientWidth - mapW) / 2, 12) : 0, ty: 10, s: 1 };
+    viewRef.current = { tx: 0, ty: 12, s: fitScale() };
     applyView();
   }
 
@@ -443,7 +449,7 @@ export default function FloorMap({ token }: { token: string }) {
         onPointerLeave={onPointerEnd}
         onDoubleClick={(e) => { const p = localPoint(e.clientX, e.clientY); zoomAt(p.x, p.y, viewRef.current.s * 1.5); }}
         onClick={() => { if (!movedRef.current) setSelected(null); }}
-        className="relative bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-hidden select-none cursor-grab active:cursor-grabbing"
+        className="relative mx-5 md:mx-8 bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-hidden select-none cursor-grab active:cursor-grabbing"
         style={{ height: "min(72vh, 780px)", minHeight: 420, touchAction: "none" }}
       >
         <div ref={contentRef} className="absolute top-0 left-0" style={{ width: mapW, height: mapH, transformOrigin: "0 0", willChange: "transform" }}>
@@ -521,8 +527,14 @@ export default function FloorMap({ token }: { token: string }) {
 
       {/* כרטיס פרטי שולחן (נסגר גם בלחיצה באוויר על המפה) */}
       {selected && (
-        <div className="fixed inset-x-0 bottom-0 z-50 p-3 pointer-events-none">
-          <div className="pointer-events-auto mx-auto max-w-md bg-[var(--panel)] border border-[var(--border)] rounded-2xl shadow-xl p-4 space-y-2">
+        <div className="fixed inset-x-0 z-50 p-3 pointer-events-none" style={{ bottom: "calc(14px + env(safe-area-inset-bottom, 0px))" }}>
+          <div
+            className="pointer-events-auto mx-auto max-w-md border-2 rounded-2xl shadow-xl p-4 space-y-2"
+            style={{
+              background: "color-mix(in srgb, var(--accent) 16%, var(--panel))",
+              borderColor: "color-mix(in srgb, var(--accent) 60%, transparent)",
+            }}
+          >
             <div className="flex items-center gap-2">
               <span className={`w-2.5 h-2.5 rounded-full ${VISUAL_META[selVisual!].dot}`} />
               <h3 className="font-semibold font-display text-base">שולחן {selected.number}</h3>

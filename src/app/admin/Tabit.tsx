@@ -11,8 +11,8 @@ import { coversByTimeSlot } from "@/lib/tabit-chart";
  * ההזמנות מטאביט שהגשר המקומי שולח. אין כאן שום כתיבה חזרה לטאביט
  * (חוץ משליחת תזכורת פיקדון בוואטסאפ - שהיא הודעה מהבוט שלנו, לא כתיבה לטאביט).
  *
- * תצוגה יום-מרכזית: בוחרים יום למעלה, וכל המסך (מדדים, גרף עומס, ציר זמן,
- * חסר-פיקדון, אג'נדה) מתייחס ליום הנבחר. לחיצה על הזמנה פותחת מגירת פרטים.
+ * תצוגה יום-מרכזית: בוחרים יום למעלה, וכל המסך (מדדים, גרף עומס,
+ * חסר-פיקדון, יומן ההזמנות) מתייחס ליום הנבחר. לחיצה על הזמנה פותחת מגירת פרטים.
  */
 
 const WEEKDAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -196,8 +196,8 @@ function PhoneActions({ phone, wa = true }: { phone: string; wa?: boolean }) {
   );
 }
 
-/** אריח מדד ליום הנבחר, עם כפתור העתקה לוואטסאפ (כשיש מה להעתיק) */
-function StatTile({ label, value, tone, onCopy, copied }: { label: string; value: ReactNode; tone?: "danger" | "accent"; onCopy?: () => void; copied?: boolean }) {
+/** אריח מדד ליום הנבחר, עם כפתור העתקה לוואטסאפ (כשיש מה להעתיק) והערת אזהרה אופציונלית */
+function StatTile({ label, value, tone, note, onCopy, copied }: { label: string; value: ReactNode; tone?: "danger" | "accent"; note?: string; onCopy?: () => void; copied?: boolean }) {
   const valueCls = tone === "danger" ? "text-red-400" : tone === "accent" ? "text-[var(--accent)]" : "text-[var(--text)]";
   return (
     <div className="relative bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2.5">
@@ -216,6 +216,7 @@ function StatTile({ label, value, tone, onCopy, copied }: { label: string; value
         {value}
       </div>
       <div className="text-[11px] text-[var(--muted)] mt-0.5">{label}</div>
+      {note && <div className="text-[10px] font-semibold text-red-400 mt-0.5">{note}</div>}
     </div>
   );
 }
@@ -277,104 +278,6 @@ function RushChart({ reservations, nowMin }: { reservations: { time: string; sea
   );
 }
 
-const HOUR_PX = 76;
-const GANTT_LABEL_PX = 56;
-
-/**
- * ציר זמן (גאנט): שולחנות לאורך, שעות לרוחב, בלוק לכל הזמנה - רואים במבט אחד
- * מה תפוס ואיפה יש חורים. ציר הזמן מוצג משמאל לימין (dir=ltr) כמקובל בלוחות זמנים.
- */
-function Timeline({ items, isToday, onPick }: { items: TabitReservation[]; isToday: boolean; onPick: (r: TabitReservation) => void }) {
-  const data = useMemo(() => {
-    const withTimes = items
-      .filter((r) => r.fromISO)
-      .map((r) => {
-        const s = new Date(r.fromISO).getTime();
-        const e = r.untilISO ? new Date(r.untilISO).getTime() : s + 120 * 60000;
-        return { r, s, e: Math.max(e, s + 30 * 60000) };
-      });
-    if (!withTimes.length) return null;
-    const HOUR = 3600_000;
-    const minS = Math.floor(Math.min(...withTimes.map((x) => x.s)) / HOUR) * HOUR;
-    const maxE = Math.ceil(Math.max(...withTimes.map((x) => x.e)) / HOUR) * HOUR;
-    const hours: number[] = [];
-    for (let t = minS; t <= maxE; t += HOUR) hours.push(t);
-    const tableNums = [...new Set(withTimes.flatMap((x) => (x.r.tables.length ? x.r.tables : [-1])))].sort((a, b) => a - b);
-    return { withTimes, minS, maxE, hours, tableNums };
-  }, [items]);
-
-  if (!data) return <div className="text-sm text-[var(--muted)] text-center py-6">אין הזמנות ביום הזה</div>;
-  const { withTimes, minS, maxE, hours, tableNums } = data;
-  const span = maxE - minS;
-  const innerW = (span / 3600_000) * HOUR_PX;
-  const now = Date.now();
-  const nowPct = isToday && now >= minS && now <= maxE ? ((now - minS) / span) * 100 : null;
-
-  const blockCls = (d: Deposit) =>
-    d === "missing"
-      ? "bg-red-500/20 border-red-500/60 text-red-400"
-      : d === "secured"
-        ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-500"
-        : "bg-[var(--panel2)] border-[var(--border)] text-[var(--muted)]";
-
-  return (
-    <div dir="ltr" className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--panel)]">
-      <div style={{ minWidth: GANTT_LABEL_PX + innerW + 16 }} className="py-2">
-        {/* שורת השעות */}
-        <div className="flex text-[10px] text-[var(--muted)]" style={{ fontVariantNumeric: "tabular-nums" }}>
-          <div style={{ width: GANTT_LABEL_PX }} className="shrink-0" />
-          <div className="relative" style={{ width: innerW, height: 16 }}>
-            {hours.map((t) => (
-              <span key={t} className="absolute -translate-x-1/2" style={{ left: ((t - minS) / span) * innerW }}>
-                {ilTime(new Date(t).toISOString())}
-              </span>
-            ))}
-          </div>
-        </div>
-        {/* גוף הציר */}
-        <div className="relative mt-1">
-          {/* קווי רשת לשעות */}
-          <div className="absolute inset-y-0" style={{ left: GANTT_LABEL_PX, width: innerW }}>
-            {hours.map((t) => (
-              <div key={t} className="absolute inset-y-0 border-l border-[var(--border)] opacity-50" style={{ left: ((t - minS) / span) * innerW }} />
-            ))}
-            {nowPct != null && (
-              <div className="absolute inset-y-0 z-10 pointer-events-none" style={{ left: `${nowPct}%` }}>
-                <div className="w-px h-full bg-red-400" />
-              </div>
-            )}
-          </div>
-          <div className="space-y-1 relative">
-            {tableNums.map((num) => {
-              const blocks = withTimes.filter((x) => (x.r.tables.length ? x.r.tables.includes(num) : num === -1));
-              return (
-                <div key={num} className="flex items-center">
-                  <div dir="rtl" className="shrink-0 text-[11px] text-[var(--muted)] px-1.5 truncate" style={{ width: GANTT_LABEL_PX, fontVariantNumeric: "tabular-nums" }}>
-                    {num === -1 ? "ללא ש׳" : `ש׳ ${num}`}
-                  </div>
-                  <div className="relative h-8" style={{ width: innerW }}>
-                    {blocks.map(({ r, s, e }) => (
-                      <button
-                        key={r.id}
-                        onClick={() => onPick(r)}
-                        title={`${r.time} · ${r.name} · ${r.seats} סועדים`}
-                        className={`absolute inset-y-0.5 rounded-md border px-1 text-[10px] font-medium truncate text-start ${blockCls(r.deposit)}`}
-                        style={{ left: ((s - minS) / span) * innerW, width: Math.max(30, ((e - s) / span) * innerW) }}
-                      >
-                        <bdi>{r.time} {firstName(r.name)} ({r.seats})</bdi>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function Tabit({ token, agentName }: { token: string; agentName?: string }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [configured, setConfigured] = useState(true);
@@ -385,7 +288,7 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
 
   const [threshold, setThreshold] = useState(8);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [view, setView] = useState<"all" | "big" | "timeline">("all");
+  const [view, setView] = useState<"all" | "big">("all");
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedTile, setCopiedTile] = useState<"all" | "covers" | "big" | "missing" | null>(null);
@@ -490,6 +393,8 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
   }, [reservations, selectedDay]);
 
   const dayBig = useMemo(() => dayAll.filter((r) => r.seats >= threshold), [dayAll, threshold]);
+  /** כמה מהשולחנות הגדולים בלי פיקדון מובטח - מוצג על האריח עצמו */
+  const bigMissing = useMemo(() => dayBig.filter((r) => r.deposit === "missing").length, [dayBig]);
   const dayMissing = useMemo(() => {
     return dayAll.filter((r) => r.deposit === "missing").sort((a, b) => b.seats - a.seats);
   }, [dayAll]);
@@ -700,7 +605,14 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <StatTile label="הזמנות ביום" value={dayAll.length} onCopy={dayAll.length ? copyDayAll : undefined} copied={copiedTile === "all"} />
             <StatTile label="סה״כ סועדים" value={covers} onCopy={dayAll.length ? copyCovers : undefined} copied={copiedTile === "covers"} />
-            <StatTile label={`שולחנות גדולים (${threshold}+)`} value={dayBig.length} tone="accent" onCopy={dayBig.length ? copyDayBig : undefined} copied={copiedTile === "big"} />
+            <StatTile
+              label={`שולחנות גדולים (${threshold}+)`}
+              value={dayBig.length}
+              tone="accent"
+              note={bigMissing > 0 ? `${bigMissing} מתוכם ללא פיקדון` : undefined}
+              onCopy={dayBig.length ? copyDayBig : undefined}
+              copied={copiedTile === "big"}
+            />
             <StatTile label="חסרי פיקדון" value={dayMissing.length} tone={dayMissing.length > 0 ? "danger" : undefined} onCopy={dayMissing.length ? copyDayMissing : undefined} copied={copiedTile === "missing"} />
           </div>
 
@@ -776,7 +688,7 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
             {/* מתג תצוגה + חיפוש */}
             <div className="flex items-center gap-2 flex-wrap mb-3">
               <div className="inline-flex rounded-xl border border-[var(--border)] overflow-hidden">
-                {(["all", "big", "timeline"] as const).map((v) => (
+                {(["all", "big"] as const).map((v) => (
                   <button
                     key={v}
                     onClick={() => setView(v)}
@@ -784,7 +696,7 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
                       view === v ? "bg-[var(--accent)] text-[var(--accent-fg)] font-semibold" : "text-[var(--muted)] hover:text-[var(--text)]"
                     }`}
                   >
-                    {v === "all" ? `הכל (${dayAll.length})` : v === "big" ? `גדולות (${dayBig.length})` : "ציר זמן"}
+                    {v === "all" ? `הכל (${dayAll.length})` : `גדולות (${dayBig.length})`}
                   </button>
                 ))}
               </div>
@@ -806,20 +718,16 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
                   ))}
                 </div>
               )}
-              {view !== "timeline" && (
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="חיפוש שם / טלפון / שולחן…"
-                  aria-label="חיפוש בהזמנות היום"
-                  className="mr-auto min-w-40 flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-sm outline-none focus:border-[var(--accent)]"
-                />
-              )}
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="חיפוש שם / טלפון / שולחן…"
+                aria-label="חיפוש בהזמנות היום"
+                className="mr-auto min-w-40 flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-sm outline-none focus:border-[var(--accent)]"
+              />
             </div>
 
-            {view === "timeline" ? (
-              <Timeline items={dayAll} isToday={isTodaySelected} onPick={openRes} />
-            ) : agenda.length === 0 ? (
+            {agenda.length === 0 ? (
               <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-6 text-center text-sm text-[var(--muted)]">
                 {query ? "אין תוצאות לחיפוש" : view === "big" ? `אין שולחנות של ${threshold}+ ביום הזה` : "אין הזמנות ביום הזה"}
               </div>

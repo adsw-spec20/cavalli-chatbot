@@ -4,18 +4,17 @@ import { useState } from "react";
 import Tabit from "./Tabit";
 import TabitTestChat from "./TabitTestChat";
 import FloorMap from "./FloorMap";
-import Revenue from "./Revenue";
 
 /**
  * מרכז טאביט - טאב אחד שמאחד את כל תת-התצוגות (שלב 1, קריאה בלבד):
- * יום (הזמנות + עומס), מפת רצפה חיה, הכנסות, ומעבדת הצ'אט. כל תת-תצוגה מנהלת
+ * יום (הזמנות + עומס), מפת רצפה חיה, ומעבדת הצ'אט. כל תת-תצוגה מנהלת
  * את הריענון שלה בעצמה. פעולות כתיבה מושבתות בשרת ובסוכן (ראה testchat/agent).
+ * (לשונית ההכנסות הוסרה לבקשת המנהל 15.9 - הקומפוננטה Revenue.tsx וה-API נשארו לשחזור עתידי.)
  */
 
 const VIEWS = [
   { key: "day", label: "יום" },
   { key: "floor", label: "מפת רצפה" },
-  { key: "revenue", label: "הכנסות" },
   { key: "lab", label: "מעבדה" },
 ] as const;
 type ViewKey = (typeof VIEWS)[number]["key"];
@@ -54,7 +53,6 @@ export default function TabitHub({ token, agentName }: { token: string; agentNam
 
       {view === "day" && <Tabit token={token} agentName={agentName} />}
       {view === "floor" && <FloorMap token={token} />}
-      {view === "revenue" && <Revenue token={token} />}
       {view === "lab" && <TabitTestChat token={token} />}
     </div>
   );
