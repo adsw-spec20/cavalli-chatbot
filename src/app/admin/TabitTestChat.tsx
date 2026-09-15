@@ -245,7 +245,7 @@ const msgsFromSession = (s: SessionFull): Msg[] =>
   s.messages.map((m) => ({ role: m.role, text: m.content, tools: m.toolLog }));
 
 export default function TabitTestChat({ token, isMaster }: { token: string; isMaster?: boolean }) {
-  const { ref: boxRef, height: boxH } = useChatBoxHeight();
+  const { ref: boxRef, height: boxH, overlay: boxOverlay } = useChatBoxHeight();
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -368,12 +368,16 @@ export default function TabitTestChat({ token, isMaster }: { token: string; isMa
         </div>
       </div>
 
-      {/* הגובה נמדד חי (use-chat-height): שדה ההקלדה תמיד גלוי - גם עם באנר,
-          מקלדת פתוחה או סרגל תחתון. המחלקות הן fallback לרינדור הראשון בלבד. */}
+      {/* הגובה נמדד חי (use-chat-height). כשמקלדת המובייל פתוחה - מצב הקלדה:
+          הצ'אט תופס את כל המסך הנראה מעל המקלדת (כמו וואטסאפ), ושדה ההקלדה תמיד גלוי. */}
       <div
         ref={boxRef}
         style={boxH != null ? { height: boxH } : undefined}
-        className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl flex flex-col min-h-[200px] h-[calc(var(--app-h,100dvh)-250px)] md:h-[calc(var(--app-h,100dvh)-200px)]"
+        className={`bg-[var(--panel)] border border-[var(--border)] flex flex-col min-h-[180px] ${
+          boxOverlay
+            ? "fixed inset-x-0 top-0 z-[70] rounded-none border-x-0 border-t-0"
+            : "rounded-2xl h-[calc(var(--app-h,100dvh)-250px)] md:h-[calc(var(--app-h,100dvh)-200px)]"
+        }`}
       >
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">
           {msgs.length === 0 && (
