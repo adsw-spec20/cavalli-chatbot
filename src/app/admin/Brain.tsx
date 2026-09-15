@@ -3,9 +3,11 @@
 /**
  * "מוח הבוט" - מסך שליטה ובקרה על כל מה שהבוט יודע. מנהל ראשי בלבד.
  *
- * שלב 0 (15.9): קריאה, חיפוש רוחבי, משקל בטוקנים, וגלאי סתירות. עריכה
- * תיפתח בשלב הבא, אחרי שנוודא שהמיפוי מדויק - כי הפרומפט הוא מה שמחזיק את
- * הבוט, ועריכה חופשית בלי שער היא גם היכולת לשבור אותו בלחיצה.
+ * קריאה, חיפוש רוחבי, משקל בטוקנים, גלאי סתירות - ועריכה מלאה.
+ *
+ * ⚠️ העריכה אמיתית ומיידית: טקסט שנשמר כאן נכנס ל-System Prompt שנשלח למודל
+ * ולתשובות החינמיות שנשלחות ללקוח, כבר בהודעה הבאה. אין "מאחורי הקלעים".
+ * ברירת המחדל שבקוד נשמרת תמיד וניתן לחזור אליה בלחיצה.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -18,6 +20,10 @@ interface Item {
   tokens: number;
   origin: "code" | "config" | "learned" | "media" | "runtime";
   editable: boolean;
+  edited?: boolean;
+  defaultText?: string;
+  stale?: boolean;
+  matchNote?: string;
 }
 interface Layer { key: string; title: string; note: string; items: Item[]; tokens: number }
 interface Conflict { severity: "high" | "medium"; topic: string; detail: string; where: string[] }
@@ -28,6 +34,8 @@ interface Snapshot {
   estCostPerMessage: number;
   conflicts: Conflict[];
   matches?: Match[];
+  editedCount: number;
+  staleIds: string[];
   generatedAt: number;
 }
 
@@ -47,6 +55,9 @@ export default function Brain({ token }: { token: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState("");
 
   const load = useCallback(async (q = "") => {
     setLoading(true);
@@ -67,6 +78,30 @@ export default function Brain({ token }: { token: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  // שמירה: הטקסט נכנס לתוקף בהודעה הבאה של הבוט. base הוא ברירת המחדל שממנה
+  // נערך - הוא העוגן שמאפשר לזהות אם הקוד השתנה מתחת לעריכה.
+  const save = async (item: Item, text: string) => {
+    setSaving(true);
+    setSaved("");
+    try {
+      const base = item.defaultText ?? item.body;
+      const r = await fetch("/api/admin/brain", {
+        method: "PUT",
+        headers: { "content-type": "application/json", "x-admin-token": token },
+        body: JSON.stringify({ id: item.id, text, base }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "שמירה נכשלה");
+      setSaved(text.trim() ? "נשמר. הבוט משתמש בזה מההודעה הבאה." : "אופס לברירת המחדל.");
+      setDraft(null);
+      await load(query);
+    } catch (e) {
+      setSaved(e instanceof Error ? e.message : "שמירה נכשלה");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const current = useMemo(() => {
     if (!snap || !selected) return null;
     for (const l of snap.layers) {
@@ -75,6 +110,8 @@ export default function Brain({ token }: { token: string }) {
     }
     return null;
   }, [snap, selected]);
+
+  useEffect(() => { setDraft(null); setSaved(""); }, [selected]);
 
   const runSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,21 +238,83 @@ export default function Brain({ token }: { token: string }) {
             <>
               <div style={S.contentHead}>
                 <div>
-                  <div style={{ fontWeight: 800, fontSize: 17 }}>{current.item.title}</div>
+                  <div style={{ fontWeight: 800, fontSize: 17 }}>
+                    {current.item.title}
+                    {current.item.edited && <span style={S.editedTag}>נערך</span>}
+                    {current.item.stale && <span style={S.staleTag}>מיושן</span>}
+                  </div>
                   <div style={{ fontSize: 12, color: "#777", marginTop: 2 }}>
                     {current.layer.title} · {ORIGIN_LABEL[current.item.origin]} ·{" "}
-                    {current.item.chars.toLocaleString()} תווים
-                    {current.item.tokens > 0 && ` · ${current.item.tokens.toLocaleString()} טוקנים`}
+                    {(draft ?? current.item.body).length.toLocaleString()} תווים
+                    {current.item.tokens > 0 && ` · ~${Math.round((draft ?? current.item.body).length / 1.43).toLocaleString()} טוקנים`}
                     {snap.totalTokens > 0 && current.item.tokens > 0 &&
                       ` · ${((current.item.tokens / snap.totalTokens) * 100).toFixed(1)}% מהמוח`}
                   </div>
                 </div>
                 <span style={{ ...S.badge, background: current.item.editable ? "#e7f1ea" : "#f0eeea",
                                 color: current.item.editable ? "#2c6e49" : "#777" }}>
-                  {current.item.editable ? "ניתן לעריכה בפאנל" : "בקוד, עריכה בשלב הבא"}
+                  {current.item.editable ? "ניתן לעריכה" : "נקבע בזמן אמת"}
                 </span>
               </div>
-              <pre style={S.pre}>{current.item.body}</pre>
+
+              {current.item.matchNote && (
+                <div style={S.matchNote}>
+                  <b>מה מפעיל את התבנית:</b> {current.item.matchNote}
+                </div>
+              )}
+
+              {current.item.stale && (
+                <div style={S.staleBox}>
+                  העריכה הזאת נשמרה על נוסח שכבר לא קיים בקוד, ולכן <b>היא לא מוחלת כרגע</b>.
+                  לחץ &quot;חזרה לברירת מחדל&quot; ואז ערוך מחדש על הנוסח העדכני.
+                </div>
+              )}
+
+              {!current.item.editable && <pre style={S.pre}>{current.item.body}</pre>}
+
+              {current.item.editable && (
+                <>
+                  <textarea
+                    value={draft ?? current.item.body}
+                    onChange={(e) => setDraft(e.target.value)}
+                    spellCheck={false}
+                    style={S.editor}
+                  />
+                  <div style={S.editBar}>
+                    <button
+                      style={{ ...S.btn, opacity: saving || draft === null || draft === current.item.body ? 0.5 : 1 }}
+                      disabled={saving || draft === null || draft === current.item.body}
+                      onClick={() => void save(current.item, draft ?? "")}
+                    >
+                      {saving ? "שומר..." : "שמור והחל על הבוט"}
+                    </button>
+                    {draft !== null && draft !== current.item.body && (
+                      <button style={S.btnGhost} onClick={() => setDraft(null)} disabled={saving}>
+                        בטל שינוי
+                      </button>
+                    )}
+                    {current.item.edited && (
+                      <button
+                        style={S.btnGhost}
+                        disabled={saving}
+                        onClick={() => { if (confirm("לחזור לנוסח המקורי שבקוד?")) void save(current.item, ""); }}
+                      >
+                        חזרה לברירת מחדל
+                      </button>
+                    )}
+                    {saved && <span style={{ fontSize: 13, color: "#2c6e49" }}>{saved}</span>}
+                  </div>
+
+                  {current.item.edited && current.item.defaultText && (
+                    <details style={S.details}>
+                      <summary style={{ cursor: "pointer", fontSize: 13, color: "#555" }}>
+                        הצג את הנוסח המקורי שבקוד
+                      </summary>
+                      <pre style={{ ...S.pre, color: "#666", marginTop: 8 }}>{current.item.defaultText}</pre>
+                    </details>
+                  )}
+                </>
+              )}
             </>
           )}
         </div>
@@ -258,4 +357,15 @@ const S: Record<string, React.CSSProperties> = {
                  borderBottom: "1px solid #eee", paddingBottom: 10, marginBottom: 10 },
   badge: { fontSize: 11, fontWeight: 700, borderRadius: 99, padding: "3px 10px", whiteSpace: "nowrap" },
   pre: { whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13.5, lineHeight: 1.75, margin: 0, color: "#222" },
+  editor: { width: "100%", minHeight: 320, padding: 12, border: "1px solid #d8d5cc", borderRadius: 9,
+            fontFamily: "inherit", fontSize: 13.5, lineHeight: 1.75, resize: "vertical", direction: "rtl" },
+  editBar: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10 },
+  editedTag: { fontSize: 11, fontWeight: 700, background: "#e7f1ea", color: "#2c6e49",
+               borderRadius: 99, padding: "2px 9px", marginInlineStart: 8, verticalAlign: "middle" },
+  staleTag: { fontSize: 11, fontWeight: 700, background: "#f8e9e6", color: "#a6392b",
+              borderRadius: 99, padding: "2px 9px", marginInlineStart: 6, verticalAlign: "middle" },
+  staleBox: { background: "#f8e9e6", border: "1px solid #e8c4bd", borderRadius: 9,
+              padding: "8px 12px", margin: "8px 0", fontSize: 13 },
+  matchNote: { background: "#f2f1ed", borderRadius: 9, padding: "7px 12px", margin: "0 0 10px", fontSize: 13, color: "#444" },
+  details: { marginTop: 12, borderTop: "1px solid #eee", paddingTop: 10 },
 };

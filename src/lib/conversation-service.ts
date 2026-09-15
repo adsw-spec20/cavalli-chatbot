@@ -28,6 +28,7 @@ import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate"
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
 import { contactPhonesText, type BusinessConfig } from "./business-config";
 import { AGENT_MSG_PREFIX, type Channel, type ConversationMessage } from "./channels/types";
+import { loadOverrides, cannedOverride, type BrainOverrides } from "./brain-store";
 
 // ביטויים שמעידים שהבוט לא ידע לענות (פער ידע) -> נרשום את שאלת הלקוח
 const GAP_PATTERNS = [
@@ -552,8 +553,15 @@ function buildQuickAnswer(
   key: string,
   cfg: BusinessConfig,
   lang: "he" | "en",
-  hasParkingVideo: boolean
+  hasParkingVideo: boolean,
+  overrides?: BrainOverrides
 ): string | null {
+  // נוסח שנערך ב"מוח הבוט" גובר על ברירת המחדל שבקוד. עברית בלבד: התבניות
+  // באנגלית נופלות ממילא למודל (ראה למטה), ואין טעם לערוך טקסט שלא נשלח.
+  if (overrides && lang === "he") {
+    const custom = cannedOverride(overrides, key);
+    if (custom) return custom;
+  }
   if (key === "location") return locationCannedReply(cfg, lang, hasParkingVideo);
   if (lang === "en") return null; // שאר התבניות בעברית; אנגלית -> מודל
   switch (key) {
@@ -1589,6 +1597,8 @@ export async function handleIncomingMessage(
     let built: string | null = null;
     let parkingVideo: MediaItem | undefined;
     let igVideoLinked: string | undefined; // מזהה סרטון שנשלח כקישור (לרישום sentMedia)
+    // נוסחים שנערכו ב"מוח הבוט" (אם יש) - נטענים פעם אחת לכל התבניות בתור
+    const brainOverrides = quickKeys.length ? await loadOverrides() : undefined;
     if (quickKeys.length) {
       // סרטון הדרך לחניה מצורף לתשובות מיקום/חניה (מאותר בספרייה לפי מילות מפתח)
       const needVideo = quickKeys.includes("location") || quickKeys.includes("parking");
@@ -1596,7 +1606,7 @@ export async function handleIncomingMessage(
         ? (await loadMedia()).find((m) => m.type === "video" && m.url && /חני/.test(`${m.label} ${m.keywords}`))
         : undefined;
       // שני מפתחות = לחיצה על שני כפתורים ברצף - עונים על שניהם בהודעה אחת (בחינם)
-      const parts = quickKeys.map((k) => buildQuickAnswer(k, cfg, cannedLang, !isIG && !!parkingVideo));
+      const parts = quickKeys.map((k) => buildQuickAnswer(k, cfg, cannedLang, !isIG && !!parkingVideo, brainOverrides));
       built = parts.every((p): p is string => !!p) ? parts.join("\n\n") : null;
       if (built && isIG && parkingVideo) {
         built += `\n🎥 סרטון קצר שמראה את הדרך לחניה: ${PARKING_PAGE_URL}`;

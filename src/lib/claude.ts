@@ -12,6 +12,7 @@ import { buildSystemPrompt } from "./system-prompt";
 import { isGateConfigured } from "./palgate";
 import { memoryContextBlock } from "./customer-memory";
 import { recordLlmUsage } from "./usage";
+import { loadOverrides, applyPromptOverrides } from "./brain-store";
 import type { ConversationMessage } from "./channels/types";
 
 // מודל ברירת מחדל: Sonnet 4.6 - עברית נקייה ומדויקת, מתאים לבוט שמדבר עם לקוחות.
@@ -228,8 +229,20 @@ export async function generateReply(
   const anthropic = getClient();
 
   // המידע העסקי + ספריית המדיה נטענים דינמית (ניתנים לעריכה מהפאנל).
-  const [businessConfig, media] = await Promise.all([loadBusinessConfig(), loadMedia()]);
-  const systemPrompt = buildSystemPrompt(businessConfig, media, options.channel);
+  const [businessConfig, media, brainOverrides] = await Promise.all([
+    loadBusinessConfig(),
+    loadMedia(),
+    loadOverrides(),
+  ]);
+  // עריכות מ"מוח הבוט" דורסות את ההוראות שבקוד. הדריסה אמיתית: הטקסט הערוך
+  // הוא מה שהמודל מקבל בפועל. דריסה שהטקסט המקורי שלה כבר לא קיים (הכלל
+  // נוסח מחדש בקוד) מסומנת כמיושנת ולא מוחלת - עדיף ברירת מחדל נכונה מאשר
+  // תיקון שמוחל על טקסט שכבר לא שם.
+  const built = buildSystemPrompt(businessConfig, media, options.channel);
+  const { prompt: systemPrompt, stale } = applyPromptOverrides(built, brainOverrides);
+  if (stale.length) {
+    console.warn(`[brain] דריסות מיושנות שלא הוחלו: ${stale.join(", ")}`);
+  }
 
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {
