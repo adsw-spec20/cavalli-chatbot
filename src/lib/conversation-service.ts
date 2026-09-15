@@ -421,7 +421,10 @@ function sanitizeModelText(raw: string): string {
  *  בלי לפגוע ב-*8149 (אין לו כוכבית-סוגר) או במספרים. */
 function stripBoldForChannel(text: string, channel?: string): string {
   if (channel !== "messenger" && channel !== "instagram") return text;
-  return text.replace(/(^|[\s(])\*([^*\n]{1,80})\*(?=[\s).,!?:;\-]|$)/g, "$1$2");
+  // הדרישה הקודמת היתה שלפני הכוכבית יבוא רווח או סוגר, וזה פספס את שני
+  // המקרים הנפוצים אצלנו: "ב-*המלאכה 6*" (אחרי מקף) ו-"💡*שימו לב:*" (אחרי
+  // אימוג'י). עכשיו מספיק שלפניה אין אות/ספרה. ה-(?!\\d) מגן על "*8149".
+  return text.replace(/(^|[^\p{L}\p{N}*])\*(?!\d)([^*\n]{1,80})\*(?=[\s).,!?:;\-]|$)/gu, "$1$2");
 }
 
 // ----- שומרים על מסלול התבניות הקבועות (3.9) -----
@@ -1752,6 +1755,11 @@ export async function handleIncomingMessage(
         canned = `${hello}\n\n${canned}`;
         await repo.updateConversation(conversation.id, { disclosedAi: true });
       }
+      // ⚠️ ניקוי הדגשה לפי ערוץ הוחל עד 15.9 רק על תשובות המודל ולא על
+      // התבניות - ובמסנג'ר/אינסטגרם אין עיצוב, אז הלקוח ראה "*המלאכה 6, חולון.*"
+      // עם הכוכביות. נמדד על כל ההיסטוריה: 4,859 הודעות יצאו ככה, רובן דווקא
+      // התשובה הנפוצה ביותר שיש לנו.
+      canned = stripBoldForChannel(canned, input.channel);
       await namePromise.catch(() => undefined);
       await repo.addMessage({
         conversationId: conversation.id,
