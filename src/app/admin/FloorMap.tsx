@@ -99,6 +99,7 @@ export default function FloorMap({ token }: { token: string }) {
   const [selected, setSelected] = useState<FloorTable | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState("");
+  const [zoom, setZoom] = useState(1);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [wrapW, setWrapW] = useState(560);
@@ -154,20 +155,21 @@ export default function FloorMap({ token }: { token: string }) {
     [floor]
   );
 
-  // גבולות הציור: הקנבס של טאביט אם קיים, אחרת מסגרת סביב השולחנות
+  // גבולות הציור: תמיד המסגרת ההדוקה סביב השולחנות עצמם (bbox) - לא הקנבס
+  // המלא של טאביט, שכולל שוליים ריקים ענקיים שגורמים למפה צפופה בפינה.
   const bounds = useMemo(() => {
-    if (floor?.canvas?.w && floor?.canvas?.h) return { x0: 0, y0: 0, w: floor.canvas.w, h: floor.canvas.h };
     if (!positioned.length) return null;
     const xs = positioned.map((t) => t.x as number);
     const ys = positioned.map((t) => t.y as number);
-    const pad = 90;
+    const pad = 100;
     const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
     const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
     return { x0: minX, y0: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
-  }, [floor, positioned]);
+  }, [positioned]);
 
-  // רוחב המפה: רספונסיבי, עם רצפה מינימלית כדי שהשולחנות יישארו קריאים בנייד
-  const mapW = Math.max(440, Math.min(660, wrapW - 2));
+  // רוחב המפה: ממלא את כל הרוחב הזמין (עם רצפה לנייד), + זום ידני.
+  // מעבר לרוחב הקונטיינר פשוט נגללים - הגיאומטריה לעולם לא מתעוותת.
+  const mapW = Math.max(480, Math.min(900, wrapW - 16)) * zoom;
   const scale = bounds ? mapW / bounds.w : 1;
   const mapH = bounds ? bounds.h * scale : 0;
 
@@ -198,19 +200,28 @@ export default function FloorMap({ token }: { token: string }) {
   const selVisual = selected ? visualOf(selected) : null;
 
   return (
-    <div className="space-y-3 max-w-[720px]">
+    <div className="space-y-3 max-w-[920px]">
       {/* שורת סטטוס + רענון חי */}
       <div className="flex items-center gap-2 flex-wrap text-xs">
         <span className="rounded-full px-2.5 py-1 bg-emerald-500/15 text-emerald-400">● עודכן {relTime(snapshot!.generatedAt)}</span>
         <span className="text-[var(--muted)]">{floor.total} שולחנות · {floor.total_seats} מקומות</span>
         {refreshNote && <span className="text-amber-500">{refreshNote}</span>}
-        <button
-          onClick={liveRefresh}
-          disabled={refreshing}
-          className="mr-auto rounded-lg px-2.5 py-1 border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-60"
-        >
-          {refreshing ? "מושך מטאביט… (עד 20 שנ')" : "🔄 רענון חי"}
-        </button>
+        <div className="mr-auto inline-flex items-center gap-1.5">
+          <div className="inline-flex rounded-lg border border-[var(--border)] overflow-hidden" title="זום">
+            <button onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.2).toFixed(2)))} className="px-2 py-1 text-[var(--muted)] hover:text-[var(--text)]">➖</button>
+            <button onClick={() => setZoom(1)} className="px-1.5 py-1 text-[10px] text-[var(--muted)] hover:text-[var(--text)] border-x border-[var(--border)]" style={{ fontVariantNumeric: "tabular-nums" }}>
+              {Math.round(zoom * 100)}%
+            </button>
+            <button onClick={() => setZoom((z) => Math.min(1.8, +(z + 0.2).toFixed(2)))} className="px-2 py-1 text-[var(--muted)] hover:text-[var(--text)]">➕</button>
+          </div>
+          <button
+            onClick={liveRefresh}
+            disabled={refreshing}
+            className="rounded-lg px-2.5 py-1 border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-60"
+          >
+            {refreshing ? "מושך מטאביט…" : "🔄 רענון חי"}
+          </button>
+        </div>
       </div>
 
       {/* מקרא לפי מצב */}
@@ -243,17 +254,17 @@ export default function FloorMap({ token }: { token: string }) {
         </span>
       </div>
 
-      {/* המפה */}
-      <div ref={wrapRef} className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-x-auto">
-        <div className="relative mx-auto my-3" style={{ width: mapW, height: mapH }}>
+      {/* המפה - גלילה פנימית כדי שמפה גבוהה לא תשתלט על העמוד */}
+      <div ref={wrapRef} className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-auto max-h-[78vh]">
+        <div className="relative mx-auto my-4" style={{ width: mapW, height: mapH }}>
           {positioned.map((t) => {
             const v = visualOf(t);
             const meta = VISUAL_META[v];
-            const size = Math.max(26, sizeUnits(t.seats) * scale);
+            const size = Math.max(34, Math.min(92, sizeUnits(t.seats) * scale));
             const left = ((t.x as number) - bounds.x0) * scale - size / 2;
             const top = ((t.y as number) - bounds.y0) * scale - size / 2;
             const dimmed = areaFilter !== "all" && t.area !== areaFilter;
-            const fontPx = Math.max(9, Math.min(13, size * 0.26));
+            const fontPx = Math.max(10, Math.min(15, size * 0.28));
             return (
               <div
                 key={t.number}
@@ -266,13 +277,13 @@ export default function FloorMap({ token }: { token: string }) {
                   className={`relative border-2 ${meta.box} ${t.shape === "round" ? "rounded-full" : "rounded-lg"} ${selected?.number === t.number ? "ring-2 ring-[var(--accent)]" : ""} w-full grid place-items-center font-bold shadow-sm hover:shadow transition`}
                   style={{ height: size, fontSize: fontPx, fontVariantNumeric: "tabular-nums" }}
                 >
-                  {size >= 34 ? `${t.seats}·${t.number}` : t.number}
+                  <span dir="ltr">{size >= 40 ? `${t.seats}·${t.number}` : t.number}</span>
                   {v === "over" && <span className="absolute -top-1.5 -left-1.5 text-[10px]">⏳</span>}
                 </button>
                 {t.next && (
                   <div
                     className="absolute text-center text-[var(--muted)] leading-tight truncate"
-                    style={{ top: size + 1, insetInlineStart: -size / 2, width: size * 2, fontSize: 9, fontVariantNumeric: "tabular-nums" }}
+                    style={{ top: size + 2, insetInlineStart: -size * 0.6, width: size * 2.2, fontSize: 10, fontVariantNumeric: "tabular-nums" }}
                   >
                     {t.next.time} {firstName(t.next.name)}
                   </div>
