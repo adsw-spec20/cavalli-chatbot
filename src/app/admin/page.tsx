@@ -7,6 +7,7 @@ import { Heebo, Rubik } from "next/font/google";
 import { api, type ConvItem, type QuickReply, type PanelSettings } from "./types";
 import { unsavedChanges, setUnsaved } from "./dirty";
 import Inbox, { type InboxFilterIntent } from "./Inbox";
+import Brain from "./Brain";
 
 // ביצועים במובייל: רק תיבת הפניות נטענת מיד; שאר המסכים נטענים בעצלתיים
 // כשנכנסים אליהם בפעם הראשונה - הטלפון מוריד ומפענח הרבה פחות קוד בכניסה.
@@ -102,7 +103,7 @@ input:focus,textarea:focus,select:focus{box-shadow:0 0 0 3px color-mix(in srgb,v
 .no-scrollbar::-webkit-scrollbar{display:none}.no-scrollbar{scrollbar-width:none}
 `;
 
-type Tab = "inbox" | "reservations" | "tabit" | "knowledge" | "questionnaire" | "teamq" | "dashboard" | "business" | "media" | "test" | "settings";
+type Tab = "inbox" | "reservations" | "tabit" | "knowledge" | "questionnaire" | "teamq" | "dashboard" | "business" | "media" | "test" | "brain" | "settings";
 // הסדר לפי תדירות שימוש: פניות -> לימוד הבוט -> נתונים -> תחזוקה
 const TABS: { key: Tab; label: string }[] = [
   { key: "inbox", label: "תיבת פניות" },
@@ -113,6 +114,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "teamq", label: "שאלות לצוות" },
   { key: "dashboard", label: "דשבורד" },
   { key: "business", label: "מידע עסקי" },
+  { key: "brain", label: "מוח הבוט" },
   { key: "media", label: "מדיה" },
   { key: "test", label: "בדיקת בוט" },
   { key: "settings", label: "הגדרות" },
@@ -124,6 +126,7 @@ const BOTTOM_TABS: Tab[] = ["inbox", "knowledge", "reservations"];
 const TAB_META: Record<Exclude<Tab, "inbox">, { title: string; subtitle: string }> = {
   reservations: { title: "הזמנות מקום", subtitle: "אישור בקשות, אג'נדת ההזמנות הקרובות והיסטוריה - הלקוח מקבל כל תשובה ישירות בצ'אט" },
   tabit: { title: "מרכז טאביט", subtitle: "תמונה חיה מטאביט (קריאה בלבד, מנהל בלבד): יום והזמנות, מפת רצפה, הכנסות, ומעבדת צ'אט - הכל במקום אחד" },
+  brain: { title: "מוח הבוט", subtitle: "כל מה שהבוט יודע במקום אחד: הוראות, מאגר התשובות החינמיות, מידע עסקי וידע נלמד - עם חיפוש רוחבי וגלאי סתירות" },
   knowledge: { title: "ניהול ידע", subtitle: "שאלות שהבוט לא ידע לענות עליהן, והידע שכבר נלמד - כל תשובה שנשמרת נכנסת לתוקף מיד" },
   questionnaire: { title: "שאלון הידע", subtitle: "234 שאלות שנבנו מניתוח כל השיחות - כל תשובה נשמרת מיד ומוטמעת לבוט" },
   teamq: { title: "שאלות לצוות", subtitle: "הרשימה של אדיר לצוות קוואלי - שאלה אחת בכל פעם, בקצב שלכם. כל תשובה נשמרת מיד" },
@@ -136,6 +139,12 @@ const TAB_META: Record<Exclude<Tab, "inbox">, { title: string; subtitle: string 
 
 /** אייקוני SVG (בסגנון Lucide) - נקיים ומקצועיים, במקום אימוג'י */
 const ICON_PATHS: Record<Tab, ReactNode> = {
+  brain: (
+    <>
+      <path d="M12 5a3 3 0 0 0-5.997.142 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 0 0 12 18.5a4 4 0 0 0 7.967-.998 4 4 0 0 0 .556-6.588 4 4 0 0 0-2.526-5.77A3 3 0 0 0 12 5" />
+      <path d="M12 5v13.5" />
+    </>
+  ),
   inbox: (
     <>
       <path d="M22 12h-6l-2 3h-4l-2-3H2" />
@@ -896,6 +905,8 @@ export default function AdminPage() {
       )
         // מרכז טאביט הוא כלי של המנהל הראשי בלבד (מידע רגיש) - מוסתר לצוות
         .filter((t) => !(t.key === "tabit" && role !== "master"))
+        // "מוח הבוט" חושף את כל ההוראות והידע - מנהל ראשי בלבד
+        .filter((t) => !(t.key === "brain" && role !== "master"))
         .map((t) => {
         const active = tab === t.key;
         return (
@@ -1095,6 +1106,7 @@ export default function AdminPage() {
             <Reservations token={token} agentName={agentName} onOpenConversation={openConversation} />
           )}
           {tab === "tabit" && role === "master" && <TabitHub token={token} agentName={agentName} />}
+          {tab === "brain" && role === "master" && <Brain token={token} />}
           {tab === "knowledge" && (
             <Knowledge token={token} onMutate={loadConversations} onTest={openTest} onOpenConversation={openConversation} agentName={agentName} />
           )}
