@@ -449,7 +449,7 @@ export default function FloorMap({ token }: { token: string }) {
         onPointerLeave={onPointerEnd}
         onDoubleClick={(e) => { const p = localPoint(e.clientX, e.clientY); zoomAt(p.x, p.y, viewRef.current.s * 1.5); }}
         onClick={() => { if (!movedRef.current) setSelected(null); }}
-        className="relative mx-5 md:mx-8 bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-hidden select-none cursor-grab active:cursor-grabbing"
+        className="relative mx-5 md:mx-auto md:max-w-[560px] bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-hidden select-none cursor-grab active:cursor-grabbing"
         style={{ height: "min(72vh, 780px)", minHeight: 420, touchAction: "none" }}
       >
         <div ref={contentRef} className="absolute top-0 left-0" style={{ width: mapW, height: mapH, transformOrigin: "0 0", willChange: "transform" }}>
