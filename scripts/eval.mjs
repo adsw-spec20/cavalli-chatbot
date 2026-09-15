@@ -10,6 +10,9 @@
  * מטרה: לתפוס באופן שיטתי "ביטויים ושאלות שמשתבשים", כמו שביקש המשתמש.
  */
 
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+
 const B = process.argv[2] || "http://localhost:3000";
 // סינון אופציונלי לפי שם מקרה (מחרוזת חלקית) - להרצה ממוקדת בזמן ניפוי:
 //   node scripts/eval.mjs http://localhost:3000 "TA/"
@@ -28,6 +31,9 @@ const GLOBAL_FORBIDDEN = [
   { p: "חדות", why: "שגיאת כתיב של חצות" },
   { p: "אגיד לי", why: "שגיאת דקדוק (צ\"ל תגיד לי)" },
   { p: "לחייגו", why: "שגיאת דקדוק (צ\"ל חייגו או לחייג)" },
+  // הפיקדון אינו מתקזז מהחשבון - המודל המציא את זה ללקוחה ב-14.9
+  { rx: /פיקדון[^.\n]{0,80}(מתקזז|מנוכה|יורד מהחשבון|על חשבון הארוחה|נחשב כתשלום)/, why: "הפיקדון לא מתקזז מהחשבון - טענה שגויה" },
+  { rx: /(מתקזז|מנוכה|יורד)[^.\n]{0,40}(מהחשבון|החשבון הסופי)/, why: "הפיקדון לא מתקזז מהחשבון - טענה שגויה" },
   { p: "לא שומר שמות", why: "אסור להצהיר שלא שומרים שמות - פשוט מזמינים למסור שם" },
   { p: "לקלוט את הפרטים", why: "מילה לא מתאימה" },
   { p: "שווה לשלוח", why: "ניסוח לא מתאים להצעת סרטון" },
@@ -516,12 +522,134 @@ async function send(text, conversationId, clientId) {
   return r.json();
 }
 
+// ===== תיוג אזורים וסינון חכם (15.9) =====
+// הבעיה: 123 מקרים, וכל תיקון קטן הריץ את כולם (~$1.5 ו-10 דקות). עכשיו כל
+// מקרה משויך לאזור אחד או יותר, ואפשר להריץ רק את מה שרלוונטי לשינוי.
+// התיוג נעשה לפי שם המקרה, כדי שהוספת מקרה חדש לא תדרוש לתחזק רשימה נפרדת.
+const AREA_RULES = [
+  { rx: /^TA\//, areas: ["takeaway"] },
+  { rx: /שער|לפתוח|פתח לי/, areas: ["gate"] },
+  { rx: /פיקדון|ביטול הזמנה|מדיניות ביטול/, areas: ["deposit", "reservation"] },
+  { rx: /הזמנ|שולחן|ברק|כרם|קבוצה|יום הולדת|מקום לזוג|ערב תקין|שישי|שבת|ראשון בערב|שעת יום|מדיניות הזמנה/, areas: ["reservation"] },
+  { rx: /מחיר|תפריט|קטגוריה|יין|מנה|ילדים|קרואסון|קפוצ'ינו|כשרות|הכשר|גלוטן|אלרגן|טייק אווי/, areas: ["menu"] },
+  { rx: /שעות|פתוחים|ומחר|שבת שלום/, areas: ["hours"] },
+  { rx: /הסלמה|נציג|דרושים|תלונה|ערעור|רגיש|חירום/, areas: ["escalation", "core"] },
+  { rx: /אלרגן|חירום|רגיש/, areas: ["core"] },
+  { rx: /חינמי|תבנית|מאגר החינמי|שני כפתורים|מיקום - תשובה קבועה/, areas: ["canned"] },
+  { rx: /חניה|לינק הגעה|מיקום|איפה/, areas: ["location", "canned"] },
+  { rx: /מחוץ לתחום|ידע כללי|חשבון פשוט|בדיחת|משחקית|רובוט או בן אדם|הצגה עצמית/, areas: ["offtopic"] },
+  { rx: /מדיה:|בלי מדיה/, areas: ["media"] },
+  { rx: /לשון נקבה|שם|עברית|ניסוח|שגיאת כתיב|ברכה/, areas: ["hebrew"] },
+  { rx: /וואטסאפ|אינסטגרם|מספרים בהפניה/, areas: ["contact"] },
+];
+function areasOf(name) {
+  const hit = new Set();
+  for (const r of AREA_RULES) if (r.rx.test(name)) r.areas.forEach((a) => hit.add(a));
+  if (!hit.size) hit.add("general");
+  return [...hit];
+}
+// מקרים שרצים *תמיד*, בכל הרצה, בלי קשר לסינון: בטיחות ואמינות בסיסית.
+// עלותם זניחה (7 מקרים) והם התופסים את הנזק שאי אפשר לתקן בדיעבד.
+const CORE_RX = /רגיש|חירום|אלרגן|הסלמה - תלונה|פיקדון|לשון נקבה|ערעור על מידע/;
+
+// מיפוי קובץ/נושא שהשתנה -> אזורים לבדיקה. משמש ב---smart.
+const SMART_MAP = [
+  { rx: /פיקדון|ביטול|deposit/, areas: ["deposit", "reservation"] },
+  { rx: /הזמנ|reservation|טאביט|tabit/, areas: ["reservation"] },
+  { rx: /שער|gate|palgate/, areas: ["gate"] },
+  { rx: /תבנית|canned|QUICK_MATCHERS|matchQuickAnswers|hasSecondAsk/, areas: ["canned", "location", "hours"] },
+  { rx: /הסלמה|escalate|נציג/, areas: ["escalation"] },
+  { rx: /תפריט|menu|מחיר|price/, areas: ["menu"] },
+  { rx: /שעות|hours/, areas: ["hours"] },
+  { rx: /טייק|takeaway/, areas: ["takeaway"] },
+  { rx: /מדיה|media/, areas: ["media"] },
+  { rx: /עברית|מגדר|ניסוח|hebrew/, areas: ["hebrew"] },
+];
+
+function parseArgs(argv) {
+  const out = { areas: null, smart: false, coreOnly: false, list: false, json: null, max: 0, filter: "" };
+  for (const a of argv) {
+    if (a.startsWith("--areas=")) out.areas = a.slice(8).split(",").map((s) => s.trim()).filter(Boolean);
+    else if (a === "--smart") out.smart = true;
+    else if (a === "--core") out.coreOnly = true;
+    else if (a === "--list") out.list = true;
+    else if (a.startsWith("--json=")) out.json = a.slice(7);
+    else if (a.startsWith("--max=")) out.max = Number(a.slice(6)) || 0;
+    else if (!a.startsWith("--") && !a.startsWith("http")) out.filter = a;
+  }
+  return out;
+}
+const ARGS = parseArgs(process.argv.slice(2));
+
+// --smart: מסיק אילו אזורים לבדוק מתוך ה-diff הנוכחי (git), כדי שלא תצטרך
+// לזכור שמות אזורים. נופל חזרה להרצה מלאה אם אין diff או שאין התאמה.
+function smartAreas() {
+  try {
+        const diff = execSync("git diff --unified=0 -- src/ scripts/eval.mjs", { encoding: "utf8", maxBuffer: 20e6 });
+    const added = diff.split("\n").filter((l) => /^[+-]/.test(l) && !/^[+-]{3}/.test(l)).join("\n");
+    if (!added.trim()) return null;
+    const hit = new Set();
+    for (const r of SMART_MAP) if (r.rx.test(added)) r.areas.forEach((a) => hit.add(a));
+    return hit.size ? [...hit] : null;
+  } catch {
+    return null;
+  }
+}
+
+let selectedAreas = ARGS.areas;
+if (ARGS.smart && !selectedAreas) {
+  selectedAreas = smartAreas();
+  console.log(selectedAreas
+    ? `🧠 מצב חכם: השינוי נוגע ל[${selectedAreas.join(", ")}]`
+    : `🧠 מצב חכם: לא זוהה שינוי ממוקד - מריץ הכל`);
+}
+
+let RUNNING = CASES;
+if (ARGS.coreOnly) RUNNING = CASES.filter((c) => CORE_RX.test(c.name));
+else if (selectedAreas) {
+  const want = new Set(selectedAreas);
+  RUNNING = CASES.filter((c) => CORE_RX.test(c.name) || areasOf(c.name).some((a) => want.has(a)));
+}
+if (ARGS.filter) RUNNING = RUNNING.filter((c) => c.name.includes(ARGS.filter));
+if (ARGS.max > 0) RUNNING = RUNNING.slice(0, ARGS.max);
+
+if (ARGS.list) {
+  const byArea = {};
+  for (const c of CASES) for (const a of areasOf(c.name)) (byArea[a] ??= []).push(c.name);
+  console.log("אזורים זמינים (--areas=...):\n");
+  for (const [a, names] of Object.entries(byArea).sort((x, y) => y[1].length - x[1].length))
+    console.log(`  ${a.padEnd(12)} ${String(names.length).padStart(3)} מקרים`);
+  console.log(`\n  core        ${CASES.filter((c) => CORE_RX.test(c.name)).length} מקרים (רצים תמיד)`);
+  console.log(`\nסה"כ ${CASES.length} מקרים.`);
+  process.exit(0);
+}
+
+// אומדן עלות לפני הרצה - שקיפות, כדי שלא תופתע מהחשבון
+const turns = RUNNING.reduce((s, c) => s + c.turns.length, 0);
+const estimate = (turns * 0.012).toFixed(2);
+console.log(
+  `מריץ ${RUNNING.length} מתוך ${CASES.length} מקרים (${turns} תורים) · אומדן ~$${estimate}` +
+    (selectedAreas ? ` · אזורים: ${selectedAreas.join(", ")}` : " · הכל") + "\n"
+);
+
+// מדידת עלות אמיתית: קוראים את מונה השימוש המקומי לפני ואחרי
+const USAGE_FILE = ".data/store.json";
+function readLocalCost() {
+  try {
+        const st = JSON.parse(fs.readFileSync(USAGE_FILE, "utf8")).settings ?? {};
+    const key = Object.keys(st).find((k) => k.startsWith("usage_"));
+    if (!key) return null;
+    const month = typeof st[key] === "string" ? JSON.parse(st[key]) : st[key];
+    return Object.values(month).reduce((s, d) => s + (d.cost ?? 0), 0);
+  } catch {
+    return null;
+  }
+}
+const costBefore = readLocalCost();
+
 let passed = 0;
 let failed = 0;
 const failures = [];
-
-const RUNNING = FILTER ? CASES.filter((c) => c.name.includes(FILTER)) : CASES;
-if (FILTER) console.log(`סינון "${FILTER}": ${RUNNING.length} מתוך ${CASES.length} מקרים\n`);
 
 for (let i = 0; i < RUNNING.length; i++) {
   const c = RUNNING[i];
@@ -590,11 +718,43 @@ for (let i = 0; i < RUNNING.length; i++) {
   }
 }
 
+
+// ===== דוח סיום =====
+const costAfter = readLocalCost();
+const spent = costBefore != null && costAfter != null ? costAfter - costBefore : null;
+
 console.log(`\n===== ${passed}/${RUNNING.length} עברו, ${failed} נכשלו =====`);
+if (spent != null) {
+  console.log(`עלות ההרצה בפועל: $${spent.toFixed(3)}` + (RUNNING.length < CASES.length
+    ? `  (הרצה מלאה היתה עולה בערך $${((spent / Math.max(1, RUNNING.length)) * CASES.length).toFixed(2)})`
+    : ""));
+}
+
+// פילוח כשלונות לפי אזור - מראה מיד אם שינוי אחד שבר תחום שלם
+if (failures.length) {
+  const byArea = {};
+  for (const f of failures) for (const a of areasOf(f.name)) byArea[a] = (byArea[a] ?? 0) + 1;
+  const worst = Object.entries(byArea).sort((a, b) => b[1] - a[1]);
+  if (worst.length) console.log(`כשלונות לפי אזור: ${worst.map(([a, n]) => `${a}=${n}`).join(", ")}`);
+}
+
+if (ARGS.json) {
+    fs.writeFileSync(ARGS.json, JSON.stringify({
+    ok: failures.length === 0,
+    total: RUNNING.length,
+    passed,
+    failed,
+    areas: selectedAreas ?? "all",
+    costUsd: spent,
+    failures: failures.map((f) => ({ name: f.name, areas: areasOf(f.name), problems: f.problems, reply: f.reply.slice(0, 300) })),
+  }, null, 1));
+  console.log(`תוצאות נשמרו ל-${ARGS.json}`);
+}
+
 if (failures.length) {
   console.log("\nפירוט כשלונות:");
   for (const f of failures) {
-    console.log(`\n• ${f.name}`);
+    console.log(`\n• ${f.name}  [${areasOf(f.name).join(", ")}]`);
     console.log(`  בעיות: ${f.problems.join(" | ")}`);
     console.log(`  תשובה: ${f.reply.slice(0, 160)}`);
   }
