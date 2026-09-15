@@ -366,7 +366,9 @@ export default function TabitTestChat({ token, isMaster }: { token: string; isMa
         </div>
       </div>
 
-      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl flex flex-col h-[calc(100dvh-250px)] md:h-[calc(100dvh-200px)]">
+      {/* גובה מ---app-h (ה-viewport הנראה): מתכווץ כשמקלדת המובייל נפתחת,
+          כך ששדה ההקלדה נשאר גלוי מעל המקלדת ומעל הסרגל התחתון (100dvh לא מתכווץ ב-iOS) */}
+      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl flex flex-col min-h-[200px] h-[calc(var(--app-h,100dvh)-250px)] md:h-[calc(var(--app-h,100dvh)-200px)]">
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">
           {msgs.length === 0 && (
             <div className="text-center text-sm text-[var(--muted)] mt-8 space-y-3">
