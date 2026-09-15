@@ -127,27 +127,68 @@ const LOCATION_EXCLUDES =
  * שמרני בכוונה: הודעה קצרה, כוונה אחת בלבד, בלי מילים מנושא אחר - כל ספק -> מודל.
  */
 /**
- * קטלוג המאגר החינמי לתצוגה ב"מוח הבוט" (15.9).
+ * קטלוג המאגר החינמי ל"מוח הבוט" (15.9).
  *
- * הרשימה הזאת היא *תיאור* של מה שקיים, לא מקור האמת: התבניות עצמן מוגדרות
- * ב-QUICK_MATCHERS ובבונה התשובות. היא קיימת כדי שתוכל לראות בפאנל מה נענה
- * בחינם ומה בדיוק יוצא ללקוח, בלי לקרוא קוד.
+ * ⚠️ מחזיר את **הטקסטים האמיתיים** שהלקוח מקבל, לא תיאור שלהם.
+ *
+ * חשוב: חלק מהתבניות מגרילות בין כמה ניסוחים בכל פעם, כדי שלקוח שחוזר לא
+ * יקבל את אותו משפט מילה במילה. לכן מוחזר *מערך* ניסוחים ולא טקסט אחד -
+ * הצגה של ניסוח אחד בלבד היתה מטעה ומובילה לעריכה שמוחקת את שאר הניסוחים.
+ *
+ * dynamic=true מסמן תבנית שנבנית מהמידע העסקי (שעות, כתובת, מחירים).
  */
-export const QUICK_ANSWER_CATALOG: { key: string; title: string; patterns: string; sample: string }[] = [
-  { key: "location", title: "מיקום והגעה", patterns: "איפה אתם / כתובת / איך מגיעים / ניווט", sample: "הכתובת, קישור Waze, ציון החניה החינמית, והצעה לפתוח את השער בהגעה." },
-  { key: "greet", title: "ברכה בלבד", patterns: "היי / שלום / בוקר טוב / שבת שלום / '?'", sample: "ברכה חמה קצרה + הזמנה לשאול, בהתאמה לשעה ביום." },
-  { key: "hours", title: "שעות פעילות", patterns: "מהן שעות / שעות הפעילות / באילו שעות", sample: "טבלת השעות לכל השבוע, כולל שעות חריגות קרובות אם יש." },
-  { key: "openNow", title: "פתוחים עכשיו?", patterns: "אתם פתוחים? / פתוח עכשיו", sample: "כן/לא לפי השעה בפועל, עם שעת הסגירה או הפתיחה הבאה." },
-  { key: "openTomorrow", title: "פתוחים מחר?", patterns: "פתוחים מחר / ומחר?", sample: "תשובה ליום המחרת לפי הלוח, כולל שבת וחגים." },
-  { key: "menu", title: "בקשת תפריט", patterns: "אפשר תפריט / מה יש לכם", sample: "רשימת הקטגוריות + הצעה לפרט קטגוריה, בלי לשפוך את כל התפריט." },
-  { key: "kashrut", title: "כשרות", patterns: "אתם כשרים / מה ההכשר", sample: "סוג הכשרות וההכשר המדויק." },
-  { key: "parking", title: "חניה", patterns: "יש חניה / איפה החניה", sample: "חניה חינמית צמודה + הוראות הגעה קצרות + הצעה לפתוח שער." },
-  { key: "reserveHowto", title: "איך מזמינים מקום", patterns: "איך אפשר להזמין / איך מזמינים", sample: "קישור טאביט, שני מספרי הטלפון, והאפשרות לסגור כאן בצ'אט." },
-  { key: "reservePolicy", title: "מדיניות הזמנות", patterns: "צריך להזמין מראש? / חובה להזמין", sample: "ערב שני-חמישי מ-18:00 בלבד; שאר הזמנים על בסיס מקום פנוי." },
-  { key: "instagram", title: "אינסטגרם", patterns: "יש לכם אינסטגרם / עמוד", sample: "הקישור לעמוד." },
-  { key: "jobs", title: "דרושים", patterns: "מחפשים עובדים / קורות חיים", sample: "הזמנה להשאיר פרטים, והעברה לצוות." },
-  { key: "collab", title: "שיתופי פעולה", patterns: "שת\"פ / משפיענים / ניהול סושיאל", sample: "דחייה מנומסת + הזמנה לבקר." },
+export interface QuickAnswerEntry {
+  key: string;
+  title: string;
+  patterns: string;
+  /** כל הניסוחים שהבוט מגריל ביניהם (לרוב אחד) */
+  variants: string[];
+  dynamic: boolean;
+}
+
+/** מפריד בין ניסוחים בעורך ובדריסה. שורה שלמה, כדי שלא יתנגש בתוכן. */
+export const VARIANT_SEPARATOR = "\n~~~\n";
+
+const QUICK_ANSWER_META: { key: string; title: string; patterns: string; dynamic: boolean }[] = [
+  { key: "location", title: "איפה אתם ממוקמים ואיך מגיעים", patterns: "איפה אתם / כתובת / איך מגיעים / ניווט / מיקום", dynamic: true },
+  { key: "reserveHowto", title: "איך מזמינים מקום", patterns: "איך אפשר להזמין / איך מזמינים מקום", dynamic: true },
+  { key: "hours", title: "שעות פעילות", patterns: "מהן שעות / שעות הפעילות / באילו שעות", dynamic: true },
+  { key: "kashrut", title: "מה הכשרות", patterns: "אתם כשרים / מה ההכשר / כשרות", dynamic: true },
+  { key: "parking", title: "חניה", patterns: "יש חניה / איפה החניה / צריך חניה", dynamic: true },
+  { key: "openNow", title: "פתוחים עכשיו?", patterns: "אתם פתוחים / פתוח עכשיו", dynamic: true },
+  { key: "openTomorrow", title: "פתוחים מחר?", patterns: "פתוחים מחר / ומחר", dynamic: true },
+  { key: "menu", title: "בקשת תפריט", patterns: "אפשר תפריט / מה יש לכם / שלחו תפריט", dynamic: true },
+  { key: "reservePolicy", title: "מדיניות הזמנות", patterns: "צריך להזמין מראש / חובה להזמין", dynamic: true },
+  { key: "instagram", title: "עמוד אינסטגרם", patterns: "יש לכם אינסטגרם / עמוד", dynamic: true },
+  { key: "greet", title: "ברכה בלבד", patterns: "היי / שלום / בוקר טוב / שבת שלום", dynamic: true },
+  { key: "jobs", title: "דרושים", patterns: "מחפשים עובדים / קורות חיים / דרושים", dynamic: false },
+  { key: "collab", title: "שיתופי פעולה ומשפיענים", patterns: 'שת"פ / משפיענים / ניהול סושיאל', dynamic: false },
 ];
+
+/**
+ * אוסף את הניסוחים של תבנית. לתבניות שמגרילות, מריצים את הבנאי מספר פעמים
+ * ואוספים את התוצאות הייחודיות - כך אין צורך לשכפל את רשימות הניסוחים כאן,
+ * והתצוגה נשארת נכונה גם אם יתווסף ניסוח בקוד.
+ */
+function collectVariants(key: string, cfg: BusinessConfig, hasVideo: boolean): string[] {
+  // הבוט מרכיב חלק מהתשובות מכמה רכיבים מוגרלים (פתיח, שורת שער, שורת סיום),
+  // ולכן מספר הצירופים גדול. מציגים עד ארבע דוגמאות אמיתיות - מספיק כדי להבין
+  // איך זה נשמע, בלי להציף.
+  const seen = new Set<string>();
+  for (let i = 0; i < 40; i++) {
+    const t = buildQuickAnswer(key, cfg, "he", hasVideo);
+    if (t) seen.add(t);
+    if (seen.size >= 4) break;
+  }
+  return seen.size ? [...seen] : ["(נבנה בזמן אמת לפי ההקשר)"];
+}
+
+export function renderQuickAnswerCatalog(cfg: BusinessConfig, hasParkingVideo = true): QuickAnswerEntry[] {
+  return QUICK_ANSWER_META.map((m) => ({
+    ...m,
+    variants: collectVariants(m.key, cfg, hasParkingVideo),
+  }));
+}
 
 const QUICK_MATCHERS: { key: string; patterns: RegExp[]; exclude: RegExp }[] = [
   { key: "location", patterns: LOCATION_PATTERNS, exclude: LOCATION_EXCLUDES },
@@ -560,7 +601,12 @@ function buildQuickAnswer(
   // באנגלית נופלות ממילא למודל (ראה למטה), ואין טעם לערוך טקסט שלא נשלח.
   if (overrides && lang === "he") {
     const custom = cannedOverride(overrides, key);
-    if (custom) return custom;
+    // הדריסה יכולה להחזיק כמה ניסוחים (מופרדים בשורת ~~~), בדיוק כמו ברירת
+    // המחדל - כדי שעריכה לא תהפוך תשובה מגוונת למשפט קבוע אחד.
+    if (custom) {
+      const opts = custom.split(/\n~~~\n/).map((x) => x.trim()).filter(Boolean);
+      return opts.length ? opts[Math.floor(Math.random() * opts.length)] : custom;
+    }
   }
   if (key === "location") return locationCannedReply(cfg, lang, hasParkingVideo);
   if (lang === "en") return null; // שאר התבניות בעברית; אנגלית -> מודל

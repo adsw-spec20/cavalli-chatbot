@@ -24,6 +24,8 @@ interface Item {
   defaultText?: string;
   stale?: boolean;
   matchNote?: string;
+  dynamic?: boolean;
+  variantCount?: number;
 }
 interface Layer { key: string; title: string; note: string; items: Item[]; tokens: number }
 interface Conflict { severity: "high" | "medium"; topic: string; detail: string; where: string[] }
@@ -51,7 +53,7 @@ export default function Brain({ token }: { token: string }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
-  const [openLayer, setOpenLayer] = useState<string>("rules");
+  const [openLayer, setOpenLayer] = useState<string>("canned");
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -259,7 +261,39 @@ export default function Brain({ token }: { token: string }) {
 
               {current.item.matchNote && (
                 <div style={S.matchNote}>
-                  <b>מה מפעיל את התבנית:</b> {current.item.matchNote}
+                  <b>הלקוח שואל:</b> {current.item.matchNote}
+                  <div style={{ marginTop: 4, color: "#666" }}>
+                    זה מה שנשלח ללקוח בפועל, בלי מודל ובלי עלות.
+                    {(current.item.variantCount ?? 1) > 1 && (
+                      <> הבוט <b>מגריל</b> בין כמה ניסוחים כדי שלקוח חוזר לא יקבל
+                      את אותו משפט מילה במילה, ולכן מוצגות כאן כמה דוגמאות אמיתיות
+                      מופרדות בשורת <code>~~~</code>.</>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {current.item.editable && current.layer.key === "canned" && (
+                <div style={S.howto}>
+                  <b>איך עורכים:</b> כתוב את הניסוח שלך. רוצה שהבוט יגוון?
+                  כתוב כמה ניסוחים, כל אחד מופרד בשורה שיש בה רק <code>~~~</code>,
+                  והבוט יגריל ביניהם. מה שתשמור <b>יחליף לגמרי</b> את הניסוחים הקיימים.
+                </div>
+              )}
+
+              {current.item.dynamic && !current.item.edited && (
+                <div style={S.dynamicBox}>
+                  <b>שים לב:</b> התבנית הזאת נבנית אוטומטית מהמידע העסקי (שעות, מחירים, כתובת).
+                  אם תערוך אותה כאן היא תהפוך ל<b>טקסט קבוע</b> ולא תתעדכן יותר לבד -
+                  למשל שינוי שעות במידע העסקי לא ישתקף בה. לשינויים בנתונים עצמם עדיף
+                  לערוך ב&quot;מידע עסקי&quot;; כאן עורכים את <b>הניסוח</b>.
+                </div>
+              )}
+
+              {current.item.dynamic && current.item.edited && (
+                <div style={S.dynamicBox}>
+                  התבנית הזאת <b>קבועה כרגע</b> כי נערכה ידנית, ולכן אינה מתעדכנת מהמידע העסקי.
+                  &quot;חזרה לברירת מחדל&quot; תחזיר אותה להתעדכן לבד.
                 </div>
               )}
 
@@ -367,5 +401,9 @@ const S: Record<string, React.CSSProperties> = {
   staleBox: { background: "#f8e9e6", border: "1px solid #e8c4bd", borderRadius: 9,
               padding: "8px 12px", margin: "8px 0", fontSize: 13 },
   matchNote: { background: "#f2f1ed", borderRadius: 9, padding: "7px 12px", margin: "0 0 10px", fontSize: 13, color: "#444" },
+  howto: { background: "#e8edf3", border: "1px solid #c5d3e3", borderRadius: 9,
+           padding: "8px 12px", margin: "0 0 10px", fontSize: 13, lineHeight: 1.65 },
+  dynamicBox: { background: "#fbf2df", border: "1px solid #e4cf9a", borderRadius: 9,
+                padding: "8px 12px", margin: "0 0 10px", fontSize: 13, lineHeight: 1.65 },
   details: { marginTop: 12, borderTop: "1px solid #eee", paddingTop: 10 },
 };

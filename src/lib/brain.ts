@@ -14,7 +14,7 @@ import { loadBusinessConfig } from "./business-config-store";
 import { loadMedia } from "./media-store";
 import { buildSystemPrompt } from "./system-prompt";
 import { getRepo } from "./db";
-import { QUICK_ANSWER_CATALOG } from "./conversation-service";
+import { renderQuickAnswerCatalog } from "./conversation-service";
 import { loadOverrides, applyPromptOverrides } from "./brain-store";
 
 export interface BrainItem {
@@ -37,6 +37,10 @@ export interface BrainItem {
   stale?: boolean;
   /** לתבניות: מה מפעיל אותן (מוצג לצד העורך) */
   matchNote?: string;
+  /** תבנית שנבנית מהמידע העסקי - עריכה תקפיא אותה כטקסט קבוע */
+  dynamic?: boolean;
+  /** כמה ניסוחים הבוט מגריל ביניהם */
+  variantCount?: number;
 }
 
 export interface BrainLayer {
@@ -195,21 +199,25 @@ export async function buildBrainSnapshot(query = ""): Promise<BrainSnapshot> {
   });
 
   // --- שכבה 2: מאגר התשובות החינמיות ---
-  const cannedItems: BrainItem[] = QUICK_ANSWER_CATALOG.map((c) => {
+  // הטקסט האמיתי שהלקוח מקבל, מרונדר מאותה פונקציה שמשרתת לקוחות
+  const cannedItems: BrainItem[] = renderQuickAnswerCatalog(config, media.length > 0).map((c) => {
     const id = `canned-${c.key}`;
     const ov = overrides.items[id];
-    const sample = ov?.text ?? c.sample;
+    // כל הניסוחים יחד, מופרדים בשורת ~~~ - כך רואים ועורכים את המלאי המלא
+    const text = ov?.text ?? c.variants.join("\n~~~\n");
     return {
       id,
       title: c.title,
-      body: sample,
-      chars: sample.length,
-      tokens: tok(sample),
+      body: text,
+      chars: text.length,
+      tokens: tok(text),
       origin: "code" as const,
       editable: true,
       edited: !!ov,
-      defaultText: c.sample,
+      defaultText: c.variants.join("\n~~~\n"),
       matchNote: c.patterns,
+      dynamic: c.dynamic,
+      variantCount: c.variants.length,
     };
   });
 
