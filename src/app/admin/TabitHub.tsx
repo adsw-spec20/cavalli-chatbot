@@ -19,17 +19,18 @@ const VIEWS = [
   { key: "floor", label: "מפת רצפה" },
   { key: "lab", label: "מעבדה" },
 ] as const;
-// "guide" הוא כפתור נפרד בצד קבוצת הלשוניות (בקשת המנהל 15.9)
-type ViewKey = (typeof VIEWS)[number]["key"] | "guide";
+type ViewKey = (typeof VIEWS)[number]["key"];
 
 export default function TabitHub({ token, agentName, isMaster }: { token: string; agentName?: string; isMaster?: boolean }) {
   const [view, setView] = useState<ViewKey>(() => {
     try {
       const v = localStorage.getItem("tabit_hub_view");
-      if (v && (VIEWS.some((x) => x.key === v) || v === "guide")) return v as ViewKey;
+      if (v && VIEWS.some((x) => x.key === v)) return v as ViewKey;
     } catch {}
     return "day";
   });
+  // המדריך נפתח כשכבה מעל התצוגה הנוכחית - והנושא שלו עוקב אחרי הלשונית הפעילה
+  const [guideOpen, setGuideOpen] = useState(false);
   function pick(v: ViewKey) {
     setView(v);
     try {
@@ -55,10 +56,11 @@ export default function TabitHub({ token, agentName, isMaster }: { token: string
           ))}
         </div>
         <button
-          onClick={() => pick("guide")}
-          aria-current={view === "guide" ? "page" : undefined}
+          onClick={() => setGuideOpen((g) => !g)}
+          aria-pressed={guideOpen}
+          title="מדריך קצר על המסך הנוכחי"
           className={`rounded-xl border px-3.5 py-2 text-sm transition ${
-            view === "guide"
+            guideOpen
               ? "bg-[var(--accent)] text-[var(--accent-fg)] border-transparent font-semibold"
               : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"
           }`}
@@ -67,10 +69,15 @@ export default function TabitHub({ token, agentName, isMaster }: { token: string
         </button>
       </div>
 
-      {view === "day" && <Tabit token={token} agentName={agentName} />}
-      {view === "floor" && <FloorMap token={token} />}
-      {view === "lab" && <TabitTestChat token={token} isMaster={isMaster} />}
-      {view === "guide" && <TabitGuide />}
+      {guideOpen ? (
+        <TabitGuide topic={view} onClose={() => setGuideOpen(false)} />
+      ) : (
+        <>
+          {view === "day" && <Tabit token={token} agentName={agentName} />}
+          {view === "floor" && <FloorMap token={token} />}
+          {view === "lab" && <TabitTestChat token={token} isMaster={isMaster} />}
+        </>
+      )}
     </div>
   );
 }
