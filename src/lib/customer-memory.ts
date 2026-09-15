@@ -139,7 +139,7 @@ export async function maybeUpdateCustomerMemory(conversationId: string): Promise
     });
 
     // רישום העלות של תמצות הזיכרון (Haiku) - נספר במד העלות אבל לא כ"תשובה"
-    await recordLlmUsage(MEMORY_MODEL, res.usage, false);
+    await recordLlmUsage(MEMORY_MODEL, res.usage, false, "memory");
 
     const toolUse = res.content.find((b) => b.type === "tool_use");
     const input =

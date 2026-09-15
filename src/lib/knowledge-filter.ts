@@ -61,7 +61,7 @@ export async function polishAnswer(question: string, rawAnswer: string): Promise
         { role: "user", content: `השאלה: ${question.slice(0, 200)}\nתשובת הצוות: ${raw.slice(0, 500)}` },
       ],
     });
-    await recordLlmUsage(MODEL, res.usage, false);
+    await recordLlmUsage(MODEL, res.usage, false, "knowledge");
     const text = res.content.find((b) => b.type === "text");
     const polished = text && text.type === "text" ? text.text.trim() : "";
     // הגנה: תוצאה ריקה או מנופחת -> נשארים עם המקור
@@ -109,7 +109,7 @@ export async function evaluateGapQuestion(
         },
       ],
     });
-    await recordLlmUsage(MODEL, res.usage, false);
+    await recordLlmUsage(MODEL, res.usage, false, "knowledge");
 
     const text = res.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") return fallback;

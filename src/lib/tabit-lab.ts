@@ -157,7 +157,7 @@ export async function runTabitChat(
 
   for (let i = 0; i < 5; i++) {
     const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 3000, system, tools, messages: msgs });
-    await recordLlmUsage(MODEL, resp.usage, false);
+    await recordLlmUsage(MODEL, resp.usage, false, "tabit-lab");
     const toolUses = resp.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     msgs.push({ role: "assistant", content: resp.content });
 

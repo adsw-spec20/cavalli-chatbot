@@ -11,6 +11,7 @@ import { loadMedia } from "./media-store";
 import { buildSystemPrompt } from "./system-prompt";
 import { isGateConfigured } from "./palgate";
 import { memoryContextBlock } from "./customer-memory";
+import { recordLlmUsage } from "./usage";
 import type { ConversationMessage } from "./channels/types";
 
 // מודל ברירת מחדל: Sonnet 4.6 - עברית נקייה ומדויקת, מתאים לבוט שמדבר עם לקוחות.
@@ -405,6 +406,10 @@ export async function generateReply(
       system: systemBlocks,
       messages: reqMessages,
     });
+    // ⚠️ עד 15.9 העלות של הניסיון הזה *לא נרשמה בכלל*: החזרנו רק את usage של
+    // הקריאה הראשונה, אז כל ניסיון חוזר היה פרומפט מלא שהמונה לא ראה (וגם
+    // התקרה היומית לא ספרה). נרשם עכשיו בנפרד, כדי שגם נדע כמה זה קורה.
+    await recordLlmUsage(MODEL, retry.usage ?? {}, false, "bot-retry");
     const rt = retry.content.find((b) => b.type === "text");
     text = rt && rt.type === "text" ? rt.text : null;
   }

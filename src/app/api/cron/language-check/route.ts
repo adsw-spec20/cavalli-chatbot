@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
       'החזר JSON בלבד: [{"quote":"הציטוט המדויק","problem":"מה הבעיה","fix":"הניסוח הנכון"}] - עד 15 ממצאים, החמורים קודם.',
     messages: [{ role: "user", content: sample.join("\n---\n") }],
   });
-  await recordLlmUsage(model, res.usage ?? {});
+  await recordLlmUsage(model, res.usage ?? {}, true, "language-check");
   let findings: unknown[] = [];
   try {
     const text = res.content?.[0]?.type === "text" ? res.content[0].text : "[]";

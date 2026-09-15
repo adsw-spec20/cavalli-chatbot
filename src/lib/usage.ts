@@ -39,7 +39,24 @@ export interface DayUsage {
   audioSeconds: number;
   /** עלות מצטברת בדולר */
   cost: number;
+  /**
+   * פילוח לפי מקור (נוסף 15.9). בלי זה הכל נכנס לדלי אחד ואי אפשר לענות על
+   * "כמה טאביט עולה?" - בדיוק השאלה ששאלו ולא היתה עליה תשובה.
+   * המפתחות הם UsageSource; שומרים עלות וקריאות בלבד (הטוקנים כבר בסיכום היומי).
+   */
+  bySource?: Record<string, { cost: number; calls: number }>;
 }
+
+/** מי ביצע את הקריאה למודל. חדש נוסף כאן ומתועד, לא נשלח כמחרוזת חופשית. */
+export type UsageSource =
+  | "bot"            // תשובה ללקוח בשיחה
+  | "bot-retry"      // ניסיון שני כשהתשובה יצאה קטועה (נספר בנפרד כדי לראות כמה זה עולה)
+  | "memory"         // תמצות זיכרון לקוח
+  | "knowledge"      // מסנן מסך הידע
+  | "language-check" // בדיקת הלשון היומית
+  | "suggest"        // "הצע תשובה" / ניסוח מחדש לנציג בפאנל
+  | "tabit-lab"      // צ'אט מעבדת טאביט / בוט הקבוצה
+  | "other";
 
 const emptyDay = (): DayUsage => ({
   replies: 0,
@@ -97,7 +114,8 @@ export interface LlmUsage {
 export async function recordLlmUsage(
   model: string,
   usage: LlmUsage,
-  countsAsReply = true
+  countsAsReply = true,
+  source: UsageSource = "other"
 ): Promise<void> {
   const p = PRICING[model] ?? DEFAULT_PRICING;
   const input = usage.input_tokens ?? 0;
@@ -119,6 +137,10 @@ export async function recordLlmUsage(
       d.cacheReadTokens += cacheRead;
       d.cacheWriteTokens += cacheWrite;
       d.cost += cost;
+      const by = (d.bySource ??= {});
+      const slot = (by[source] ??= { cost: 0, calls: 0 });
+      slot.cost = Math.round((slot.cost + cost) * 1e6) / 1e6;
+      slot.calls += 1;
     });
   } catch (err) {
     console.error("[usage] רישום שימוש נכשל:", err);
@@ -159,6 +181,8 @@ export interface CostSummary {
   avgCostPerReply: number;
   /** פירוט יומי (לגרף ולבורר הטווחים) */
   days: { date: string; cost: number; replies: number; free: number }[];
+  /** פילוח עלות החודש לפי מקור הקריאה (bot / tabit-lab / memory ...) */
+  bySource?: Record<string, { cost: number; calls: number }>;
 }
 
 /** תאריך ISO של היום הראשון בחודש, n חודשים אחורה */
@@ -194,6 +218,17 @@ export async function getCostSummary(): Promise<CostSummary> {
   ).getDate();
   const projectedMonthCost = dayOfMonth > 0 ? (monthCost / dayOfMonth) * daysInMonth : 0;
 
+  // פילוח החודש לפי מקור - התשובה ל"כמה טאביט עולה לי?"
+  const bySource: Record<string, { cost: number; calls: number }> = {};
+  for (const [date, d] of Object.entries(month)) {
+    if (!date.startsWith(thisMonth) || !d.bySource) continue;
+    for (const [src, v] of Object.entries(d.bySource)) {
+      const slot = (bySource[src] ??= { cost: 0, calls: 0 });
+      slot.cost = Math.round((slot.cost + v.cost) * 1e6) / 1e6;
+      slot.calls += v.calls;
+    }
+  }
+
   return {
     today: month[today] ?? emptyDay(),
     monthCost,
@@ -201,5 +236,6 @@ export async function getCostSummary(): Promise<CostSummary> {
     projectedMonthCost,
     avgCostPerReply: monthReplies ? monthCost / monthReplies : 0,
     days,
+    bySource,
   };
 }

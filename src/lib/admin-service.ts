@@ -389,7 +389,7 @@ export async function polishDraft(conversationId: string, draft: string): Promis
         },
       ],
     });
-    await recordLlmUsage(model, res.usage ?? {});
+    await recordLlmUsage(model, res.usage ?? {}, false, "suggest");
     const out = res.content?.[0]?.type === "text" ? res.content[0].text.trim() : "";
     // מעקה: תוצאה ריקה/חשודה באורכה - עדיף המקור של הנציג
     return out.length >= 2 && out.length <= text.length * 3 + 200 ? out : text;
@@ -417,6 +417,10 @@ export async function suggestReply(conversationId: string): Promise<string> {
   while (merged.length && merged[merged.length - 1].role === "assistant") merged.pop();
   if (!merged.length) return "";
   const result = await generateReply(merged, {});
+  // ⚠️ עד 15.9 הקריאה הזאת לא נרשמה במונה בכלל: כל לחיצה על "הצע תשובה" היא
+  // קריאה מלאה עם כל הפרומפט, והיא הופיעה בדוח כאפס. נספרת עכשיו תחת "suggest"
+  // (ולא כ"תשובה", כי הלקוח לא קיבל אותה - נציג רק ראה הצעה).
+  await recordLlmUsage(result.model ?? "", result.usage ?? {}, false, "suggest");
   return result.text ?? "";
 }
 
