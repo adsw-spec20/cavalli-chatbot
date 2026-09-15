@@ -133,6 +133,46 @@ const toMin = (hhmm: string): number => {
 const ilTime = (iso: string): string =>
   new Date(iso).toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false });
 
+// ===== העתקה לוואטסאפ: פורמט אחיד וקריא - כוכבית בודדת (הדגשה בוואטסאפ),
+// ===== בלוק לכל הזמנה, קיבוץ בוקר/ערב (ערב = 18:00 ומעלה), שורה ריקה בין הזמנות.
+
+const EVENING_MIN = 18 * 60;
+
+/** "להיום"/"למחר"/"ליום שלישי" + תאריך קצר, לכותרות ההעתקה */
+function waDateParts(iso: string): { ref: string; date: string } {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = `${d}.${m}.${String(y).slice(2)}`;
+  if (iso === todayIL()) return { ref: "להיום", date };
+  if (iso === tomorrowIL()) return { ref: "למחר", date };
+  return { ref: `ליום ${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}`, date };
+}
+
+function waDepositMark(d: Deposit): string {
+  return d === "secured" ? "✅" : d === "missing" ? "❌ חסר פיקדון" : "ללא פיקדון";
+}
+
+/** בלוק הזמנה אחת: שורת כותרת מודגשת + שורת פרטים (+ הערה אם יש) */
+function waResBlock(r: TabitReservation): string {
+  const tables = r.tables.length ? `ש׳ ${r.tables.join(",")}` : "ללא שולחן";
+  const lines = [
+    `*${r.time} · ${r.name || "(ללא שם)"} · ${r.seats} סועדים*`,
+    `${tables} | ${fmtPhone(r.phone) || "-"} | ${waDepositMark(r.deposit)}`,
+  ];
+  if (r.notes) lines.push(`💬 ${r.notes}`);
+  return lines.join("\n");
+}
+
+/** רשימת הזמנות מקובצת 🌅 בוקר / 🌆 ערב, ממוינת לפי שעה */
+function waGrouped(list: TabitReservation[]): string {
+  const sorted = [...list].sort((a, b) => (a.fromISO < b.fromISO ? -1 : 1));
+  const morning = sorted.filter((r) => toMin(r.time) < EVENING_MIN);
+  const evening = sorted.filter((r) => toMin(r.time) >= EVENING_MIN);
+  const parts: string[] = [];
+  if (morning.length) parts.push(`🌅 *בוקר*\n\n${morning.map(waResBlock).join("\n\n")}`);
+  if (evening.length) parts.push(`🌆 *ערב*\n\n${evening.map(waResBlock).join("\n\n")}`);
+  return parts.join("\n\n");
+}
+
 function PhoneActions({ phone, wa = true }: { phone: string; wa?: boolean }) {
   if (!phone) return null;
   const w = wa ? waLink(phone) : null;
@@ -156,11 +196,22 @@ function PhoneActions({ phone, wa = true }: { phone: string; wa?: boolean }) {
   );
 }
 
-/** אריח מדד ליום הנבחר */
-function StatTile({ label, value, tone }: { label: string; value: ReactNode; tone?: "danger" | "accent" }) {
+/** אריח מדד ליום הנבחר, עם כפתור העתקה לוואטסאפ (כשיש מה להעתיק) */
+function StatTile({ label, value, tone, onCopy, copied }: { label: string; value: ReactNode; tone?: "danger" | "accent"; onCopy?: () => void; copied?: boolean }) {
   const valueCls = tone === "danger" ? "text-red-400" : tone === "accent" ? "text-[var(--accent)]" : "text-[var(--text)]";
   return (
-    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2.5">
+    <div className="relative bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2.5">
+      {onCopy && (
+        <button
+          onClick={onCopy}
+          title="מעתיק את הרשימה בפורמט וואטסאפ"
+          className={`absolute top-1.5 left-1.5 text-[10px] rounded-md px-1.5 py-0.5 border transition ${
+            copied ? "border-emerald-500/40 text-emerald-400 bg-emerald-500/10" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"
+          }`}
+        >
+          {copied ? "הועתק ✓" : "📋 העתק"}
+        </button>
+      )}
       <div className={`text-2xl font-bold font-display ${valueCls}`} style={{ fontVariantNumeric: "tabular-nums" }}>
         {value}
       </div>
@@ -337,6 +388,7 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
   const [view, setView] = useState<"all" | "big" | "timeline">("all");
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedTile, setCopiedTile] = useState<"all" | "covers" | "big" | "missing" | null>(null);
 
   // מגירת פרטי הזמנה + שליחת תזכורת פיקדון מתוכה
   const [selectedRes, setSelectedRes] = useState<TabitReservation | null>(null);
@@ -424,12 +476,11 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
     return [...m.entries()].map(([iso, count]) => ({ iso, count })).sort((a, b) => (a.iso < b.iso ? -1 : 1));
   }, [reservations]);
 
-  // ברירת מחדל: מחר אם קיים, אחרת היום הקרוב ביותר
+  // ברירת מחדל: היום (upcomingDays ממוין מהיום והלאה, אז הראשון הוא היום אם יש בו הזמנות)
   useEffect(() => {
     if (selectedDay && upcomingDays.some((d) => d.iso === selectedDay)) return;
     if (upcomingDays.length === 0) return;
-    const t = tomorrowIL();
-    setSelectedDay(upcomingDays.some((d) => d.iso === t) ? t : upcomingDays[0].iso);
+    setSelectedDay(upcomingDays[0].iso);
   }, [upcomingDays, selectedDay]);
 
   /** כל הזמנות היום הנבחר, ממוינות לפי שעה */
@@ -472,6 +523,104 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     }).catch(() => {});
+  }
+
+  // ===== העתקות וואטסאפ מהאריחים - רשימות מלאות של היום הנבחר =====
+
+  function copyTile(text: string, key: "all" | "covers" | "big" | "missing") {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopiedTile(key);
+      setTimeout(() => setCopiedTile((c) => (c === key ? null : c)), 1800);
+    }).catch(() => {});
+  }
+
+  /** כל ההזמנות של היום הנבחר, מקובץ בוקר/ערב */
+  function copyDayAll() {
+    if (!selectedDay || !dayAll.length) return;
+    const { ref, date } = waDateParts(selectedDay);
+    const text = [
+      `*כל ההזמנות ${ref}* (${date})`,
+      `${dayAll.length} הזמנות · ${covers} סועדים`,
+      "",
+      waGrouped(dayAll),
+      "",
+      `*סה״כ:* ${dayAll.length} הזמנות · ${covers} סועדים`,
+    ].join("\n");
+    copyTile(text, "all");
+  }
+
+  /** סיכום סועדים: תמונת מצב מספרית של היום, בלי רשימה */
+  function copyCovers() {
+    if (!selectedDay || !dayAll.length) return;
+    const { ref, date } = waDateParts(selectedDay);
+    const morning = dayAll.filter((r) => toMin(r.time) < EVENING_MIN);
+    const evening = dayAll.filter((r) => toMin(r.time) >= EVENING_MIN);
+    const sum = (l: TabitReservation[]) => l.reduce((s, r) => s + r.seats, 0);
+    const slots = coversByTimeSlot(dayAll.map((r) => ({ time: r.time, seats: r.seats })), 30);
+    const peak = slots.reduce((best, p) => (p.value > best.value ? p : best), { label: "", value: 0 });
+    const lines = [
+      `*סיכום סועדים ${ref}* (${date})`,
+      "",
+      `סה״כ *${covers} סועדים* ב-${dayAll.length} הזמנות`,
+    ];
+    if (morning.length) lines.push(`🌅 בוקר: ${sum(morning)} סועדים · ${morning.length} הזמנות`);
+    if (evening.length) lines.push(`🌆 ערב: ${sum(evening)} סועדים · ${evening.length} הזמנות`);
+    lines.push("");
+    lines.push(`🍽️ שולחנות גדולים (${threshold}+): ${dayBig.length}${dayBig.length ? ` · ${sum(dayBig)} סועדים` : ""}`);
+    lines.push(`💳 חסרי פיקדון: ${dayMissing.length}`);
+    if (peak.value > 0) lines.push(`⏰ שעת שיא: ${peak.label} · ${peak.value} סועדים`);
+    copyTile(lines.join("\n"), "covers");
+  }
+
+  /** שולחנות גדולים: הפורמט המלא שהמנהל ביקש - קיבוץ בוקר/ערב + שורת סיכום */
+  function copyDayBig() {
+    if (!selectedDay || !dayBig.length) return;
+    const { ref, date } = waDateParts(selectedDay);
+    const seats = dayBig.reduce((s, r) => s + r.seats, 0);
+    const missing = dayBig.filter((r) => r.deposit === "missing").length;
+    const foot =
+      missing > 0
+        ? `❌ ${missing} הזמנות חסרות פיקדון`
+        : dayBig.every((r) => r.deposit === "secured")
+          ? "✅ כל ההזמנות עם פיקדון מובטח"
+          : "";
+    const text = [
+      `*שולחנות גדולים ${ref}* (${date})`,
+      `${dayBig.length} הזמנות · ${seats} סועדים`,
+      "",
+      waGrouped(dayBig),
+      "",
+      `*סה״כ:* ${dayBig.length} שולחנות גדולים · ${seats} סועדים`,
+      ...(foot ? [foot] : []),
+    ].join("\n");
+    copyTile(text, "big");
+  }
+
+  /** חסרי פיקדון: רשימה לפי שעה, כולל אם כבר נשלחה תזכורת */
+  function copyDayMissing() {
+    if (!selectedDay || !dayMissing.length) return;
+    const { ref, date } = waDateParts(selectedDay);
+    const byTime = [...dayMissing].sort((a, b) => (a.fromISO < b.fromISO ? -1 : 1));
+    const seats = byTime.reduce((s, r) => s + r.seats, 0);
+    const blocks = byTime.map((r) => {
+      const tables = r.tables.length ? `ש׳ ${r.tables.join(",")}` : "ללא שולחן";
+      const lines = [
+        `*${r.time} · ${r.name || "(ללא שם)"} · ${r.seats} סועדים*`,
+        `${tables} | ${fmtPhone(r.phone) || "-"}`,
+      ];
+      if (r.reminderSentAt) lines.push(`💳 נשלחה תזכורת · ${fmtSentAt(r.reminderSentAt)}`);
+      if (r.notes) lines.push(`💬 ${r.notes}`);
+      return lines.join("\n");
+    });
+    const text = [
+      `*חסרי פיקדון ${ref}* (${date})`,
+      `${byTime.length} הזמנות · ${seats} סועדים`,
+      "",
+      blocks.join("\n\n"),
+      "",
+      `💳 לשליחת תזכורת: כפתור "פיקדון" בפאנל`,
+    ].join("\n");
+    copyTile(text, "missing");
   }
 
   const stale = snapshot ? Date.now() - snapshot.generatedAt > 20 * 60_000 : false;
@@ -549,10 +698,10 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
         <>
           {/* ===== מדדי היום ===== */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <StatTile label="הזמנות ביום" value={dayAll.length} />
-            <StatTile label="סה״כ סועדים" value={covers} />
-            <StatTile label={`שולחנות גדולים (${threshold}+)`} value={dayBig.length} tone="accent" />
-            <StatTile label="חסרי פיקדון" value={dayMissing.length} tone={dayMissing.length > 0 ? "danger" : undefined} />
+            <StatTile label="הזמנות ביום" value={dayAll.length} onCopy={dayAll.length ? copyDayAll : undefined} copied={copiedTile === "all"} />
+            <StatTile label="סה״כ סועדים" value={covers} onCopy={dayAll.length ? copyCovers : undefined} copied={copiedTile === "covers"} />
+            <StatTile label={`שולחנות גדולים (${threshold}+)`} value={dayBig.length} tone="accent" onCopy={dayBig.length ? copyDayBig : undefined} copied={copiedTile === "big"} />
+            <StatTile label="חסרי פיקדון" value={dayMissing.length} tone={dayMissing.length > 0 ? "danger" : undefined} onCopy={dayMissing.length ? copyDayMissing : undefined} copied={copiedTile === "missing"} />
           </div>
 
           {/* ===== דשבורד משמרת חי (רק כשהיום הנבחר הוא היום) ===== */}
@@ -610,9 +759,9 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
             )}
           </SectionCard>
 
-          {/* ===== אג'נדת היום ===== */}
+          {/* ===== יומן ההזמנות של היום הנבחר ===== */}
           <SectionCard
-            title="אג׳נדת היום"
+            title="יומן הזמנות"
             sub={selLabel}
             actions={
               <button

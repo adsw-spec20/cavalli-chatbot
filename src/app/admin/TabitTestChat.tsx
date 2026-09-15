@@ -96,19 +96,36 @@ function mdToWhatsApp(md: string): string {
       const data = rows.filter((r) => !isSep(r));
       if (!data.length) continue;
       const header = data[0].map((h) => h.replace(/\*/g, "").trim());
+      const KNOWN = ["שם", "שעה", "סועדים", "שולחנות", "שולחן", "טלפון", "נייד", "פיקדון"];
       for (const r of data.slice(1)) {
-        const parts: string[] = [];
-        r.forEach((cellRaw, ci) => {
-          const cell = clean(cellRaw).trim();
-          if (!cell || cell === "-" || cell === "—") return;
-          if (ci === 0) { parts.push(`*${cell.replace(/\*/g, "")}*`); return; }
-          const h = header[ci] || "";
-          if (h === "סועדים") parts.push(`${cell.replace(/\*/g, "")} סועדים`);
-          else if (h === "שולחנות" || h === "שולחן") parts.push(`ש׳ ${cell}`);
-          else if (h === "טלפון" || h === "נייד") parts.push(fmtPhone(cell));
-          else parts.push(cell);
-        });
-        if (parts.length) out.push(parts.join(" •• "));
+        const cellOf = (names: string[]) => {
+          const idx = header.findIndex((h) => names.some((n) => h.includes(n)));
+          const cell = idx >= 0 ? clean(r[idx] ?? "").replace(/\*/g, "").trim() : "";
+          return cell === "-" || cell === "—" ? "" : cell;
+        };
+        const name = cellOf(["שם"]);
+        const time = cellOf(["שעה"]);
+        const seats = cellOf(["סועדים"]);
+        if (name || time || seats) {
+          // טבלת הזמנות -> בלוק דו-שורתי קריא בוואטסאפ:
+          // *שעה · שם · X סועדים* ומתחת: ש׳ שולחנות | טלפון | סטטוס פיקדון
+          const tables = cellOf(["שולחנות", "שולחן"]);
+          const phone = cellOf(["טלפון", "נייד"]);
+          const depRaw = cellOf(["פיקדון"]);
+          const deposit = !depRaw ? "" : /חסר|✗|✖|❌/.test(depRaw) ? "❌ חסר פיקדון" : /מובטח|✓|✔|✅/.test(depRaw) ? "✅" : depRaw;
+          const head = [time, name, seats && `${seats} סועדים`].filter(Boolean).join(" · ");
+          const details = [tables && `ש׳ ${tables.replace(/\s+/g, "")}`, phone && fmtPhone(phone), deposit].filter(Boolean).join(" | ");
+          const extras = r
+            .map((c, ci) => ({ c: clean(c).replace(/\*/g, "").trim(), h: header[ci] || "" }))
+            .filter(({ c, h }) => c && c !== "-" && c !== "—" && !KNOWN.some((k) => h.includes(k)))
+            .map(({ c }) => c);
+          const block = [head && `*${head}*`, details, ...(extras.length ? [`💬 ${extras.join(" · ")}`] : [])].filter(Boolean).join("\n");
+          if (block) { out.push(block); out.push(""); }
+        } else {
+          // טבלה שאינה הזמנות - שורה פשוטה
+          const parts = r.map((c) => clean(c).replace(/\*/g, "").trim()).filter((c) => c && c !== "-" && c !== "—");
+          if (parts.length) out.push(parts.join(" · "));
+        }
       }
       continue;
     }
