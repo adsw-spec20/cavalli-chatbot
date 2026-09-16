@@ -21,8 +21,10 @@ const SETTING_KEY = "business_config";
  * לפרודקשן - הקונפיג השמור פשוט לא מכיר אותו, והבוט היה ממשיך לא לדעת מתי
  * מפסיקים להושיב. ההשלמה נעשית רק כשהשדה **חסר** (undefined); null מפורש
  * הוא בחירה של בעל העסק ונשמר כמו שהוא.
+ *
+ * מיוצא לצורך בדיקה (scripts/open-state-test.mts) - לא בשימוש מחוץ לקובץ.
  */
-function withHoursDefaults(cfg: BusinessConfig): BusinessConfig {
+export function withHoursDefaults(cfg: BusinessConfig): BusinessConfig {
   if (!Array.isArray(cfg.hours)) return cfg;
   let changed = false;
   const hours = cfg.hours.map((h) => {

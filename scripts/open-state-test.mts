@@ -7,6 +7,7 @@
  */
 import { businessConfig } from "../src/lib/business-config";
 import { openStateAt, openStateLine, lastSeatingForDate } from "../src/lib/business-hours";
+import { withHoursDefaults } from "../src/lib/business-config-store";
 
 let pass = 0;
 const fails: string[] = [];
@@ -70,6 +71,32 @@ const special = {
 t("דריסה - פתוח בשבת חריגה", openStateAt(special, il("2026-09-19", "21:00")).open, true);
 t("דריסה - הושבה אחרונה משלה", lastSeatingForDate(special, "2026-09-19"), "22:00");
 t("דריסה - אחרי ההושבה", openStateAt(special, il("2026-09-19", "22:30")).pastLastSeating, true);
+
+// ===== השלמת השדה החדש על קונפיג שנשמר מהפאנל =====
+// ⚠️ זה מה שמחליט אם הפיצ'ר בכלל עובד בפרודקשן: המיזוג ב-loadBusinessConfig
+// רדוד, ולכן מערך השעות ששמור ב-DB דורס את זה שבקוד. בלי ההשלמה הזאת השדה
+// החדש פשוט לא היה מגיע ללקוחות - והכל היה נראה תקין מקומית.
+const savedFromPanel = {
+  ...cfg,
+  hours: [
+    { day: "ראשון", hours: "08:00-18:00" },
+    { day: "שני", hours: "08:00-00:00" },
+    { day: "שלישי", hours: "08:00-00:00" },
+    { day: "רביעי", hours: "08:00-00:00" },
+    { day: "חמישי", hours: "08:00-00:00" },
+    { day: "שישי", hours: "08:00-15:00" },
+    { day: "שבת", hours: null },
+  ],
+};
+const healed = withHoursDefaults(savedFromPanel);
+t("קונפיג שמור בלי השדה - מושלם משני עד חמישי", healed.hours.map((h) => h.lastSeating ?? null), [null, "23:00", "23:00", "23:00", "23:00", null, null]);
+t("אחרי ההשלמה החישוב עובד", openStateAt(healed, il("2026-09-17", "23:20")).pastLastSeating, true);
+
+// בחירה מפורשת של בעל העסק לא נדרסת על ידי ההשלמה
+const ownerCleared = { ...cfg, hours: cfg.hours.map((h) => (h.day === "שני" ? { ...h, lastSeating: null } : h)) };
+t("null מפורש נשמר", withHoursDefaults(ownerCleared).hours.find((h) => h.day === "שני")?.lastSeating, null);
+const ownerChanged = { ...cfg, hours: cfg.hours.map((h) => (h.day === "שני" ? { ...h, lastSeating: "22:30" } : h)) };
+t("ערך שנערך נשמר", withHoursDefaults(ownerChanged).hours.find((h) => h.day === "שני")?.lastSeating, "22:30");
 
 if (fails.length) {
   console.log(`\n${fails.length} נכשלו:\n`);
