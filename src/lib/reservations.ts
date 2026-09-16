@@ -11,6 +11,7 @@
 
 import { randomUUID } from "crypto";
 import { getRepo } from "./db";
+import { israelDateISO } from "./business-hours";
 import { sendAlertEmail, sendTeamWhatsAppAlert, escapeHtml } from "./alerts";
 import { sendTeamPush } from "./push";
 
@@ -110,6 +111,12 @@ export interface Reservation {
   phone: string;
   notes?: string;
   status: ReservationStatus;
+  /**
+   * בקשת שינוי שהתקבלה אחרי שההזמנה כבר נפתחה (15.9).
+   * לא משנה את הפרטים עצמם - הצוות מחליט. קיים כדי שלשונית ההזמנות לא תציג
+   * מידע מיושן: בלי זה השינוי חי רק בתמליל השיחה, והצוות פועל לפי השעה הישנה.
+   */
+  changeRequested?: { at: number; note: string };
   createdAt: number;
   handledAt?: number;
   handledBy?: string;
@@ -178,6 +185,28 @@ export async function createReservation(
   }).catch(() => {});
 
   return reservation;
+}
+
+/**
+ * מסמן שהתקבלה בקשת שינוי על ההזמנה הפעילה האחרונה של הלקוח.
+ * מחזיר את ההזמנה שסומנה, או null אם אין לו הזמנה פתוחה.
+ */
+export async function flagReservationChange(
+  customerId: string,
+  note: string
+): Promise<Reservation | null> {
+  const list = await loadReservations();
+  const today = israelDateISO();
+  // ההזמנה הרלוונטית: העדכנית ביותר שעוד לא עברה ולא נדחתה
+  const candidates = list.filter(
+    (r) => r.customerId === customerId && r.status !== "declined" && r.status !== "cancelled" &&
+      (!r.dateISO || r.dateISO >= today)
+  );
+  const target = candidates[candidates.length - 1];
+  if (!target) return null;
+  target.changeRequested = { at: Date.now(), note: note.slice(0, 300) };
+  await save(list);
+  return target;
 }
 
 export async function setReservationStatus(

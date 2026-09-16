@@ -16,6 +16,7 @@ import { recordModelFailure } from "./system-alarm";
 import { processGapQuestion } from "./knowledge-filter";
 import {
   createReservation,
+  flagReservationChange,
   loadReservations,
   resolveReservationDate,
   reservationDateLabel,
@@ -1817,10 +1818,31 @@ export async function handleIncomingMessage(
       (r) => r.customerId === customerId && r.status !== "declined" && (!r.dateISO || r.dateISO >= today)
     );
     if (mine.length) {
+      // ----- חלון 24 השעות (16.9) -----
+      // הקוד מחשב, לא המודל: יש לנו כלל ברזל שאוסר עליו לחשב הפרשי זמן כי הוא
+      // טועה בזה. נקודת הייחוס היא *תחילת ההתכתבות הנוכחית* ולא "עכשיו", כדי
+      // שלקוח שהתחיל כשנשארו 24 שעות ושתי דקות לא ייפול למסלול אחר רק מפני
+      // שלקח לו זמן לסכם מולנו את השינוי.
+      const RECENT_MS = 30 * 60_000;
+      const firstRecentUserTs =
+        stored
+          .filter((m) => m.role === "user" && Date.now() - m.ts < RECENT_MS)
+          .map((m) => m.ts)
+          .sort((a, b) => a - b)[0] ?? Date.now();
+      const windowLabel = (r: { dateISO?: string; time?: string }): string => {
+        if (!r.dateISO || !r.time || !/^\d{1,2}:\d{2}$/.test(r.time)) return "מועד לא ודאי";
+        // שעון ישראל: +03:00. אין לנו כאן טיפול ב-DST, וסטייה של שעה אינה
+        // משנה את ההחלטה סביב גבול של 24 שעות.
+        const at = new Date(`${r.dateISO}T${r.time.padStart(5, "0")}:00+03:00`).getTime();
+        if (!Number.isFinite(at)) return "מועד לא ודאי";
+        const hours = (at - firstRecentUserTs) / 3_600_000;
+        if (hours <= 0) return "המועד כבר עבר";
+        return hours > 24 ? "יותר מ-24 שעות מהמועד" : "פחות מ-24 שעות מהמועד";
+      };
       activeReservations = mine
         .map(
           (r) =>
-            `${r.status === "approved" ? "נמצא מקום (סופי אחרי תשלום הפיקדון בקישור ששלח הצוות)" : "ממתינה לאישור הצוות"}: ${r.people} אנשים, ${r.dateText} בשעה ${r.time}, ע"ש ${r.name}${r.notes ? ` (${r.notes})` : ""}`
+            `${r.status === "approved" ? "נמצא מקום (סופי אחרי תשלום הפיקדון בקישור ששלח הצוות)" : "ממתינה לאישור הצוות"}: ${r.people} אנשים, ${r.dateText} בשעה ${r.time}, ע"ש ${r.name}${r.notes ? ` (${r.notes})` : ""} [${windowLabel(r)}]${r.changeRequested ? " [כבר נרשמה בקשת שינוי]" : ""}`
         )
         .join("; ");
     }
@@ -1956,6 +1978,12 @@ export async function handleIncomingMessage(
 
   // ----- המודל החליט להעביר לנציג אנושי -----
   if (result.escalate) {
+    // בקשת שינוי על הזמנה קיימת: מסמנים את הרשומה עצמה, כדי שלשונית ההזמנות
+    // לא תמשיך להציג רק את השעה הישנה. הפרטים לא משתנים - הצוות מחליט.
+    const escText = `${result.escalate.reason} ${result.escalate.summary}`;
+    if (activeReservations && /שינוי|לשנות|לעדכן|להקדים|לאחר|במקום|להוסיף|לבטל|ביטול/.test(escText)) {
+      await flagReservationChange(customerId, result.escalate.summary).catch(() => null);
+    }
     await repo.updateConversation(conversation.id, {
       status: "human",
       escalated: true,

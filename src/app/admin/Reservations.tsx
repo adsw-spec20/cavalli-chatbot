@@ -399,6 +399,12 @@ export default function Reservations({
                   <span className="text-[11px] text-[var(--muted)] mr-auto">התקבלה {relTime(r.createdAt)}</span>
                 </div>
 
+                {r.changeRequested && (
+                  <div className="text-xs bg-red-500/10 border border-red-500/30 rounded-lg px-2.5 py-1.5 font-semibold">
+                    ⚠️ התקבלה בקשת שינוי אחרי פתיחת ההזמנה - הפרטים למעלה הם המקוריים.
+                    <div className="font-normal mt-0.5">{r.changeRequested.note}</div>
+                  </div>
+                )}
                 {r.notes && (
                   <div className="text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">💬 {r.notes}</div>
                 )}

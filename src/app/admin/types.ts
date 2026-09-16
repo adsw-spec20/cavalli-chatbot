@@ -170,6 +170,8 @@ export interface Reservation {
   createdAt: number;
   handledAt?: number;
   handledBy?: string;
+  /** בקשת שינוי שהתקבלה אחרי פתיחת ההזמנה (הפרטים עצמם לא משתנים) */
+  changeRequested?: { at: number; note: string };
 }
 
 export interface QuickReply {
