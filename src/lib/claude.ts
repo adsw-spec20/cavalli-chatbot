@@ -80,6 +80,9 @@ export interface GenerateOptions {
       פעמיים ולא יתבלבל. נשלח בתוך ההודעה האחרונה ולא כבלוק מערכת, כדי לא
       לפסול את מטמון ההיסטוריה (הוא משתנה בכל תור). */
   reservationSlots?: string;
+  /** תוצאת חיפוש ההזמנה ביומן טאביט (מאומתת בקוד). נשלחת בתוך ההודעה האחרונה
+      ולא כבלוק מערכת - היא משתנה בכל תור וכבלוק הייתה פוסלת את מטמון ההיסטוריה. */
+  tabitLookup?: string;
   /** פענוח שעות חשופות ("at 10" ב-21:00 = 22:00) - נשלח באותה שורת הקשר */
   timeHint?: string;
 }
@@ -314,6 +317,7 @@ export async function generateReply(
     const ctx = [`השעה בישראל כעת: ${israelDateTime()}`];
     if (options.timeHint) ctx.push(options.timeHint);
     if (options.reservationSlots) ctx.push(options.reservationSlots);
+    if (options.tabitLookup) ctx.push(options.tabitLookup);
     reqMessages[lastIdx] = {
       role: "user",
       content: `[מידע מערכת, לא נכתב על ידי הלקוח - ${ctx.join("\n")}]\n${history[lastIdx].content}`,

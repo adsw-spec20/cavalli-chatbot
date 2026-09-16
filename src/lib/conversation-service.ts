@@ -25,6 +25,7 @@ import { checkReservationAvailability } from "./reservation-availability";
 import { bareHourHint } from "./time-hints";
 import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint } from "./reservation-slots";
 import { isOpenNow, israelDateISO, effectiveHoursToday, isWithinGateWindow } from "./business-hours";
+import { tabitIdentityHint } from "./tabit-lookup";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
 import { contactPhonesText, type BusinessConfig } from "./business-config";
@@ -1809,6 +1810,28 @@ export async function handleIncomingMessage(
     }
   }
 
+  // ----- חלון 24 השעות (16.9) -----
+  // הקוד מחשב, לא המודל: יש לנו כלל ברזל שאוסר עליו לחשב הפרשי זמן כי הוא
+  // טועה בזה. נקודת הייחוס היא *תחילת ההתכתבות הנוכחית* ולא "עכשיו", כדי
+  // שלקוח שהתחיל כשנשארו 24 שעות ושתי דקות לא ייפול למסלול אחר רק מפני
+  // שלקח לו זמן לסכם מולנו את השינוי.
+  const RECENT_MS = 30 * 60_000;
+  const firstRecentUserTs =
+    stored
+      .filter((m) => m.role === "user" && Date.now() - m.ts < RECENT_MS)
+      .map((m) => m.ts)
+      .sort((a, b) => a - b)[0] ?? Date.now();
+  const windowLabel = (r: { dateISO?: string; time?: string }): string => {
+    if (!r.dateISO || !r.time || !/^\d{1,2}:\d{2}$/.test(r.time)) return "מועד לא ודאי";
+    // שעון ישראל: +03:00. אין לנו כאן טיפול ב-DST, וסטייה של שעה אינה
+    // משנה את ההחלטה סביב גבול של 24 שעות.
+    const at = new Date(`${r.dateISO}T${r.time.padStart(5, "0")}:00+03:00`).getTime();
+    if (!Number.isFinite(at)) return "מועד לא ודאי";
+    const hours = (at - firstRecentUserTs) / 3_600_000;
+    if (hours <= 0) return "המועד כבר עבר";
+    return hours > 24 ? "יותר מ-24 שעות מהמועד" : "פחות מ-24 שעות מהמועד";
+  };
+
   // הזמנות פעילות של הלקוח (ממתינות/מאושרות שעוד לא עברו) - מוזרקות למוח כדי
   // שהבוט יזכור התחייבויות: "יש לך הזמנה בעוד שבוע" גם בשיחה חדשה לגמרי
   let activeReservations: string | undefined;
@@ -1818,27 +1841,6 @@ export async function handleIncomingMessage(
       (r) => r.customerId === customerId && r.status !== "declined" && (!r.dateISO || r.dateISO >= today)
     );
     if (mine.length) {
-      // ----- חלון 24 השעות (16.9) -----
-      // הקוד מחשב, לא המודל: יש לנו כלל ברזל שאוסר עליו לחשב הפרשי זמן כי הוא
-      // טועה בזה. נקודת הייחוס היא *תחילת ההתכתבות הנוכחית* ולא "עכשיו", כדי
-      // שלקוח שהתחיל כשנשארו 24 שעות ושתי דקות לא ייפול למסלול אחר רק מפני
-      // שלקח לו זמן לסכם מולנו את השינוי.
-      const RECENT_MS = 30 * 60_000;
-      const firstRecentUserTs =
-        stored
-          .filter((m) => m.role === "user" && Date.now() - m.ts < RECENT_MS)
-          .map((m) => m.ts)
-          .sort((a, b) => a - b)[0] ?? Date.now();
-      const windowLabel = (r: { dateISO?: string; time?: string }): string => {
-        if (!r.dateISO || !r.time || !/^\d{1,2}:\d{2}$/.test(r.time)) return "מועד לא ודאי";
-        // שעון ישראל: +03:00. אין לנו כאן טיפול ב-DST, וסטייה של שעה אינה
-        // משנה את ההחלטה סביב גבול של 24 שעות.
-        const at = new Date(`${r.dateISO}T${r.time.padStart(5, "0")}:00+03:00`).getTime();
-        if (!Number.isFinite(at)) return "מועד לא ודאי";
-        const hours = (at - firstRecentUserTs) / 3_600_000;
-        if (hours <= 0) return "המועד כבר עבר";
-        return hours > 24 ? "יותר מ-24 שעות מהמועד" : "פחות מ-24 שעות מהמועד";
-      };
       activeReservations = mine
         .map(
           (r) =>
@@ -1846,6 +1848,28 @@ export async function handleIncomingMessage(
         )
         .join("; ");
     }
+  } catch {
+    /* לא קריטי - ממשיכים בלי */
+  }
+
+  // ----- זיהוי הזמנה ביומן טאביט (16.9) -----
+  // רוב ההזמנות נעשות בטאביט ולא אצלנו, ולכן הבוט היה עיוור להן: גם כשלקוח
+  // אמר "יש לי הזמנה מחר", מבחינת הבוט לא הייתה שום הזמנה. החיפוש כאן נעשה
+  // **בקוד**, והמודל מקבל רק תוצאה שכבר עברה אימות - ראה tabit-lookup.ts.
+  let tabitLookup: string | undefined;
+  try {
+    const customerText = stored
+      .filter((m) => m.role === "user")
+      .slice(-12)
+      .map((m) => m.content)
+      .join("\n");
+    tabitLookup = await tabitIdentityHint({
+      channel: input.channel,
+      channelUserId: customer.channelUserId,
+      customerText,
+      today: israelDateISO(),
+      windowLabel,
+    });
   } catch {
     /* לא קריטי - ממשיכים בלי */
   }
@@ -1879,6 +1903,7 @@ export async function handleIncomingMessage(
         customerMemory: customer.memory,
         channel: input.channel,
         activeReservations,
+        tabitLookup,
         reservationSlots,
         // פענוח שעות חשופות בקוד ("at 10" בתשע בערב = 22:00) - תקרית Mike 24.8
         timeHint: bareHourHint(lastUserTurn) ?? undefined,
