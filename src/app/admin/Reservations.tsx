@@ -3,30 +3,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, CHANNELS, relTime, type Reservation } from "./types";
 import { SectionCard } from "./ui";
-
-/** תבניות ההודעה שנשלחות ללקוח - ניתנות לעריכה לפני שליחה.
- *  חשוב (הוחלט 20.8): "יש מקום" עדיין לא אישור סופי - ההזמנה מאושרת רק אחרי
- *  תשלום פיקדון 100 ש"ח בקישור הטאביט שהצוות שולח. אסור לנסח "אושרה". */
-
-/** התאריך בתבנית: קנוני מ-dateISO ("יום חמישי 13.8") כשקיים, אחרת מילות הלקוח.
- *  כך התאריך בהודעת הצוות תמיד אחיד - גם אם המודל ניסח את dateText לא עקבי
- *  (ב-12.8 נשלחו ללקוח שתי גרסאות של אותה תשובה עם שני תאריכים שונים). */
-function templateDate(r: Reservation): string {
-  if (r.dateISO && /^\d{4}-\d{2}-\d{2}$/.test(r.dateISO)) {
-    const [y, m, d] = r.dateISO.split("-").map(Number);
-    return `יום ${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d}.${m}`;
-  }
-  return r.dateText;
-}
-function approveTemplate(r: Reservation): string {
-  return `חדשות טובות - יש לנו מקום ל-${templateDate(r)} בשעה ${r.time} 🙂 ${r.people} אנשים, על שם ${r.name}. כדי להשלים את ההזמנה נשלח לך עוד רגע קישור לתשלום עם הפרטים - שם משלמים פיקדון של 100 ש"ח, וברגע שהוא שולם ההזמנה מאושרת סופית. מחכים לך בקפה קוואלי! 🥂`;
-}
-function declineTemplate(r: Reservation): string {
-  return `היי ${r.name} 🙏 בדקנו ולצערנו אין לנו מקום פנוי ל-${templateDate(r)} בשעה ${r.time}. אפשר לנסות שעה או יום אחרים, או לחייג *8149 או 050-979-8917 ונשמח לעזור למצוא פתרון.`;
-}
-function cancelTemplate(r: Reservation): string {
-  return `היי ${r.name} 🙏 ההזמנה שלך ל-${templateDate(r)} בשעה ${r.time} (${r.people} אנשים) בוטלה. אם מדובר בטעות או שתרצה לקבוע מחדש, אפשר לחייג *8149 או 050-979-8917 ונשמח לעזור.`;
-}
+// התבניות עברו למודול משותף (16.9) - גם כרטיס ההזמנה בתוך שיחת התיבה משתמש בהן
+import { approveTemplate, declineTemplate, cancelTemplate } from "./reservation-templates";
 
 /** מספר ישראלי -> קישור וואטסאפ (wa.me), או null אם לא ניתן לזהות */
 function waLink(phone: string): string | null {

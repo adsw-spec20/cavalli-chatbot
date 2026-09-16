@@ -13,6 +13,8 @@ export interface ConvItem {
   /** סימון כוכב של הצוות (משותף לכל המכשירים) */
   starred?: boolean;
   botPaused?: boolean;
+  /** יש לשיחה בקשת הזמנה שממתינה לתשובת צוות - נועצת אותה אוטומטית בתיבה */
+  pendingReservation?: boolean;
   customerName?: string;
   customerId: string;
   vip?: boolean;

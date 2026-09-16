@@ -15,6 +15,7 @@ import {
 } from "./types";
 import { parseMemory } from "@/lib/customer-memory-format";
 import DepositPanel from "./DepositPanel";
+import ConversationReservation from "./ConversationReservation";
 
 /* ============================== עזרים ============================== */
 
@@ -149,8 +150,10 @@ type Filter = "all" | "awaiting" | "escalated" | "human" | "closed" | "starred";
  * מבטל לה את הנעיצה ידנית. tri-state של meta.starred: true=נעיצה מפורשת,
  * false=ביטול מפורש, undefined=ברירת מחדל (נעוץ אם אצל נציג).
  */
-function effPinned(c: { starred?: boolean; status?: string; escalated?: boolean }): boolean {
-  return c.starred !== undefined ? c.starred : c.status === "human" || !!c.escalated;
+function effPinned(c: { starred?: boolean; status?: string; escalated?: boolean; pendingReservation?: boolean }): boolean {
+  // בקשת הזמנה שממתינה לתשובה נועצת את השיחה אוטומטית; ברגע שהצוות עונה
+  // (יש מקום / אין מקום) הדגל נופל מהשרת והנעיצה מתבטלת מעצמה.
+  return c.starred !== undefined ? c.starred : c.status === "human" || !!c.escalated || !!c.pendingReservation;
 }
 export interface InboxFilterIntent {
   status?: Filter;
@@ -1186,6 +1189,11 @@ export default function Inbox({
               <div className="mx-3 mt-2 shrink-0 text-xs bg-amber-500/10 border border-amber-500/25 rounded-xl p-2.5 text-amber-200">
                 <span className="font-semibold">📋 סיכום לנציג:</span> {conv.escalationSummary}
               </div>
+            )}
+
+            {/* בקשת הזמנה ממתינה - טיפול ישירות מהשיחה, בלי לצאת לעמוד ההזמנות (16.9) */}
+            {conversations.find((c) => c.id === conv.id)?.pendingReservation && (
+              <ConversationReservation token={token} agentName={agentName} conversationId={conv.id} onDone={onMutate} />
             )}
 
             {/* הודעות */}

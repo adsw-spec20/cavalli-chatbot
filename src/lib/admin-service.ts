@@ -39,6 +39,8 @@ export interface ConversationListItem {
   urgent?: boolean;
   /** סימון כוכב של הצוות (משותף לכולם, נשמר ב-meta של השיחה) */
   starred?: boolean;
+  /** יש לשיחה בקשת הזמנה שממתינה לתשובת צוות (נועצת אותה בתיבת הפניות) */
+  pendingReservation?: boolean;
   botPaused?: boolean;
   customerName?: string;
   customerId: string;
@@ -56,7 +58,7 @@ export interface ConversationListItem {
   lastRole?: string;
 }
 
-function summaryToListItem(s: ConversationSummary): ConversationListItem {
+function summaryToListItem(s: ConversationSummary, pendingResvIds?: Set<string>): ConversationListItem {
   const c = s.conversation;
   return {
     id: c.id,
@@ -66,6 +68,7 @@ function summaryToListItem(s: ConversationSummary): ConversationListItem {
     escalationReason: c.escalationReason,
     urgent: (c.meta as { urgent?: boolean } | undefined)?.urgent,
     starred: (c.meta as { starred?: boolean } | undefined)?.starred,
+    pendingReservation: pendingResvIds?.has(c.id) || undefined,
     botPaused: c.botPaused,
     customerName: s.customerName,
     customerId: c.customerId,
@@ -80,16 +83,27 @@ function summaryToListItem(s: ConversationSummary): ConversationListItem {
   };
 }
 
+/** מזהי השיחות שיש להן בקשת הזמנה ממתינה - לנעיצה אוטומטית בתיבה */
+async function pendingReservationConvIds(): Promise<Set<string>> {
+  try {
+    return new Set(
+      (await loadReservations()).filter((r) => r.status === "pending" && r.conversationId).map((r) => r.conversationId)
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 export async function listConversations(): Promise<ConversationListItem[]> {
   // שאילתת סיכום אחת (בלי למשוך את כל ההודעות) - נשאר מהיר גם עם אלפי הודעות
-  const summaries = await getRepo().getConversationSummaries();
-  return summaries.map(summaryToListItem);
+  const [summaries, pendingIds] = await Promise.all([getRepo().getConversationSummaries(), pendingReservationConvIds()]);
+  return summaries.map((s) => summaryToListItem(s, pendingIds));
 }
 
 /** חיפוש שיחות בכל הזמנים (לא מוגבל ל-300) לפי שם/טלפון/תוכן - מחזיר רק התאמות. */
 export async function searchConversations(query: string): Promise<ConversationListItem[]> {
-  const summaries = await getRepo().searchConversationSummaries(query, 50);
-  return summaries.map(summaryToListItem);
+  const [summaries, pendingIds] = await Promise.all([getRepo().searchConversationSummaries(query, 50), pendingReservationConvIds()]);
+  return summaries.map((s) => summaryToListItem(s, pendingIds));
 }
 
 /** כפתור כיבוי: האם הבוט פעיל */
