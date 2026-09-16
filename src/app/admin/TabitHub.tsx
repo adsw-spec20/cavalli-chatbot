@@ -35,6 +35,7 @@ export default function TabitHub({ token, agentName, isMaster }: { token: string
 
   // דופק הסוכן: אם ה-snapshot לא התעדכן הרבה זמן - פס אזהרה אדום בראש המסך
   // (הסוכן דוחף כל ~5 דק'; 15+ דק' = שלושה מחזורים שהוחמצו = כנראה נפל).
+  // נבדק כל 30 שנ' + מיד בכל חזרה לטאב - כדי שהפס יופיע לבד, בלי רענון (דווח 16.9).
   const [agentDownMin, setAgentDownMin] = useState<number | null>(null);
   useEffect(() => {
     let stop = false;
@@ -48,8 +49,10 @@ export default function TabitHub({ token, agentName, isMaster }: { token: string
     check();
     const t = setInterval(() => {
       if (document.visibilityState === "visible") check();
-    }, 60_000);
-    return () => { stop = true; clearInterval(t); };
+    }, 30_000);
+    const onWake = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onWake);
+    return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", onWake); };
   }, [token]);
   function pick(v: ViewKey) {
     setView(v);
@@ -61,7 +64,11 @@ export default function TabitHub({ token, agentName, isMaster }: { token: string
   return (
     <div className="space-y-4">
       {agentDownMin != null && (
-        <div className="rounded-xl bg-red-500/12 border-2 border-red-500/50 text-red-500 px-4 py-2.5 text-sm font-semibold flex items-center gap-2 flex-wrap">
+        // sticky: הפס נשאר צמוד לראש המסך גם כשגוללים למטה (רקע אטום כדי שלא ישקף תוכן)
+        <div
+          className="sticky top-0 z-30 rounded-xl border-2 border-red-500/60 text-red-600 px-4 py-2.5 text-sm font-semibold flex items-center gap-2 flex-wrap shadow-lg"
+          style={{ background: "color-mix(in srgb, #ef4444 10%, var(--bg))" }}
+        >
           <span aria-hidden>🔴</span>
           <span>
             הסוכן של טאביט לא מדווח כבר {agentDownMin >= 60 ? `${Math.floor(agentDownMin / 60)} ש' ו-${agentDownMin % 60} דק'` : `${agentDownMin} דק'`} -
