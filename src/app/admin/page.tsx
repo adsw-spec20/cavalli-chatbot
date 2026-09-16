@@ -312,6 +312,8 @@ export default function AdminPage() {
 
   const [tab, setTab] = useState<Tab>("inbox");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // סרגל צד מכווץ (אייקונים בלבד) - נוח באייפד; נשמר בין ביקורים
+  const [navCollapsed, setNavCollapsed] = useState(false);
   const [agentName, setAgentName] = useState("");
   const [notify, setNotify] = useState(false);
   const [voice, setVoice] = useState(false);
@@ -360,12 +362,14 @@ export default function AdminPage() {
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
     setAgentName(localStorage.getItem("agent_name") || "");
+    setNavCollapsed(localStorage.getItem("admin_nav_collapsed") === "1");
     setVoice(localStorage.getItem("admin_voice") === "1");
     setNotify(typeof Notification !== "undefined" && Notification.permission === "granted");
     if (!localStorage.getItem("admin_token")) setAuthed(false);
   }, []);
 
   useEffect(() => localStorage.setItem("agent_name", agentName), [agentName]);
+  useEffect(() => localStorage.setItem("admin_nav_collapsed", navCollapsed ? "1" : "0"), [navCollapsed]);
 
   // קישור ייעודי לכל מסך: הטאב נשמר ב-hash של הכתובת (למשל /admin#tabit),
   // כך שרענון או שיתוף קישור פותחים את אותו מסך. בלי ניתוב/עמודים חדשים - אפס סיכון.
@@ -907,7 +911,8 @@ export default function AdminPage() {
   // במובייל, כששיחה פתוחה - מסך שיחה מלא: בלי כותרת עליונה ובלי סרגל תחתון
   const conversationOpen = tab === "inbox" && !!selectedId;
 
-  const NavLinks = (
+  // collapsed=true: אייקונים בלבד (עם התגים), תוויות ב-title - למסכים צרים כמו אייפד
+  const renderNavLinks = (collapsed: boolean) => (
     <nav className="flex flex-col gap-0.5">
       {/* השאלון הגדול הוא כלי עבודה של המנהל הראשי בלבד (בקשה 29.8, למניעת
           בלבול עם "שאלות לצוות"); מוסתר גם כשהושלם */}
@@ -919,12 +924,17 @@ export default function AdminPage() {
         .filter((t) => !(t.key === "brain" && role !== "master"))
         .map((t) => {
         const active = tab === t.key;
+        const badge =
+          t.key === "inbox" ? attention : t.key === "knowledge" ? openQuestions : t.key === "reservations" ? pendingResv : 0;
         return (
           <button
             key={t.key}
             onClick={() => go(t.key)}
             aria-current={active ? "page" : undefined}
-            className={`relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-right ${
+            title={collapsed ? t.label : undefined}
+            className={`relative flex items-center rounded-xl text-sm text-right ${
+              collapsed ? "justify-center px-0 py-2.5" : "gap-2.5 px-3 py-2.5"
+            } ${
               active
                 ? "bg-[color-mix(in_srgb,var(--accent)_13%,transparent)] text-[var(--accent)] font-semibold"
                 : "text-[var(--muted)] hover:bg-[var(--panel2)] hover:text-[var(--text)]"
@@ -932,42 +942,41 @@ export default function AdminPage() {
           >
             {active && <span className="absolute right-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-[var(--accent)]" aria-hidden />}
             <TabIcon tab={t.key} />
-            <span className="flex-1">{t.label}</span>
-            {t.key === "inbox" && attention > 0 && (
-              <span className="text-[10px] font-bold rounded-full min-w-5 h-5 px-1 grid place-items-center bg-red-500 text-white">
-                {attention}
-              </span>
-            )}
-            {t.key === "knowledge" && openQuestions > 0 && (
-              <span className="text-[10px] font-bold rounded-full min-w-5 h-5 px-1 grid place-items-center bg-red-500 text-white">
-                {openQuestions}
-              </span>
-            )}
-            {t.key === "reservations" && pendingResv > 0 && (
-              <span className="text-[10px] font-bold rounded-full min-w-5 h-5 px-1 grid place-items-center bg-red-500 text-white">
-                {pendingResv}
-              </span>
-            )}
+            {!collapsed && <span className="flex-1">{t.label}</span>}
+            {badge > 0 &&
+              (collapsed ? (
+                <span className="absolute top-1 left-1.5 text-[9px] font-bold rounded-full min-w-4 h-4 px-0.5 grid place-items-center bg-red-500 text-white">
+                  {badge}
+                </span>
+              ) : (
+                <span className="text-[10px] font-bold rounded-full min-w-5 h-5 px-1 grid place-items-center bg-red-500 text-white">
+                  {badge}
+                </span>
+              ))}
           </button>
         );
       })}
     </nav>
   );
 
-  const SidebarFooter = (
+  const renderSidebarFooter = (collapsed: boolean) => (
     <div className="space-y-1.5 text-xs">
       <button
         onClick={toggleBot}
-        className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl font-medium ${botEnabled ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}
+        title={collapsed ? (botEnabled ? "בוט פעיל" : "בוט כבוי") : undefined}
+        className={`w-full flex items-center rounded-xl font-medium ${collapsed ? "justify-center px-0 py-2 text-base" : "gap-2 px-3 py-2"} ${
+          botEnabled ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
+        }`}
       >
-        {botEnabled ? "● בוט פעיל" : "○ בוט כבוי"}
+        {collapsed ? (botEnabled ? "●" : "○") : botEnabled ? "● בוט פעיל" : "○ בוט כבוי"}
       </button>
       <button
         onClick={logout}
-        className="w-full px-3 py-2 rounded-xl bg-[var(--panel2)] text-[var(--muted)] hover:text-red-400"
+        title={collapsed ? "התנתק" : undefined}
+        className={`w-full rounded-xl bg-[var(--panel2)] text-[var(--muted)] hover:text-red-400 ${collapsed ? "py-2 text-center" : "px-3 py-2"}`}
         aria-label="התנתקות מהפאנל"
       >
-        ⏻ התנתק
+        {collapsed ? "⏻" : "⏻ התנתק"}
       </button>
     </div>
   );
@@ -982,18 +991,24 @@ export default function AdminPage() {
     >
       <style dangerouslySetInnerHTML={{ __html: THEME_CSS }} />
 
-      {/* סרגל צד - דסקטופ */}
-      <aside className="hidden md:flex flex-col w-60 shrink-0 border-l border-[var(--border)] bg-[var(--panel)] p-3 gap-3 h-full">
-        <div className="flex items-center gap-2.5 px-1 pt-1.5 pb-2.5 border-b border-[var(--border)]">
+      {/* סרגל צד - דסקטופ/טאבלט. ניתן לכיווץ לאייקונים בלבד (נוח באייפד) */}
+      <aside
+        className={`hidden md:flex flex-col shrink-0 border-l border-[var(--border)] bg-[var(--panel)] gap-3 h-full transition-[width] duration-200 ${
+          navCollapsed ? "w-[64px] p-2" : "w-60 p-3"
+        }`}
+      >
+        <div className={`flex items-center border-b border-[var(--border)] ${navCollapsed ? "flex-col gap-2 pb-2.5 pt-1" : "gap-2.5 px-1 pt-1.5 pb-2.5"}`}>
           <BrandMark />
-          <div>
-            <div className={`font-bold leading-tight text-[15px] tracking-wide ${fontDisplay.className}`}>קפה קוואלי</div>
-            <div className="text-[10px] text-[var(--muted)] tracking-wider">פאנל ניהול ושירות</div>
-          </div>
+          {!navCollapsed && (
+            <div>
+              <div className={`font-bold leading-tight text-[15px] tracking-wide ${fontDisplay.className}`}>קפה קוואלי</div>
+              <div className="text-[10px] text-[var(--muted)] tracking-wider">פאנל ניהול ושירות</div>
+            </div>
+          )}
           <button
             onClick={manualRefresh}
             disabled={syncing}
-            className="ms-auto w-8 h-8 grid place-items-center rounded-xl text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel2)] disabled:opacity-70"
+            className={`w-8 h-8 grid place-items-center rounded-xl text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel2)] disabled:opacity-70 ${navCollapsed ? "" : "ms-auto"}`}
             aria-label="רענון נתונים"
             title="רענון נתונים"
           >
@@ -1004,8 +1019,16 @@ export default function AdminPage() {
             )}
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto">{NavLinks}</div>
-        {SidebarFooter}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">{renderNavLinks(navCollapsed)}</div>
+        <button
+          onClick={() => setNavCollapsed((c) => !c)}
+          title={navCollapsed ? "הרחבת התפריט" : "כיווץ התפריט לאייקונים"}
+          aria-label={navCollapsed ? "הרחבת התפריט" : "כיווץ התפריט"}
+          className="w-full py-1.5 rounded-xl text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel2)] text-sm"
+        >
+          {navCollapsed ? "«" : "»"}
+        </button>
+        {renderSidebarFooter(navCollapsed)}
       </aside>
 
       {/* מגירה - מובייל ("עוד") */}
@@ -1017,8 +1040,8 @@ export default function AdminPage() {
               <div className={`font-bold flex items-center gap-2 ${fontDisplay.className}`}><BrandMark size="w-7 h-7 text-sm" /> קפה קוואלי</div>
               <button onClick={() => setDrawerOpen(false)} className="text-[var(--muted)] text-xl w-9 h-9" aria-label="סגור תפריט">×</button>
             </div>
-            <div className="flex-1 overflow-y-auto">{NavLinks}</div>
-            {SidebarFooter}
+            <div className="flex-1 overflow-y-auto">{renderNavLinks(false)}</div>
+            {renderSidebarFooter(false)}
           </div>
         </div>
       )}
@@ -1084,7 +1107,7 @@ export default function AdminPage() {
           </header>
         )}
 
-        <main className={`flex-1 min-h-0 ${tab === "inbox" ? "overflow-hidden p-0 md:p-4" : "overflow-y-auto p-3 md:p-5"}`}>
+        <main className={`flex-1 min-h-0 ${tab === "inbox" ? "overflow-hidden p-0 lg:p-4" : "overflow-y-auto p-3 md:p-5"}`}>
           {tab === "inbox" && (
             <Inbox
               token={token}

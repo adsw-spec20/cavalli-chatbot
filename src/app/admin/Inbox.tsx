@@ -885,10 +885,12 @@ export default function Inbox({
   /* ============================== רינדור ============================== */
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-[340px_minmax(0,1fr)] md:gap-4 h-full">
+    // שני פאנלים זה-לצד-זה רק מ-lg (1024px+): באייפד לאורך (820) שני פאנלים
+    // נמחצים - מתחת ל-lg שיחה פתוחה תופסת את כל הרוחב, כמו במובייל (דווח 16.9)
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] lg:gap-4 h-full">
       {/* ===== רשימת שיחות ===== */}
       <aside
-        className={`${selectedId ? "hidden md:flex" : "flex"} flex-col bg-[var(--panel)] md:border border-[var(--border)] md:rounded-2xl overflow-hidden min-h-0`}
+        className={`${selectedId ? "hidden lg:flex" : "flex"} flex-col bg-[var(--panel)] lg:border border-[var(--border)] lg:rounded-2xl overflow-hidden min-h-0`}
       >
         {/* בר התראה: לקוח כתב בשיחה שנציג לקח - הבוט שותק שם, ואם אף אחד לא שם לב
             הלקוח נשאר בלי מענה. ✕ מעלים עד שתגיע הודעה חדשה יותר (טיפול מתמשך). */}
@@ -1055,7 +1057,7 @@ export default function Inbox({
 
       {/* ===== שיחה ===== */}
       <section
-        className={`${selectedId ? "flex" : "hidden md:flex"} flex-col bg-[var(--panel)] md:border border-[var(--border)] md:rounded-2xl overflow-hidden min-h-0`}
+        className={`${selectedId ? "flex" : "hidden lg:flex"} flex-col bg-[var(--panel)] lg:border border-[var(--border)] lg:rounded-2xl overflow-hidden min-h-0`}
       >
         {!conv && !selectedId && (
           <div className="flex-1 grid place-items-center text-[var(--muted)] text-sm p-8 text-center">
@@ -1074,7 +1076,7 @@ export default function Inbox({
                   <div className="p-2 md:p-3 flex items-center gap-2">
                     <button
                       onClick={backToList}
-                      className="md:hidden shrink-0 w-11 h-11 grid place-items-center rounded-xl text-[var(--text)] hover:bg-[var(--panel2)] text-xl"
+                      className="lg:hidden shrink-0 w-11 h-11 grid place-items-center rounded-xl text-[var(--text)] hover:bg-[var(--panel2)] text-xl"
                       aria-label="חזרה לרשימת השיחות"
                     >
                       →
@@ -1102,7 +1104,7 @@ export default function Inbox({
               <div className="p-2 md:p-3 flex items-center gap-1.5">
                 <button
                   onClick={backToList}
-                  className="md:hidden shrink-0 w-11 h-11 grid place-items-center rounded-xl text-[var(--text)] hover:bg-[var(--panel2)] text-xl"
+                  className="lg:hidden shrink-0 w-11 h-11 grid place-items-center rounded-xl text-[var(--text)] hover:bg-[var(--panel2)] text-xl"
                   aria-label="חזרה לרשימת השיחות"
                 >
                   →
@@ -1146,6 +1148,15 @@ export default function Inbox({
                       פתח מחדש
                     </button>
                   )}
+                  {/* סגירת חלון השיחה בלבד (בדסקטופ; מתחת ל-lg יש חץ חזרה) - השיחה לא נסגרת */}
+                  <button
+                    onClick={backToList}
+                    title="סגירת החלון (השיחה עצמה נשארת כמו שהיא)"
+                    aria-label="סגירת חלון השיחה"
+                    className="hidden lg:grid w-9 min-h-9 place-items-center rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel2)] text-base"
+                  >
+                    ✕
+                  </button>
                 </div>
               </div>
             </header>
