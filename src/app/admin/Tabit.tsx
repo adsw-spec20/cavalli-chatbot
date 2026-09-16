@@ -365,6 +365,29 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
     }
   }
 
+  // שליחת תזכורת ישירות משורת "חסר פיקדון" - אותה התנהגות בדיוק כמו
+  // כפתור הפיקדון בתיבת הפניות: אישור דו-שלבי, "נשלח ✓", ו"שלח שוב".
+  const [rowConfirmId, setRowConfirmId] = useState<string | null>(null);
+  const [rowSendingId, setRowSendingId] = useState<string | null>(null);
+  const [rowSent, setRowSent] = useState<Record<string, "ok" | string>>({});
+
+  async function sendRowReminder(r: TabitReservation) {
+    if (!r.depositLink) return;
+    setRowSendingId(r.id);
+    try {
+      await api(token, "/tabit/send-deposit-reminder", {
+        method: "POST",
+        body: JSON.stringify({ phone: r.phone, link: r.depositLink, name: r.name, agentName, reservationId: r.id }),
+      });
+      setRowSent((s) => ({ ...s, [r.id]: "ok" }));
+    } catch (e) {
+      setRowSent((s) => ({ ...s, [r.id]: e instanceof Error ? e.message : "השליחה נכשלה" }));
+    } finally {
+      setRowSendingId(null);
+      setRowConfirmId(null);
+    }
+  }
+
   const reservations = useMemo(
     () => (snapshot?.reservations ?? []).filter((r) => r.state !== "cancelled"),
     [snapshot]
@@ -645,23 +668,55 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
               <div className="text-sm text-[var(--muted)] text-center py-4">כל ההזמנות ביום הזה עם פיקדון מובטח 🎉</div>
             ) : (
               <div className="rounded-xl border border-red-500/25 overflow-hidden divide-y divide-[var(--border)]">
-                {dayMissing.map((r) => (
-                  <div key={r.id} onClick={() => openRes(r)} className="px-3.5 py-2.5 text-sm space-y-1.5 cursor-pointer hover:bg-[var(--panel2)] transition">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <b className="font-display" style={{ fontVariantNumeric: "tabular-nums" }}>{r.time}</b>
-                      <span className="font-semibold" style={{ fontVariantNumeric: "tabular-nums" }}>· {r.seats} סועדים</span>
-                      <span className="truncate">· {r.name}</span>
-                      {r.tables.length > 0 && <span className="text-xs text-[var(--muted)]">· שולחן {r.tables.join(", ")}</span>}
-                      {r.reminderSentAt && (
-                        <span className="text-[10px] text-amber-500 mr-auto shrink-0">💳 תזכורת · {fmtSentAt(r.reminderSentAt)}</span>
-                      )}
+                {dayMissing.map((r) => {
+                  const state = rowSent[r.id];
+                  const isConfirming = rowConfirmId === r.id;
+                  return (
+                    <div key={r.id} onClick={() => openRes(r)} className="px-3.5 py-2.5 text-sm space-y-1.5 cursor-pointer hover:bg-[var(--panel2)] transition">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <b className="font-display" style={{ fontVariantNumeric: "tabular-nums" }}>{r.time}</b>
+                        <span className="font-semibold" style={{ fontVariantNumeric: "tabular-nums" }}>· {r.seats} סועדים</span>
+                        <span className="truncate">· {r.name}</span>
+                        {r.tables.length > 0 && <span className="text-xs text-[var(--muted)]">· שולחן {r.tables.join(", ")}</span>}
+                        <span className="mr-auto shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {state === "ok" ? (
+                            <span className="text-xs text-emerald-400 font-semibold">נשלח ✓</span>
+                          ) : isConfirming ? (
+                            <span className="inline-flex gap-1">
+                              <button
+                                onClick={() => sendRowReminder(r)}
+                                disabled={rowSendingId === r.id}
+                                className="text-xs font-semibold rounded-lg px-2.5 py-1 bg-[var(--accent)] text-[var(--accent-fg)] disabled:opacity-50"
+                              >
+                                {rowSendingId === r.id ? "שולח…" : "כן, שלח"}
+                              </button>
+                              <button onClick={() => setRowConfirmId(null)} className="text-xs rounded-lg px-2 py-1 border border-[var(--border)] text-[var(--muted)]">
+                                לא
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => setRowConfirmId(r.id)}
+                              disabled={!r.depositLink}
+                              title={r.depositLink ? "שלח תזכורת פיקדון בוואטסאפ" : "אין קישור פיקדון (הפעל מחדש את הסוכן)"}
+                              className="text-xs rounded-lg px-2.5 py-1 border border-[var(--border)] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-40"
+                            >
+                              {r.reminderSentAt ? "💳 שלח שוב" : "💳 שלח"}
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                        <PhoneActions phone={r.phone} />
+                        {r.reminderSentAt && (
+                          <span className="text-[10px] text-amber-500">💳 נשלחה תזכורת · {fmtSentAt(r.reminderSentAt)}</span>
+                        )}
+                      </div>
+                      {typeof state === "string" && state !== "ok" && <div className="text-[11px] text-red-400">⚠ {state}</div>}
+                      {r.notes && <NotesLine notes={r.notes} />}
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                      <PhoneActions phone={r.phone} />
-                    </div>
-                    {r.notes && <NotesLine notes={r.notes} />}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             {otherDaysMissing > 0 && (
