@@ -512,8 +512,10 @@ export default function AdminPage() {
   }, [authed]);
 
   // פתיחת צ'אט דוחפת רשומת היסטוריה - שמחוות "אחורה" תסגור את הצ'אט במקום
-  // לצאת מהאתר. סגירה מכפתור החזרה (לא ממחווה) צורכת את הרשומה בעצמה
-  // (history.back), כך שההיסטוריה נשארת נקייה והחלקה הבאה מתנהגת רגיל.
+  // לצאת מהאתר. סגירה מכפתור/מעבר לשונית רק מנטרלת את המגן - בלי history.back():
+  // הניווט אחורה היה מחזיר hash ישן מהרשומה הקודמת, ומאזין ה-hashchange של
+  // הלשוניות הקפיץ בחזרה ללשונית הקודמת + תחושת "רענון" (דווח 16.9).
+  // הרשומה העודפת לא מזיקה - מחוות אחורה הבאה נבלעת ממילא על ידי מגן הבסיס.
   useEffect(() => {
     const open = tab === "inbox" && !!selectedId;
     if (open && !convShieldArmed.current) {
@@ -521,8 +523,6 @@ export default function AdminPage() {
       window.history.pushState({ cavalliConv: true }, "");
     } else if (!open && convShieldArmed.current) {
       convShieldArmed.current = false;
-      expectOwnPop.current = true;
-      window.history.back();
     }
   }, [tab, selectedId]);
 
