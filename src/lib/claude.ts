@@ -83,6 +83,10 @@ export interface GenerateOptions {
   /** תוצאת חיפוש ההזמנה ביומן טאביט (מאומתת בקוד). נשלחת בתוך ההודעה האחרונה
       ולא כבלוק מערכת - היא משתנה בכל תור וכבלוק הייתה פוסלת את מטמון ההיסטוריה. */
   tabitLookup?: string;
+  /** פענוח "היום"/"מחר" לפי מועד כתיבת ההודעה, ושער העמימות שאחרי חצות */
+  dayContext?: string;
+  /** פתוח/סגור עכשיו והושבה אחרונה - מחושב בקוד, כי המודל טעה בזה */
+  openState?: string;
   /** פענוח שעות חשופות ("at 10" ב-21:00 = 22:00) - נשלח באותה שורת הקשר */
   timeHint?: string;
 }
@@ -315,6 +319,8 @@ export async function generateReply(
   const lastIdx = reqMessages.length - 1;
   if (lastIdx >= 0 && reqMessages[lastIdx].role === "user") {
     const ctx = [`השעה בישראל כעת: ${israelDateTime()}`];
+    if (options.openState) ctx.push(options.openState);
+    if (options.dayContext) ctx.push(options.dayContext);
     if (options.timeHint) ctx.push(options.timeHint);
     if (options.reservationSlots) ctx.push(options.reservationSlots);
     if (options.tabitLookup) ctx.push(options.tabitLookup);

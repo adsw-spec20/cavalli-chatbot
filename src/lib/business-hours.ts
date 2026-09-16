@@ -5,6 +5,7 @@
  */
 
 import type { BusinessConfig } from "./business-config";
+import { israelPartsAt, addDaysISO, formatDayHe } from "./day-context";
 
 const EN_TO_HE_DAY: Record<string, string> = {
   Sunday: "ראשון",
@@ -165,4 +166,90 @@ export function isWithinGateWindow(
     hoursForDate(config, yesterdayISO),
     bufferMin
   );
+}
+
+// ============================================================================
+//  מצב המסעדה כרגע - מחושב בקוד ומוזרק לבוט (17.9)
+// ============================================================================
+//
+// למה: ב-00:03 הבוט כתב ללקוח "בא לך לבוא? פתוחים עד חצות", שלוש דקות אחרי
+// שנסגרנו. הוא קיבל רק את השעה ואת טבלת השעות, וחישב בעצמו - וזה בדיוק מה
+// שיש לנו כלל ברזל נגדו במקומות אחרים. מכאן והלאה הוא מקבל תשובה מוכנה.
+
+/** שעת ההושבה האחרונה לתאריך נתון, או null אם לא הוגדרה לאותו יום. */
+export function lastSeatingForDate(config: BusinessConfig, dateISO: string): string | null {
+  const override = config.hoursOverrides?.find((o) => o.date === dateISO);
+  if (override && override.lastSeating !== undefined) return override.lastSeating;
+  const [y, mo, d] = dateISO.split("-").map(Number);
+  const weekday = HE_DAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+  return config.hours.find((h) => h.day === weekday)?.lastSeating ?? null;
+}
+
+export interface OpenState {
+  open: boolean;
+  /** שעות היום הנוכחי, או null כשסגור לגמרי */
+  hoursToday: string | null;
+  lastSeating: string | null;
+  /** פתוח, אבל ההושבה האחרונה כבר עברה - אסור להזמין מישהו להגיע */
+  pastLastSeating: boolean;
+  /** מתי נפתחים שוב, לתיאור אנושי. null אם לא נמצא בשבוע הקרוב. */
+  nextOpening: string | null;
+}
+
+/** מצב המסעדה ברגע נתון. מקבל חותמת זמן (ולא קורא לשעון) כדי שיהיה ניתן לבדיקה. */
+export function openStateAt(config: BusinessConfig, nowMs: number): OpenState {
+  const { dateISO, minutes } = israelPartsAt(nowMs);
+  const hoursToday = hoursForDate(config, dateISO);
+  const range = parseHoursRange(hoursToday);
+  const lastSeating = lastSeatingForDate(config, dateISO);
+  const lastSeatMin = lastSeating ? toMinutes(lastSeating) : null;
+
+  const open = !!range && minutes >= range.start && minutes < range.end;
+  const pastLastSeating = open && lastSeatMin != null && minutes >= lastSeatMin;
+
+  // הפתיחה הבאה: היום אם עוד לא נפתחנו, אחרת היום הבא שיש בו שעות.
+  // ⚠️ אחרי חצות זה עדיין "היום" - הסגירה ב-00:00 שייכת ליום שעבר.
+  let nextOpening: string | null = null;
+  for (let i = 0; i < 8; i++) {
+    const iso = addDaysISO(dateISO, i);
+    const r = parseHoursRange(hoursForDate(config, iso));
+    if (!r) continue;
+    if (i === 0 && minutes >= r.start) continue;
+    const at = `${String(Math.floor(r.start / 60)).padStart(2, "0")}:${String(r.start % 60).padStart(2, "0")}`;
+    nextOpening = i === 0 ? `היום ב-${at}` : `${formatDayHe(iso)} ב-${at}`;
+    break;
+  }
+
+  return { open, hoursToday, lastSeating, pastLastSeating, nextOpening };
+}
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+/**
+ * השורה שנשלחת למודל. מנוסחת כהוראה ולא כנתון, כי המודל נוטה "להבין לבד"
+ * משעות הפתיחה - וטעה בדיוק בזה.
+ */
+export function openStateLine(config: BusinessConfig, nowMs: number): string {
+  const s = openStateAt(config, nowMs);
+  const parts: string[] = [
+    `מצב המסעדה כרגע, מחושב בקוד (אל תסיק בעצמך משעות הפתיחה): **${s.open ? "פתוח" : "סגור"}**`,
+  ];
+  parts.push(s.hoursToday ? `שעות היום: ${s.hoursToday}` : "היום סגורים לגמרי");
+  if (s.open && s.lastSeating) {
+    parts.push(
+      s.pastLastSeating
+        ? `⚠️ ההושבה האחרונה היום היא ${s.lastSeating} והיא כבר עברה - **אסור להזמין אף אחד להגיע עכשיו**`
+        : `ההושבה האחרונה היום: ${s.lastSeating}`
+    );
+  }
+  if (!s.open) {
+    parts.push(
+      `**אסור להזמין את הלקוח להגיע עכשיו ואסור לומר "פתוחים עד..." בלשון הווה.**` +
+        (s.nextOpening ? ` אם רלוונטי, אמור מתי נפתחים שוב: ${s.nextOpening}.` : "")
+    );
+  }
+  return parts.join(". ") + ".";
 }

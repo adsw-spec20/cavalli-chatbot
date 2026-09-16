@@ -24,8 +24,9 @@ import {
 import { checkReservationAvailability } from "./reservation-availability";
 import { bareHourHint } from "./time-hints";
 import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint } from "./reservation-slots";
-import { isOpenNow, israelDateISO, effectiveHoursToday, isWithinGateWindow } from "./business-hours";
+import { isOpenNow, israelDateISO, effectiveHoursToday, isWithinGateWindow, openStateLine } from "./business-hours";
 import { tabitIdentityHint } from "./tabit-lookup";
+import { dayHintForMessage, relativeWordsIn, hasExplicitDate, inMidnightWindow } from "./day-context";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
 import { contactPhonesText, type BusinessConfig } from "./business-config";
@@ -551,8 +552,12 @@ const ACK_RX = new RegExp(
   `^((אוקי+|טוב|יפי|מעולה|אחלה|סבבה|רב|המון|יאללה)[,!.\\s]+)*` +
     `(תודה|תוגה|תודות|תודהה+)( רבה| רבות)?( לך| לכם| מראש| מקרב לב)?` +
     `[!.,\\s${ACK_EMOJI}]*$` +
-    // אישור חשוף בלי "תודה" ("אוקיי", "אוקי.", "סבבה") - ההודעה כולה היא המילה
-    `|^(אוקי+|סבבה|אחלה|יאללה|מעולה)[!.,\\s${ACK_EMOJI}]*$` +
+    // אישור חשוף בלי "תודה" ("אוקיי", "אוקי.", "סבבה") - ההודעה כולה היא המילה.
+    // הורחב 17.9: "טוב" לא היה ברשימה, ולכן "טוב" אחרי העברת הזמנה לצוות הלך
+    // למודל - והוא ענה "נתראה הערב!" על הזמנה שעוד לא אושרה.
+    // ⚠️ "סגור" לא נכנס בכוונה: הוא מתנגש במשמעות העסקית ("אתם סגור?").
+    `|^(אוקי+|סבבה|אחלה|יאללה|מעולה|טוב|בסדר|מושלם|מצוין|נהדר|ברור|קיבלתי|הבנתי|תותח|פצצה)[!.,\\s${ACK_EMOJI}]*$` +
+    `|^(great|cool|perfect|got it|sounds good|no problem)[!.,\\s${ACK_EMOJI}]*$` +
     // אנגלית: "thanks", "thank you", "noted thank you", "ok thanks"
     `|^(ok(ay)?[,!.\\s]+)?(noted[,!.\\s]*)?(thanks?( you)?|thank you)[!.,\\s${ACK_EMOJI}]*$` +
     // אימוג'י בלבד
@@ -566,6 +571,50 @@ const ACK_REPLIES = ["בשמחה! 🙂", "בכיף! מחכים לכם ☕", "ת�
  * שני מפתחות = הלקוח לחץ על שני כפתורים שונים ברצף (מוזגו לצרור) - עונים על שניהם בחינם.
  */
 /** מיוצא לצורך בדיקה אופליין (scripts/canned-audit.mts) - לא בשימוש בזמן ריצה מחוץ לקובץ. */
+/**
+ * האם זו באמת לחיצה כפולה - כלומר מגיע "עניתי ממש כאן למעלה" ולא תשובה מלאה.
+ *
+ * שני תנאים: אותו טקסט בדיוק (אחרי נרמול) שהוביל לאותה תבנית, בתוך שלוש דקות,
+ * **ובאותו פרק של השיחה**.
+ *
+ * ⚠️ הפרק הוא העיקר כאן. שיחה שנסגרה ונפתחה מחדש ממשיכה באותו חלון במכוון,
+ * ולכן ההיסטוריה של הפרק הקודם עדיין מולנו - אבל מבחינת הלקוח זו שיחה חדשה
+ * ואין שום "למעלה" שהוא רואה. בלי הגבול הזה "היי" של שיחה חדשה קיבל
+ * "עניתי ממש כאן למעלה 🙂👆" (קרה בפועל 17.9).
+ *
+ * מיוצא לצורך בדיקה (scripts/episode-guard-test.mts) - לא בשימוש מחוץ לקובץ.
+ */
+export function isDoubleTap(opts: {
+  stored: Array<{ role: string; content: string; ts: number; meta?: Record<string, unknown> }>;
+  lastUserTurn: string;
+  cannedKey: string;
+  /** מתי נפתח הפרק הנוכחי (הפתיחה-מחדש האחרונה). 0 = השיחה מעולם לא נסגרה. */
+  episodeStartTs: number;
+  now: number;
+}): boolean {
+  const { stored, lastUserTurn, cannedKey, episodeStartTs, now } = opts;
+  // תלונה או "שוב" מקבלות תמיד תשובה מלאה - הלקוח אומר לנו שמשהו לא עבד
+  const complaintRx = /לא (עובד|נפתח|הגיע|קיבלתי|רואה|כתוב|מופיע|הבנתי)|שוב|עוד פעם|תקלה|בעיה/;
+  if (complaintRx.test(lastUserTurn)) return false;
+
+  const collapsed = normalizeQ(
+    [...new Set(lastUserTurn.split("\n").map((s) => s.trim()).filter(Boolean))].join(" ")
+  );
+  for (let i = stored.length - 1; i >= 0; i--) {
+    const m = stored[i];
+    if (m.ts <= episodeStartTs) return false;
+    if (m.role === "assistant" && m.meta?.canned === cannedKey && now - m.ts < 3 * 60_000) {
+      // ההודעה של הלקוח שהובילה לתשובה ההיא חייבת להיות זהה להודעה הנוכחית
+      for (let j = i - 1; j >= 0; j--) {
+        if (stored[j].ts <= episodeStartTs) return false;
+        if (stored[j].role === "user") return normalizeQ(stored[j].content) === collapsed;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
 export function matchQuickAnswers(raw: string): string[] {
   // לחיצות כפולות על אותו כפתור מגיעות כשורות זהות - מאחדים לפני הבדיקה
   const lines = [...new Set(raw.split("\n").map((s) => s.trim()).filter(Boolean))];
@@ -1458,6 +1507,37 @@ export async function handleIncomingMessage(
   // ----- תשובות מהירות (בלי מודל = חינם): תבניות + ידע נלמד + מחירי תפריט -----
   // עובד גם בהודעה הראשונה בשיחה: שוזרים את גילוי ה-AI (דרישת Meta) לפני התבנית.
   const lastUserTurn = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+
+  // ----- גבול הפרק הנוכחי (17.9) -----
+  // השיחה היא חלון מתמשך אחד לכל לקוח: מי שסוגר וחוזר נפתח מחדש **באותו חלון**
+  // (ראה הטיפול ב-status "closed" למעלה), כדי שכל ההיסטוריה שלו תהיה במקום אחד
+  // בפאנל. המחיר: כל מעקה ש"זוכר" מה כבר קרה חייב לעצור בגבול הזה, אחרת הוא
+  // מגיב על פרק שהלקוח כבר סגר. זה מה שגרם ל"עניתי ממש כאן למעלה 🙂👆" בתגובה
+  // ל"היי" של שיחה חדשה לגמרי.
+  const episodeStartTs = stored.reduce(
+    (acc, m) => (m.role === "system" && m.meta?.reopened && m.ts > acc ? m.ts : acc),
+    0
+  );
+
+  // ----- פענוח מילות הזמן בהודעת הלקוח (17.9) -----
+  // נפתר לפי **מתי הלקוח כתב**, לא מתי אנחנו עונים: לקוח כתב "מחר" ב-23:30,
+  // הבוט נפל, וכשהשיחה חזרה אליו ב-00:05 הוא קרא את זה כיום הבא. ראה day-context.ts.
+  const episodeUserMsgs = stored.filter((m) => m.role === "user" && m.ts >= episodeStartTs).slice(-6);
+  const isRiskyMidnight = (m: { content: string; ts: number }) =>
+    inMidnightWindow(m.ts) && !hasExplicitDate(m.content) && relativeWordsIn(m.content).some((w) => w.riskyAfterMidnight);
+  const dayAnchor = [...episodeUserMsgs].reverse().find((m) => relativeWordsIn(m.content).length > 0);
+  // מפסיקים לשאול בשני מקרים: כבר שאלנו פעם אחת בפרק הזה, או שהלקוח כבר ענה
+  // לנו עם יום/תאריך מפורש. בלי השני, לקוח ששאלנו אותו "היום או מחר?" וענה
+  // "חמישי" היה נשאל שוב - כי "חמישי" אינה מילת זמן יחסית והעוגן לא התקדם.
+  const answeredSinceAnchor = dayAnchor
+    ? episodeUserMsgs.some((msg) => msg.ts > dayAnchor.ts && hasExplicitDate(msg.content))
+    : false;
+  const midnightAlreadyAsked =
+    answeredSinceAnchor || episodeUserMsgs.filter(isRiskyMidnight).length >= 2;
+  const dayHint = dayAnchor
+    ? dayHintForMessage(dayAnchor.content, dayAnchor.ts, Date.now(), midnightAlreadyAsked)
+    : null;
+
   const quickKeys = matchQuickAnswers(lastUserTurn);
   const kbHit = quickKeys.length ? null : matchLearnedAnswer(lastUserTurn, freeQAs);
 
@@ -1636,8 +1716,10 @@ export async function handleIncomingMessage(
   // שיודע לענות על הכל ולהסלים כשצריך.
   // (נמצא בביקורת 3.9: "התלוננתי אתמול ואף אחד לא חזר אליי, מה שעות הפעילות?"
   //  קיבל את טבלת השעות בלבד, בלי מילה על התלונה.)
+  // 17.9: גם עמימות חצות מחייבת מודל. "אתם פתוחים מחר?" ב-00:04 היה נענה
+  // בתבנית השעות בלי לברר על איזה יום מדובר - ותשובה קבועה לא יודעת לשאול.
   const forceModelReply =
-    COMPLAINT_RX.test(lastUserTurn) || hasSecondAsk(lastUserTurn);
+    COMPLAINT_RX.test(lastUserTurn) || hasSecondAsk(lastUserTurn) || dayHint?.needsConfirm === true;
 
   if (!forceModelReply) {
     const cfg = cfgEarly;
@@ -1707,7 +1789,15 @@ export async function handleIncomingMessage(
       // הזמנה שכבר הועברה לצוות: "תודה" הוא סיום אמיתי, אבל אסור שהסגירה תישמע
       // כאילו יש אישור ("נתראה ביום שלישי" - קרה בבדיקה 24.8). תשובה קבועה
       // ובטוחה, גם חוסכת תור מודל בסוף כל הזמנה.
-      const handedOff = /מעביר את הבקשה לצוות|יבדקו שיש מקום|passed your request/i.test(la);
+      // ⚠️ הזיהוי הזה היה מבוסס **רק** על חיפוש מחרוזת בהודעה הקודמת של הבוט,
+      // וזה שביר: די בכך שהמודל ינסח אחרת כדי שהמעקה ייעלם. המצב האמיתי יושב
+      // במסד - יש בקשת הזמנה ממתינה על השיחה הזאת - ולכן שואלים אותו ישירות,
+      // והמחרוזת נשארת רק כרשת נוספת (למשל בקשת שינוי, שלא פותחת כרטיס הזמנה).
+      const pendingReservation = await loadReservations()
+        .then((all) => all.some((r) => r.status === "pending" && r.conversationId === conversation.id))
+        .catch(() => false);
+      const handedOff =
+        pendingReservation || /מעביר את הבקשה לצוות|יבדקו שיש מקום|passed your request/i.test(la);
       if (handedOff) {
         built = "בשמחה! 🙂 נעדכן אותך כאן ברגע שהצוות יבדוק שיש מקום.";
         cannedKey = "ack-reservation";
@@ -1723,26 +1813,7 @@ export async function handleIncomingMessage(
       // קירור חכם: "עניתי ממש כאן למעלה" רק על לחיצה כפולה אמיתית - אותו טקסט בדיוק
       // (אחרי נרמול) כמו ההודעה שהובילה לאותה תשובה, בתוך 3 דקות. ניסוח מחדש,
       // שאלה שונה או תלונה ("הסרטון לא נפתח") תמיד מקבלים תשובה מלאה.
-      const complaintRx = /לא (עובד|נפתח|הגיע|קיבלתי|רואה|כתוב|מופיע|הבנתי)|שוב|עוד פעם|תקלה|בעיה/;
-      let repeat = false;
-      if (!complaintRx.test(lastUserTurn)) {
-        const collapsed = normalizeQ(
-          [...new Set(lastUserTurn.split("\n").map((s) => s.trim()).filter(Boolean))].join(" ")
-        );
-        for (let i = stored.length - 1; i >= 0; i--) {
-          const m = stored[i];
-          if (m.role === "assistant" && m.meta?.canned === cannedKey && Date.now() - m.ts < 3 * 60_000) {
-            // ההודעה של הלקוח שהובילה לתשובה ההיא חייבת להיות זהה להודעה הנוכחית
-            for (let j = i - 1; j >= 0; j--) {
-              if (stored[j].role === "user") {
-                repeat = normalizeQ(stored[j].content) === collapsed;
-                break;
-              }
-            }
-            break;
-          }
-        }
-      }
+      const repeat = isDoubleTap({ stored, lastUserTurn, cannedKey, episodeStartTs, now: Date.now() });
       let canned = repeat
         ? cannedLang === "en"
           ? "Just answered right above 🙂👆"
@@ -1905,6 +1976,8 @@ export async function handleIncomingMessage(
         activeReservations,
         tabitLookup,
         reservationSlots,
+        dayContext: dayHint?.line,
+        openState: openStateLine(cfgEarly, Date.now()),
         // פענוח שעות חשופות בקוד ("at 10" בתשע בערב = 22:00) - תקרית Mike 24.8
         timeHint: bareHourHint(lastUserTurn) ?? undefined,
       });
@@ -2360,11 +2433,7 @@ export async function handleIncomingMessage(
     // מדיה שכבר נשלחה "בפרק הנוכחי" של השיחה: מאז הפתיחה-מחדש האחרונה, ולכל
     // היותר 14 יום אחורה. השיחה היא כעת חלון מתמשך אחד לכל לקוח, ולקוח שחוזר
     // אחרי חודש ושואל שוב על החניה צריך לקבל את הסרטון שוב - לא חסימת "כבר נשלח".
-    const lastReopenTs = stored.reduce(
-      (acc, m) => (m.role === "system" && m.meta?.reopened && m.ts > acc ? m.ts : acc),
-      0
-    );
-    const mediaDedupSince = Math.max(lastReopenTs, Date.now() - 14 * 86_400_000);
+    const mediaDedupSince = Math.max(episodeStartTs, Date.now() - 14 * 86_400_000);
     const alreadySent = new Set<string>(
       stored
         .filter((m) => m.ts >= mediaDedupSince)

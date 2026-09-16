@@ -3,6 +3,13 @@ import { runCommand, type TabitAction } from "./tabit-queue";
 import { recordLlmUsage } from "./usage";
 import { loadBusinessConfig } from "./business-config-store";
 import {
+  renderReservationList,
+  filterByTimeRange,
+  scopeNoteFor,
+  type TabitResRow,
+} from "./tabit-format";
+import { labDayHint, relativeWordsIn, hasExplicitDate } from "./day-context";
+import {
   calendarBlock, hoursBlock, checkOpenAt, resolveDayISO, weekdayHe, todayIL,
   loadSnapshot, snapshotAgeMinutes, filterRows, rowOut, type LabResRow,
 } from "./tabit-lab-smart";
@@ -28,8 +35,8 @@ function israelNow(): string {
 
 const TOOLS: Anthropic.Tool[] = [
   { name: "tabit_health", description: "בדוק את החיבור לטאביט: טוען נתונים ומחזיר כמה הזמנות נטענו וגרסת שרת. השתמש כשמבקשים לוודא שהחיבור עובד.", input_schema: { type: "object", properties: {} } },
-  { name: "tabit_read_day", description: "קרא את ההזמנות של יום מסוים מטאביט. day = \"today\" | \"tomorrow\" | \"yesterday\" | \"YYYY-MM-DD\". ימי עבר נקראים מהארכיון אוטומטית.", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
-  { name: "tabit_big_tables", description: "שולחנות גדולים ליום - הרשימה **מסוננת, ממוינת וספורה בקוד** (לא על ידך). ברירת מחדל 8+ סועדים (אפשר min אחר). מחזיר count, covers, missing_deposit והרשימה עצמה - מוכנים. זה הכלי הנכון לכל שאלה על 'שולחנות/הזמנות גדולות'. אל תסנן/תספור בעצמך, קח את מה שחוזר. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" }, min: { type: "number" } }, required: ["day"] } },
+  { name: "tabit_read_day", description: "קרא את ההזמנות של יום מסוים מטאביט. day = \"today\" | \"tomorrow\" | \"yesterday\" | \"YYYY-MM-DD\". ימי עבר נקראים מהארכיון אוטומטית. **from/to (HH:MM) מסננים טווח שעות בקוד** - \"מהשעה 17:00\" = from \"17:00\" בלי to. הכלי מחזיר גם שדה rendered: הרשימה המלאה בפורמט מוכן להדבקה.", input_schema: { type: "object", properties: { day: { type: "string" }, from: { type: "string", description: "HH:MM - כולל והלאה" }, to: { type: "string", description: "HH:MM - עד וכולל" } }, required: ["day"] } },
+  { name: "tabit_big_tables", description: "שולחנות גדולים ליום - הרשימה **מסוננת, ממוינת וספורה בקוד** (לא על ידך). ברירת מחדל 8+ סועדים (אפשר min אחר). מחזיר count, covers, missing_deposit והרשימה עצמה - מוכנים. זה הכלי הנכון לכל שאלה על 'שולחנות/הזמנות גדולות'. אל תסנן/תספור בעצמך, קח את מה שחוזר. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" }, min: { type: "number" }, from: { type: "string" }, to: { type: "string" } }, required: ["day"] } },
   { name: "tabit_covers_summary", description: "כמה אנשים (סה\"כ סועדים) וכמה הזמנות יש ביום, אופציונלית בטווח שעות. from/to בפורמט HH:MM (ערב = from \"18:00\"; צהריים = to \"18:00\"). מחזיר count ו-covers מחושבים בקוד - קח אותם כמו שהם, אל תסכם בעצמך. השתמש בזה לכל שאלת 'כמה אנשים/מוזמנים' (בשעה/בערב/בטווח).", input_schema: { type: "object", properties: { day: { type: "string" }, from: { type: "string" }, to: { type: "string" } }, required: ["day"] } },
   { name: "tabit_deposit_summary", description: "סיכום פיקדונות ליום: כמה מובטחים וכמה חסרים, ורשימת החסרים. day כמו ב-read_day.", input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
   { name: "tabit_get_deposit_link", description: "שלוף את קישור הפיקדון של הזמנה לפי reservationId.", input_schema: { type: "object", properties: { reservationId: { type: "string" } }, required: ["reservationId"] } },
@@ -96,10 +103,14 @@ const SYSTEM = `אתה עוזר פנימי של החיבור למערכת ההז
 2. יצירת הזמנה - אסוף את הפרטים: שם, טלפון, מספר סועדים, תאריך, שעה, **בפנים או בחוץ** (seating: inside/outside; אם אומרים "בר" - אמור שזה לא נתמך כרגע ובקש פנים/חוץ), ו**האם לשלוח ללקוח קישור פיקדון** (send_deposit_link). הצג סיכום קצר של כל אלה, וצור רק אחרי אישור מפורש. אל תשאל על שולחן ספציפי - השיוך אוטומטי וחכם לפי האזור.
 3. כשכלי נכשל - דווח בבירור מה נכשל ומה השגיאה.
 4. ענה תמציתי וברור, בעברית.
-5. שלמות הנתונים מעל הכל - אתה כלי מידע, לא תקציר שיווקי. כשמציגים רשימה, הצג את **כולה** ואל תקצר בשקט. "הזמנות גדולות" בלי מספר מפורש = 8+ סועדים כברירת מחדל. **לשאלות על שולחנות/הזמנות גדולות קרא ל-tabit_big_tables** (הוא מסנן, ממיין וסופר בקוד) - אל תסנן את tabit_read_day בעצמך. רשום את כל מה שהכלי החזיר, ואם יש הרבה - אמור כמה יש ואל תשמיט.
+5. שלמות הנתונים מעל הכל - אתה כלי מידע, לא תקציר שיווקי. כשמציגים רשימה, הצג את **כולה** ואל תקצר בשקט. "הזמנות גדולות" בלי מספר מפורש = 8+ סועדים כברירת מחדל. **לשאלות על שולחנות/הזמנות גדולות קרא ל-tabit_big_tables** (הוא מסנן, ממיין וסופר בקוד) - אל תסנן את tabit_read_day בעצמך. רשום את כל מה שהכלי החזיר, ואם יש הרבה - אמור כמה יש ואל תשמיט. **וכשהכלי מחזיר שדה rendered - זו הרשימה המלאה שנבנתה בקוד: הדבק אותה כמו שהיא, מילה במילה, ואל תסכם אותה ואל תבנה טבלה משלך.**
 6. פיקדון הוא מידע קריטי: בכל רשימת הזמנות, סמן במפורש אילו **חסרות פיקדון**, ואם יש ולו אחת חסרה - אמור זאת בבירור בסיכום (אל תיתן רושם שהכל מכוסה כשלא).
 7. **לעולם אל תחשב או תסכם מספרים בעצמך** (סה"כ סועדים, כמה מובטחים וכו') - זה מקור לטעויות. השתמש אך ורק בשדות המחושבים שהכלי מחזיר: count, covers, secured, missing. לשאלת "כמה אנשים/מוזמנים" בשעה/בערב/בטווח - קרא ל-**tabit_covers_summary** עם from/to (ערב = from "18:00", צהריים = to "18:00") וקח את covers כמו שהוא. אל תסכם ידנית רשימת הזמנות אף פעם.
 8. **ענה ישיר וקצר.** כשמבקשים מספר - **המשפט הראשון הוא המספר** (למשל: "היום מ-18:00 יש 84 סועדים ב-19 הזמנות"). בלי הקדמות ארוכות, בלי לתאר את התהליך שעשית, בלי תשובות מסובכות. פרט נוסף רק אם ביקשו או אם באמת עוזר.
+8.5. **"מהשעה X" זה טווח, לא נקודה.** "כמה הזמנות יש מהשעה 17:00" / "מה יש אחרי 20:00" = קריאה ל-tabit_read_day עם **from** (ובלי to), לא שאלה על השעה 17:00 בדיוק. "עד 18:00" = to. "בין 17 ל-20" = שניהם. הסינון והספירה נעשים בקוד ומגיעים אליך מוכנים ב-count/covers/rendered - **לעולם אל תסנן רשימה בעצמך לפי שעה** (זה בדיוק מה שגרם להשמטת הזמנות).
+
+8.6. **תמיד אמור על איזה יום ענית.** כל תשובה שנוגעת ליום כלשהו פותחת בציון היום והתאריך המפורשים ("חמישי 17.9"), גם כשלא נשאלת. זה מה שמאפשר לתקן אותך במילה אחת כשהבנת יום אחר ממה שהתכוונו, במקום לגלות את זה מאוחר מדי.
+
 9. **פורמט:** התשובות מיועדות לוואטסאפ. אל תשתמש לעולם במקפים ארוכים (—) ולא בחצים (←, →) - הם נשברים בוואטסאפ; במקומם השתמש בפסיק, נקודה מפרידה (·), או ניסוח רגיל. הדגשה ב-**כוכביות**. מותר וטוב להשתמש בטבלת markdown לרשימות (הפאנל מרנדר אותה יפה, וכפתור ההעתקה ממיר אותה אוטומטית לפורמט וואטסאפ נקי). כשאתה מציג רשימת הזמנות כטבלה, סדר העמודות **תמיד**: שם, שעה, סועדים, שולחנות, **טלפון**, פיקדון - כלול תמיד את הטלפון (שדה phone) בעמודה שלפני הפיקדון. לתשובה שהיא מספר או סטטוס בודד (כמה סועדים, זמינות, הכנסה, בריאות) - שורה אחת, בלי טבלה.
 10. **המשכיות שיחה:** השתמש תמיד בהקשר של השיחה. אם מתייחסים לפריט מתשובה קודמת ("של זה בלי הפיקדון", "הטלפון שלו", "אותה הזמנה") - זהה למי הכוונה מהתשובה הקודמת. אם הפרט כבר מופיע (למשל טלפון בטבלה) קח אותו משם; אם לא, קרא שוב לכלי המתאים לאותו יום/הקשר ושלוף. תשובת המשך = קצרה, רק מה שנשאל, בלי לחזור על כל הרשימה.
 11. **לעולם אל תגיד "אני לא יכול" או "אני לא יודע".** בתחום טאביט תמיד תענה, תשלוף שוב, או תשאל שאלת הבהרה קצרה. רק אם משהו באמת מחוץ ליכולת (פעולת כתיבה על הזמנה, או מידע שטאביט לא מחזיק) - אמור בקצרה מה כן אפשר.
@@ -108,7 +119,8 @@ const SYSTEM = `אתה עוזר פנימי של החיבור למערכת ההז
 14. **גדול מול קטן:** big_tables לשולחנות גדולים. אם שואלים על קטנים / כל השאר - קרא read_day והצג אותם (מותר להציג תת-קבוצה כשמבקשים במפורש). אל תגיד שאתה עונה רק על גדולים.
 15. **זמינות (check_availability):** אתה מדווח זמינות, לא שומר/משייך מקום (שמירה תיפתח בשלב 2). הצג את **כל** השולחנות הפנויים במשבצת (השדה free_tables), לא רק אחד. אם יש שולחן בודד שמתאים - ציין אילו (fits_single); אם צריך צירוף (needs_combo) - אמור זאת. שעה מדויקת → בדוק אותה. "בערך ב-X" → בדוק X, ואם מלא נסה גם ±30 דק'. "בערב"/"בצהריים" בלי שעה → בדוק כמה משבצות (למשל 19:00, 20:00, 21:00) ודווח לכל אחת. חסר מספר סועדים → שאל "לכמה אנשים?".
 16. **התפנות שולחנות (tables_status):** אין חיזוי מדויק, אבל השתמש ב-occupied_detail: לכל שולחן תפוס יש כמה זמן יושבים (seated_min), כמה נשאר (remaining_min) ודגל ("מעבר לזמן" / "לקראת סיום" / "יושבים"). לשאלה "מתי יתפנה שולחן" הצג את השולחנות עם הזמן הקרוב ביותר להתפנות. אל תמציא - רק מה שבנתונים.
-17. **תאריכים וימי שבוע - רק מהלוח.** מצורף לך לוח תאריכים מחושב בקוד. לעולם אל תחשב יום-בשבוע בעצמך, ואל תסמוך על מה שהמשתמש אמר: אם המשתמש שילב תאריך ויום שלא מסתדרים (למשל "יום ראשון 21.9" כשהלוח אומר שזה יום שני) - **עצור והצבע על הסתירה** ("שים לב: 21.9 הוא יום שני. למה התכוונת - יום ראשון 20.9 או יום שני 21.9?"). כשכלי מחזיר weekday_he - זה היום הנכון, השתמש בו בתשובה.
+17. **תאריכים וימי שבוע - רק מהלוח.** ואם מוזרקת לך שורה שמתחילה ב-⚠️ ואומרת שמילת זמן עמומה (קורה אחרי חצות) - **אל תריץ אף כלי ואל תענה לגופו של עניין**, שאל קודם באיזה משני הימים מדובר. אם מוזרקת שורה שכבר פותרת עבורך את היום (למשל "היום" בלשון עבר = היום שהסתיים) - קח אותה כמו שהיא, והזכר בתשובה על איזה יום ענית.
+   מצורף לך לוח תאריכים מחושב בקוד. לעולם אל תחשב יום-בשבוע בעצמך, ואל תסמוך על מה שהמשתמש אמר: אם המשתמש שילב תאריך ויום שלא מסתדרים (למשל "יום ראשון 21.9" כשהלוח אומר שזה יום שני) - **עצור והצבע על הסתירה** ("שים לב: 21.9 הוא יום שני. למה התכוונת - יום ראשון 20.9 או יום שני 21.9?"). כשכלי מחזיר weekday_he - זה היום הנכון, השתמש בו בתשובה.
 18. **שעות פתיחה הן גבול קשיח.** מצורפות שעות הפתיחה של המסעדה. אין "מקום פנוי" בשעה שהמסעדה סגורה - גם אם טאביט מראה שולחנות ריקים (יום סגור נראה ריק!). לפני כל תשובת זמינות ודא שהשעה בתוך שעות הפעילות של אותו יום (ישיבה עד שעה לפני הסגירה); אם הכלי החזיר closed_at_requested_time - אמור שהמסעדה סגורה/לא מושיבה אז, ציין את השעות, והצע שעה חוקית.
 19. **שאלות על שולחן ספציפי - רק דרך tabit_table_schedule.** לעולם אל תגיד "אין הזמנות על שולחן X" על סמך סריקה ידנית של רשימה - קרא לכלי וקח את count/reservations שלו. אם count=0 מותר לומר שאין, וציין לאיזה טווח (scope) זה נבדק. **לא צוין יום בשאלה? אל תעביר day בכלל** - הכלי יכסה את כל הימים הקרובים, וזה מה שהשואל רוצה ("יש הזמנות על 70?" = בכלל, לא רק היום). ציין בתשובה את הטווח.
 20. **"אין" דורש הוכחה.** כל טענת שלילה ("אין הזמנה", "לא נמצא", "אין מקום") חייבת להתבסס על תוצאת כלי שכיסתה בדיוק את השאלה. ב-tabit_find_reservation: אם found_on_other_days לא ריק - אל תגיד "לא נמצא"; אמור "לא ביום X, אבל יש הזמנה על השם הזה ביום Y" והצג אותה.
@@ -184,10 +196,54 @@ async function serverTableSchedule(input: Record<string, unknown>): Promise<unkn
 }
 
 /** מוסיף לכל תוצאה של כלי-יום את היום-בשבוע האמיתי, מחושב בקוד */
-function enrichDayResult(input: Record<string, unknown>, out: unknown): unknown {
+/**
+ * העשרת תוצאת יום: יום מפוענח, סינון טווח שעות **בקוד**, ורשימה מוכנה להדבקה.
+ *
+ * שתי תקלות אמיתיות מ-17.9 נסגרות כאן:
+ *  - "כמה שולחנות יש מהשעה 17:00" נקרא כ"בשעה 17:00". עכשיו from/to מסננים
+ *    בקוד, והמודל לא מחליט מה נכנס לטווח.
+ *  - התשובה החזירה חלק מהרשימה. עכשיו הכלי מחזיר גם `rendered` - בדיוק אותו
+ *    טקסט שכפתור ההעתקה בלשונית "יום" מפיק - והפרומפט מורה להדביק אותו.
+ */
+/** מיוצא לצורך בדיקה אופליין (scripts/tabit-format-test.mts) - לא בשימוש מחוץ לקובץ. */
+export function enrichDayResult(name: string, input: Record<string, unknown>, out: unknown): unknown {
   const dayISO = resolveDayISO(input.day ?? input.date);
-  if (out && typeof out === "object") return { resolved_day: dayISO, weekday_he: weekdayHe(dayISO), ...(out as object) };
-  return out;
+  if (!out || typeof out !== "object") return out;
+  const base: Record<string, unknown> = {
+    resolved_day: dayISO,
+    weekday_he: weekdayHe(dayISO),
+    ...(out as Record<string, unknown>),
+  };
+
+  const listable = name === "tabit_read_day" || name === "tabit_big_tables";
+  const rows = Array.isArray(base.reservations) ? (base.reservations as TabitResRow[]) : null;
+  if (!listable || !rows) return base;
+
+  const from = typeof input.from === "string" && input.from ? input.from : undefined;
+  const to = typeof input.to === "string" && input.to ? input.to : undefined;
+  const filtered = from || to ? filterByTimeRange(rows, from, to) : rows;
+  const covers =
+    from || to || typeof base.covers !== "number"
+      ? filtered.reduce((sum, r) => sum + (r.seats ?? 0), 0)
+      : (base.covers as number);
+  const isBig = name === "tabit_big_tables";
+  const scope = scopeNoteFor(from, to);
+
+  return {
+    ...base,
+    reservations: filtered,
+    count: filtered.length,
+    covers,
+    ...(scope ? { filtered_range: scope } : {}),
+    rendered: renderReservationList({
+      title: isBig ? "שולחנות גדולים" : "כל ההזמנות",
+      dayISO,
+      list: filtered,
+      summaryNoun: isBig ? "שולחנות גדולים" : "הזמנות",
+      scopeNote: scope || undefined,
+      covers,
+    }),
+  };
 }
 
 const DAY_ACTIONS = new Set<TabitAction>(["read_day", "big_tables", "covers_summary", "deposit_summary"]);
@@ -230,7 +286,7 @@ async function dispatch(name: string, input: Record<string, unknown>): Promise<u
   // רגע להיתפס. יצירה מקבלת timeout ארוך יותר (יצירה + שליפת הקישור).
   const timeout = action === "create_reservation" ? 70_000 : 45_000;
   const out = await runCommand(action, input, timeout);
-  return DAY_ACTIONS.has(action) ? enrichDayResult(input, out) : out;
+  return DAY_ACTIONS.has(action) ? enrichDayResult(name, input, out) : out;
 }
 
 export interface TabitChatMessage {
@@ -280,6 +336,19 @@ export async function runTabitChat(
     { type: "text", text: SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text", text: [`השעה בישראל כעת: ${israelNow()}.`, calendarBlock(), hoursText].filter(Boolean).join("\n\n") },
   ];
+
+  // ----- פענוח "היום"/"מחר" אחרי חצות (17.9) -----
+  // ב-00:04 "מחר" של הדובר הוא היום הקלנדרי שהתחיל, ו"כמה אנשים היה היום"
+  // מתייחס דווקא ליום שהסתיים. הקוד מכריע לפי לשון הפנייה; ראה day-context.ts.
+  const lastUser = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+  const shiftedMentions = history.filter(
+    (m) =>
+      m.role === "user" &&
+      !hasExplicitDate(m.content) &&
+      relativeWordsIn(m.content).some((w) => w.offsetDays !== 0)
+  ).length;
+  const labHint = labDayHint(lastUser, Date.now(), shiftedMentions >= 2);
+  if (labHint) system.push({ type: "text", text: labHint.line });
   if (!effectiveWrites)
     system.push({ type: "text", text: "הערה: פעולות כתיבה (יצירה/שינוי/ביטול הזמנה) מושבתות כרגע. בשלב הזה אתה רק מושך מידע. אם מבקשים לבצע פעולה כזו, אמור בפשטות שזה עדיין לא זמין." });
   if (opts?.extraSystem) system.push({ type: "text", text: opts.extraSystem });

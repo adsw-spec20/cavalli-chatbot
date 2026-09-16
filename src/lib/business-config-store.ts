@@ -13,6 +13,27 @@ import type { BusinessConfig } from "./business-config";
 
 const SETTING_KEY = "business_config";
 
+/**
+ * השלמת שדות חדשים בתוך מערך השעות.
+ *
+ * ⚠️ המיזוג כאן הוא רדוד: `hours` שנשמר מהפאנל **דורס** את המערך מהקוד במלואו.
+ * לכן שדה חדש בתוך שורת יום (כמו lastSeating שנוסף ב-17.9) לעולם לא היה מגיע
+ * לפרודקשן - הקונפיג השמור פשוט לא מכיר אותו, והבוט היה ממשיך לא לדעת מתי
+ * מפסיקים להושיב. ההשלמה נעשית רק כשהשדה **חסר** (undefined); null מפורש
+ * הוא בחירה של בעל העסק ונשמר כמו שהוא.
+ */
+function withHoursDefaults(cfg: BusinessConfig): BusinessConfig {
+  if (!Array.isArray(cfg.hours)) return cfg;
+  let changed = false;
+  const hours = cfg.hours.map((h) => {
+    if (h.lastSeating !== undefined) return h;
+    const fallback = defaultConfig.hours.find((d) => d.day === h.day)?.lastSeating ?? null;
+    changed = true;
+    return { ...h, lastSeating: fallback };
+  });
+  return changed ? { ...cfg, hours } : cfg;
+}
+
 /** טוען את המידע העסקי: הגרסה הערוכה מה-DB, או ברירת המחדל מהקוד. */
 export async function loadBusinessConfig(): Promise<BusinessConfig> {
   try {
@@ -20,7 +41,7 @@ export async function loadBusinessConfig(): Promise<BusinessConfig> {
     if (!raw) return defaultConfig;
     const parsed = JSON.parse(raw) as Partial<BusinessConfig>;
     // מיזוג מעל ברירת המחדל כדי שלא יישבר אם חסר שדה בגרסה הערוכה
-    return { ...defaultConfig, ...parsed };
+    return withHoursDefaults({ ...defaultConfig, ...parsed });
   } catch {
     return defaultConfig;
   }

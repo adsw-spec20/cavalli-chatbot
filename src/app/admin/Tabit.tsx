@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { api, relTime } from "./types";
 import { SectionCard } from "./ui";
 import { coversByTimeSlot } from "@/lib/tabit-chart";
+import { EVENING_MIN, waDateParts, renderReservationList } from "@/lib/tabit-format";
 
 /**
  * מסך "טאביט" - לכל הצוות (נפתח 15.9). קריאה בלבד: מציג snapshot חי של
@@ -132,45 +133,10 @@ const toMin = (hhmm: string): number => {
 const ilTime = (iso: string): string =>
   new Date(iso).toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false });
 
-// ===== העתקה לוואטסאפ: פורמט אחיד וקריא - כוכבית בודדת (הדגשה בוואטסאפ),
-// ===== בלוק לכל הזמנה, קיבוץ בוקר/ערב (ערב = 18:00 ומעלה), שורה ריקה בין הזמנות.
-
-const EVENING_MIN = 18 * 60;
-
-/** "להיום"/"למחר"/"ליום שלישי" + תאריך קצר, לכותרות ההעתקה */
-function waDateParts(iso: string): { ref: string; date: string } {
-  const [y, m, d] = iso.split("-").map(Number);
-  const date = `${d}.${m}.${String(y).slice(2)}`;
-  if (iso === todayIL()) return { ref: "להיום", date };
-  if (iso === tomorrowIL()) return { ref: "למחר", date };
-  return { ref: `ליום ${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}`, date };
-}
-
-function waDepositMark(d: Deposit): string {
-  return d === "secured" ? "✅" : d === "missing" ? "❌ חסר פיקדון" : "ללא פיקדון";
-}
-
-/** בלוק הזמנה אחת: שורת כותרת מודגשת + שורת פרטים (+ הערה אם יש) */
-function waResBlock(r: TabitReservation): string {
-  const tables = r.tables.length ? `ש׳ ${r.tables.join(",")}` : "ללא שולחן";
-  const lines = [
-    `*${r.time} · ${r.name || "(ללא שם)"} · ${r.seats} סועדים*`,
-    `${tables} | ${fmtPhone(r.phone) || "-"} | ${waDepositMark(r.deposit)}`,
-  ];
-  if (r.notes) lines.push(`💬 ${r.notes}`);
-  return lines.join("\n");
-}
-
-/** רשימת הזמנות מקובצת 🌅 בוקר / 🌆 ערב, ממוינת לפי שעה */
-function waGrouped(list: TabitReservation[]): string {
-  const sorted = [...list].sort((a, b) => (a.fromISO < b.fromISO ? -1 : 1));
-  const morning = sorted.filter((r) => toMin(r.time) < EVENING_MIN);
-  const evening = sorted.filter((r) => toMin(r.time) >= EVENING_MIN);
-  const parts: string[] = [];
-  if (morning.length) parts.push(`🌅 *בוקר*\n\n${morning.map(waResBlock).join("\n\n")}`);
-  if (evening.length) parts.push(`🌆 *ערב*\n\n${evening.map(waResBlock).join("\n\n")}`);
-  return parts.join("\n\n");
-}
+// ===== העתקה לוואטסאפ =====
+// הפורמט עצמו עבר ל-src/lib/tabit-format.ts (17.9) כדי שצ'אט המעבדה, שרץ
+// בשרת, יוכל להחזיר בדיוק את אותה רשימה. קודם הוא היה כאן בלבד, והמעבדה
+// הרכיבה פורמט משלה בכל תשובה - ובדרך גם השמיטה שורות.
 
 function PhoneActions({ phone, wa = true }: { phone: string; wa?: boolean }) {
   if (!phone) return null;
@@ -464,15 +430,8 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
   /** כל ההזמנות של היום הנבחר, מקובץ בוקר/ערב */
   function copyDayAll() {
     if (!selectedDay || !dayAll.length) return;
-    const { ref, date } = waDateParts(selectedDay);
-    const text = [
-      `*כל ההזמנות ${ref}* (${date})`,
-      `${dayAll.length} הזמנות · ${covers} סועדים`,
-      "",
-      waGrouped(dayAll),
-      "",
-      `*סה״כ:* ${dayAll.length} הזמנות · ${covers} סועדים`,
-    ].join("\n");
+    // אותה פונקציה בדיוק שצ'אט המעבדה משתמש בה - כך הפורמט זהה ולא "דומה"
+    const text = renderReservationList({ title: "כל ההזמנות", dayISO: selectedDay, list: dayAll, covers });
     copyTile(text, "all");
   }
 
@@ -511,15 +470,14 @@ export default function Tabit({ token, agentName }: { token: string; agentName?:
         : dayBig.every((r) => r.deposit === "secured")
           ? "✅ כל ההזמנות עם פיקדון מובטח"
           : "";
-    const text = [
-      `*שולחנות גדולים ${ref}* (${date})`,
-      `${dayBig.length} הזמנות · ${seats} סועדים`,
-      "",
-      waGrouped(dayBig),
-      "",
-      `*סה״כ:* ${dayBig.length} שולחנות גדולים · ${seats} סועדים`,
-      ...(foot ? [foot] : []),
-    ].join("\n");
+    const text = renderReservationList({
+      title: "שולחנות גדולים",
+      dayISO: selectedDay,
+      list: dayBig,
+      summaryNoun: "שולחנות גדולים",
+      covers: seats,
+      footer: foot || undefined,
+    });
     copyTile(text, "big");
   }
 

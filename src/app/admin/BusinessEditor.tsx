@@ -299,12 +299,16 @@ export default function BusinessEditor({ token }: { token: string }) {
             />
           </Block>
 
-          <Block title="שעות פעילות קבועות" sub="משפיע על הכל: תשובות שעות, 'פתוחים עכשיו?', ואילו הזמנות מותר לקבל.">
-            <div className="space-y-1.5">
+          <Block
+            title="שעות פעילות קבועות"
+            sub="משפיע על הכל: תשובות שעות, 'פתוחים עכשיו?', ואילו הזמנות מותר לקבל. ההושבה האחרונה היא השעה שאחריה כבר לא מושיבים לקוח חדש - הבוט לא יזמין אף אחד להגיע אחריה."
+          >
+            <div className="space-y-2.5">
               {cfg.hours.map((h, i) => {
                 const closed = h.hours === null;
                 return (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="space-y-1">
+                  <div className="flex items-center gap-2">
                     <span className="w-14 text-sm font-medium shrink-0">{h.day}</span>
                     {closed ? (
                       <span className="flex-1 text-sm text-[var(--muted)] bg-[var(--panel2)] border border-[var(--border)] rounded-lg px-2.5 py-2">
@@ -337,6 +341,24 @@ export default function BusinessEditor({ token }: { token: string }) {
                     >
                       סגור
                     </button>
+                  </div>
+                  {!closed && (
+                    <div className="flex items-center gap-2 pr-16">
+                      <span className="text-[11px] text-[var(--muted)] shrink-0">הושבה אחרונה</span>
+                      <input
+                        value={h.lastSeating ?? ""}
+                        placeholder="23:00 (ריק = ללא הגבלה)"
+                        onChange={(e) => {
+                          const next = [...cfg.hours];
+                          const v = e.target.value.trim();
+                          next[i] = { ...h, lastSeating: v || null };
+                          up({ hours: next });
+                        }}
+                        className={`${inputCls} flex-1 !py-1 !text-xs`}
+                        style={{ fontVariantNumeric: "tabular-nums" }}
+                      />
+                    </div>
+                  )}
                   </div>
                 );
               })}

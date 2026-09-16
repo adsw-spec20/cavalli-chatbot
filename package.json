@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "tsx scripts/test-admin.mts",
+    "unit": "node scripts/unit-tests.mjs",
     "eval": "node scripts/eval.mjs"
   },
   "dependencies": {

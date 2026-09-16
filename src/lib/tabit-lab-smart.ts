@@ -8,6 +8,7 @@
  */
 
 import type { BusinessConfig } from "./business-config";
+import { lastSeatingForDate } from "./business-hours";
 import { getRepo } from "./db";
 
 export const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -90,14 +91,22 @@ export function checkOpenAt(cfg: BusinessConfig, dateISO: string, timeHHMM: stri
   const tm = timeHHMM.match(/^(\d{1,2}):(\d{2})$/);
   if (!tm) return { open: false, ...out };
   const min = parseInt(tm[1], 10) * 60 + parseInt(tm[2], 10);
-  // ישיבה של שעה לפחות לפני הסגירה (אין טעם לאשר הגעה 5 דק' לפני סגירה)
-  const LAST_SEAT_BUFFER = 60;
-  return { open: min >= range.start && min <= range.end - LAST_SEAT_BUFFER, ...out };
+  // שעת ההושבה האחרונה מגיעה מהמידע העסקי (ניתנת לעריכה בפאנל). קודם היא
+  // הייתה מקודדת כאן כ"שעה לפני הסגירה" - מספר שבמקרה יצא נכון לערבי שני-חמישי
+  // (סגירה בחצות -> 23:00) אבל היה ניחוש ביום שישי (סגירה 15:00 -> 14:00).
+  // כשלא הוגדרה שעה ליום מסוים נשארים על אותו מרווח שעה, כדי לא לשנות התנהגות.
+  const configured = lastSeatingForDate(cfg, dateISO);
+  const lastSeatMin = configured
+    ? parseInt(configured.slice(0, 2), 10) * 60 + parseInt(configured.slice(3, 5), 10)
+    : range.end - 60;
+  return { open: min >= range.start && min <= lastSeatMin, ...out };
 }
 
 /** בלוק שעות הפתיחה לפרומפט */
 export function hoursBlock(cfg: BusinessConfig): string {
-  const lines = cfg.hours.map((h) => `יום ${h.day}: ${h.hours ?? "סגור"}`);
+  const lines = cfg.hours.map(
+    (h) => `יום ${h.day}: ${h.hours ?? "סגור"}${h.hours && h.lastSeating ? ` (הושבה אחרונה ${h.lastSeating})` : ""}`
+  );
   const t = todayIL();
   const overrides = (cfg.hoursOverrides ?? [])
     .filter((o) => o.date >= t)

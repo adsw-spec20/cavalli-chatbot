@@ -225,7 +225,14 @@ export async function buildBrainSnapshot(query = ""): Promise<BrainSnapshot> {
   const cfgItems: BrainItem[] = [
     { id: "cfg-tone", title: "טון הדיבור", body: config.tone, origin: "config" as const },
     { id: "cfg-desc", title: "מי אנחנו", body: config.description, origin: "config" as const },
-    { id: "cfg-hours", title: "שעות פעילות", body: config.hours.map((h) => `${h.day}: ${h.hours ?? "סגור"}`).join("\n"), origin: "config" as const },
+    {
+      id: "cfg-hours",
+      title: "שעות פעילות",
+      body: config.hours
+        .map((h) => `${h.day}: ${h.hours ?? "סגור"}${h.hours && h.lastSeating ? ` · הושבה אחרונה ${h.lastSeating}` : ""}`)
+        .join("\n"),
+      origin: "config" as const,
+    },
     { id: "cfg-policies", title: "מדיניות ונהלים", body: (config.policies ?? []).join("\n\n"), origin: "config" as const },
     { id: "cfg-faqs", title: "שאלות נפוצות", body: config.faqs.map((f) => `ש: ${f.question}\nת: ${f.answer}`).join("\n\n"), origin: "config" as const },
     { id: "cfg-forbidden", title: "נושאים אסורים", body: config.forbiddenTopics.join("\n"), origin: "config" as const },
