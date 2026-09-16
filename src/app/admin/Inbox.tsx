@@ -536,9 +536,11 @@ export default function Inbox({
   function backToList() {
     setSelectedId(null);
   }
-  // חזרה משיחה מחזירה לאותו מיקום ברשימה (במובייל הרשימה הוסתרה בינתיים)
+  // חזרה משיחה מחזירה לאותו מיקום ברשימה - רלוונטי רק מתחת ל-lg, שם הרשימה
+  // הוסתרה בזמן השיחה. בדסקטופ הרשימה נשארת על המסך כל הזמן, וההחזרה גרמה
+  // לקפיצת גלילה שהרגישה כמו רענון של האפליקציה (דווח 16.9).
   useEffect(() => {
-    if (!selectedId && listRef.current) listRef.current.scrollTop = listScrollPos.current;
+    if (!selectedId && listRef.current && window.innerWidth < 1024) listRef.current.scrollTop = listScrollPos.current;
   }, [selectedId]);
 
   /**

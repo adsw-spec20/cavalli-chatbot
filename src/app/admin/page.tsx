@@ -997,10 +997,10 @@ export default function AdminPage() {
           navCollapsed ? "w-[64px] p-2" : "w-60 p-3"
         }`}
       >
-        <div className={`flex items-center border-b border-[var(--border)] ${navCollapsed ? "flex-col gap-2 pb-2.5 pt-1" : "gap-2.5 px-1 pt-1.5 pb-2.5"}`}>
+        <div className={`flex items-center border-b border-[var(--border)] ${navCollapsed ? "flex-col gap-2 pb-2.5 pt-1" : "gap-1.5 px-1 pt-1.5 pb-2.5"}`}>
           <BrandMark />
           {!navCollapsed && (
-            <div>
+            <div className="me-1">
               <div className={`font-bold leading-tight text-[15px] tracking-wide ${fontDisplay.className}`}>קפה קוואלי</div>
               <div className="text-[10px] text-[var(--muted)] tracking-wider">פאנל ניהול ושירות</div>
             </div>
@@ -1018,16 +1018,17 @@ export default function AdminPage() {
               <RefreshIcon spinning={syncing} className="w-4 h-4" />
             )}
           </button>
+          {/* כיווץ/הרחבה של הסרגל - כפתור ממוסגר וברור בראש הסרגל (הקודם היה קטן מדי ולא נמצא) */}
+          <button
+            onClick={() => setNavCollapsed((c) => !c)}
+            title={navCollapsed ? "הרחבת התפריט" : "כיווץ התפריט לאייקונים"}
+            aria-label={navCollapsed ? "הרחבת התפריט" : "כיווץ התפריט"}
+            className="w-8 h-8 grid place-items-center rounded-xl border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel2)] font-bold"
+          >
+            {navCollapsed ? "«" : "»"}
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto overflow-x-hidden">{renderNavLinks(navCollapsed)}</div>
-        <button
-          onClick={() => setNavCollapsed((c) => !c)}
-          title={navCollapsed ? "הרחבת התפריט" : "כיווץ התפריט לאייקונים"}
-          aria-label={navCollapsed ? "הרחבת התפריט" : "כיווץ התפריט"}
-          className="w-full py-1.5 rounded-xl text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel2)] text-sm"
-        >
-          {navCollapsed ? "«" : "»"}
-        </button>
         {renderSidebarFooter(navCollapsed)}
       </aside>
 
