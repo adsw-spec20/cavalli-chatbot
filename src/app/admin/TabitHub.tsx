@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "./types";
 import Tabit from "./Tabit";
 import TabitTestChat from "./TabitTestChat";
 import FloorMap from "./FloorMap";
@@ -31,6 +32,25 @@ export default function TabitHub({ token, agentName, isMaster }: { token: string
   });
   // המדריך נפתח כשכבה מעל התצוגה הנוכחית - והנושא שלו עוקב אחרי הלשונית הפעילה
   const [guideOpen, setGuideOpen] = useState(false);
+
+  // דופק הסוכן: אם ה-snapshot לא התעדכן הרבה זמן - פס אזהרה אדום בראש המסך
+  // (הסוכן דוחף כל ~5 דק'; 15+ דק' = שלושה מחזורים שהוחמצו = כנראה נפל).
+  const [agentDownMin, setAgentDownMin] = useState<number | null>(null);
+  useEffect(() => {
+    let stop = false;
+    const check = async () => {
+      try {
+        const d = await api<{ generatedAt: number | null; ageMinutes: number | null }>(token, "/tabit/status");
+        if (stop) return;
+        setAgentDownMin(d.generatedAt && d.ageMinutes != null && d.ageMinutes >= 15 ? d.ageMinutes : null);
+      } catch { /* לא חוסמים את המסך בגלל בדיקת דופק */ }
+    };
+    check();
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") check();
+    }, 60_000);
+    return () => { stop = true; clearInterval(t); };
+  }, [token]);
   function pick(v: ViewKey) {
     setView(v);
     try {
@@ -40,6 +60,16 @@ export default function TabitHub({ token, agentName, isMaster }: { token: string
 
   return (
     <div className="space-y-4">
+      {agentDownMin != null && (
+        <div className="rounded-xl bg-red-500/12 border-2 border-red-500/50 text-red-500 px-4 py-2.5 text-sm font-semibold flex items-center gap-2 flex-wrap">
+          <span aria-hidden>🔴</span>
+          <span>
+            הסוכן של טאביט לא מדווח כבר {agentDownMin >= 60 ? `${Math.floor(agentDownMin / 60)} ש' ו-${agentDownMin % 60} דק'` : `${agentDownMin} דק'`} -
+            הנתונים במסך הזה לא מתעדכנים.
+          </span>
+          <span className="font-normal text-[13px] opacity-90">בדקו שהמחשב במסעדה דלוק ושהסוכן (agent) רץ.</span>
+        </div>
+      )}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-xl border border-[var(--border)] overflow-hidden flex-wrap">
           {VIEWS.map((v) => (
