@@ -9,6 +9,7 @@
 
 import type { BusinessConfig } from "./business-config";
 import { lastSeatingForDate } from "./business-hours";
+import type { TabitDeposit } from "./tabit-format";
 import { getRepo } from "./db";
 
 export const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -129,7 +130,8 @@ export interface LabResRow {
   day: string;
   time: string;
   tables: number[];
-  deposit?: string;
+  /** ⚠️ שלושה מצבים ולא שניים - ראה missingDepositFooter ב-tabit-format.ts */
+  deposit?: TabitDeposit;
   state?: string;
   notes?: string;
 }

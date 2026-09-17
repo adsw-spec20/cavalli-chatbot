@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, relTime } from "./types";
 import { useChatBoxHeight } from "./use-chat-height";
+import { mdToWhatsApp } from "@/lib/tabit-format";
 
 /** עיצוב טקסט inline: **מודגש** / *מודגש* -> bold */
 function renderInline(text: string, kp: string): ReactNode[] {
@@ -63,79 +64,9 @@ function MarkdownLite({ text }: { text: string }) {
   return <div>{blocks}</div>;
 }
 
-/** מספר ישראלי נייד -> 05X-XXX-XXXX. אחרת מחזיר כמו שהוא. */
-function fmtPhone(p: string): string {
-  const d = p.replace(/\D/g, "").replace(/^972/, "0");
-  return /^0\d{9}$/.test(d) ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : p.trim();
-}
-
-/**
- * ממיר markdown (כולל טבלאות) לטקסט ידידותי לוואטסאפ:
- * טבלה -> שורה להזמנה, כוכבית בודדת להדגשה, בלי מקפים ארוכים/חצים שנשברים.
- * זה מה שנשלח בפועל כשמעתיקים - ככה הצוות רואה את זה בקבוצה.
- */
-function mdToWhatsApp(md: string): string {
-  const src = md.split("\n");
-  const out: string[] = [];
-  let i = 0;
-  const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
-  const isSep = (cells: string[]) => cells.every((c) => /^[-:\s]*$/.test(c));
-  const clean = (s: string) =>
-    s
-      .replace(/\*\*/g, "*")            // ** -> * (הדגשת וואטסאפ)
-      .replace(/\s*[—–]\s*/g, " - ")    // מקף ארוך -> מקף רגיל
-      .replace(/\s*[←→⇐⇒]\s*/g, " ")    // חצים החוצה
-      .replace(/ {2,}/g, " ");
-  while (i < src.length) {
-    const line = src[i];
-    if (isRow(line)) {
-      const rows: string[][] = [];
-      while (i < src.length && isRow(src[i])) {
-        rows.push(src[i].trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
-        i++;
-      }
-      const data = rows.filter((r) => !isSep(r));
-      if (!data.length) continue;
-      const header = data[0].map((h) => h.replace(/\*/g, "").trim());
-      const KNOWN = ["שם", "שעה", "סועדים", "שולחנות", "שולחן", "טלפון", "נייד", "פיקדון"];
-      for (const r of data.slice(1)) {
-        const cellOf = (names: string[]) => {
-          const idx = header.findIndex((h) => names.some((n) => h.includes(n)));
-          const cell = idx >= 0 ? clean(r[idx] ?? "").replace(/\*/g, "").trim() : "";
-          return cell === "-" || cell === "—" ? "" : cell;
-        };
-        const name = cellOf(["שם"]);
-        const time = cellOf(["שעה"]);
-        const seats = cellOf(["סועדים"]);
-        if (name || time || seats) {
-          // טבלת הזמנות -> בלוק דו-שורתי קריא בוואטסאפ:
-          // *שעה · שם · X סועדים* ומתחת: ש׳ שולחנות | טלפון | סטטוס פיקדון
-          const tables = cellOf(["שולחנות", "שולחן"]);
-          const phone = cellOf(["טלפון", "נייד"]);
-          const depRaw = cellOf(["פיקדון"]);
-          const deposit = !depRaw ? "" : /חסר|✗|✖|❌/.test(depRaw) ? "❌ חסר פיקדון" : /מובטח|✓|✔|✅/.test(depRaw) ? "✅" : depRaw;
-          const head = [time, name, seats && `${seats} סועדים`].filter(Boolean).join(" · ");
-          const details = [tables && `ש׳ ${tables.replace(/\s+/g, "")}`, phone && fmtPhone(phone), deposit].filter(Boolean).join(" | ");
-          const extras = r
-            .map((c, ci) => ({ c: clean(c).replace(/\*/g, "").trim(), h: header[ci] || "" }))
-            .filter(({ c, h }) => c && c !== "-" && c !== "—" && !KNOWN.some((k) => h.includes(k)))
-            .map(({ c }) => c);
-          const block = [head && `*${head}*`, details, ...(extras.length ? [`💬 ${extras.join(" · ")}`] : [])].filter(Boolean).join("\n");
-          if (block) { out.push(block); out.push(""); }
-        } else {
-          // טבלה שאינה הזמנות - שורה פשוטה
-          const parts = r.map((c) => clean(c).replace(/\*/g, "").trim()).filter((c) => c && c !== "-" && c !== "—");
-          if (parts.length) out.push(parts.join(" · "));
-        }
-      }
-      continue;
-    }
-    if (/^\s*[-_*]{3,}\s*$/.test(line)) { out.push(""); i++; continue; }  // קו מפריד -> רווח
-    out.push(clean(line).replace(/^\s*[-*•]\s+/, "• "));                  // תבליט -> •
-    i++;
-  }
-  return out.join("\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-}
+// ההמרה למרקדאון->וואטסאפ עברה ל-src/lib/tabit-format.ts (17.9), יחד עם
+// שאר הפורמט. היא הייתה כאן בלבד, ולכן אי אפשר היה לבדוק אותה - והיא
+// בדיוק מה שהצוות מקבל בפועל כשמעתיקים תשובה לקבוצה.
 
 function CopyBtn({ text }: { text: string }) {
   const [done, setDone] = useState(false);

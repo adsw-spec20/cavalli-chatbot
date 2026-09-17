@@ -9,6 +9,7 @@
     "lint": "next lint",
     "test": "tsx scripts/test-admin.mts",
     "unit": "node scripts/unit-tests.mjs",
+    "lab-format": "tsx scripts/lab-format-live-test.mts",
     "eval": "node scripts/eval.mjs"
   },
   "dependencies": {

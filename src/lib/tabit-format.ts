@@ -100,6 +100,19 @@ export function waGrouped(list: TabitResRow[]): string {
   return parts.join("\n\n");
 }
 
+/**
+ * שורת האזהרה על פיקדונות חסרים - **הגדרה אחת בלבד, מחושבת בקוד**.
+ *
+ * ⚠️ יש שלושה מצבים ולא שניים: "secured" = שולם, "missing" = נשלח קישור ולא
+ * שולם (זה מה שצריך לרדוף אחריו), "none" = לא נדרש פיקדון בכלל. כשהמודל ניסח
+ * את השורה הזאת בעצמו הוא ערבב בין "missing" ל-"none" וכתב "6 הזמנות ללא
+ * פיקדון" בזמן שבפאנל היו כתובים 5 - אותו יום, שני מספרים.
+ */
+export function missingDepositFooter(list: TabitResRow[]): string {
+  const missing = list.filter((r) => r.deposit === "missing").length;
+  return missing ? `❌ ${missing} הזמנות חסרות פיקדון` : "";
+}
+
 export interface RenderListOptions {
   /** "כל ההזמנות" / "שולחנות גדולים" - בלי ה"להיום", שמתווסף אוטומטית */
   title: string;
@@ -109,7 +122,7 @@ export interface RenderListOptions {
   summaryNoun?: string;
   /** תוספת לכותרת כשהרשימה מסוננת, למשל "מ-17:00 ואילך" */
   scopeNote?: string;
-  /** שורת זנב (למשל אזהרת פיקדונות חסרים) */
+  /** שורת זנב. אם לא נמסרה, נוספת אוטומטית אזהרת פיקדונות חסרים כשיש כאלה. */
   footer?: string;
   /** סה"כ סועדים. אם לא נמסר - מחושב מהרשימה. */
   covers?: number;
@@ -129,6 +142,7 @@ export function renderReservationList(o: RenderListOptions): string {
   if (!n) {
     return [head, "אין הזמנות בטווח הזה."].join("\n");
   }
+  const foot = o.footer ?? missingDepositFooter(o.list);
   return [
     head,
     `${n} הזמנות · ${covers} סועדים`,
@@ -136,8 +150,33 @@ export function renderReservationList(o: RenderListOptions): string {
     waGrouped(o.list),
     "",
     `*סה״כ:* ${n} ${noun} · ${covers} סועדים`,
-    ...(o.footer ? [o.footer] : []),
+    ...(foot ? [foot] : []),
   ].join("\n");
+}
+
+/**
+ * רשימה שפרושה על כמה ימים (חיפוש לפי שם, לוח של שולחן) - בלוק ליום, באותו
+ * פורמט בדיוק. בלי זה חיפוש שמצא הזמנות בשלושה ימים חזר כטקסט חופשי.
+ */
+export function renderByDay(
+  list: TabitResRow[],
+  o: { title: string; todayISO?: string; emptyText?: string }
+): string {
+  if (!list.length) return `*${o.title}*\n${o.emptyText ?? "לא נמצאו הזמנות."}`;
+  const days = [...new Set(list.map((r) => r.day ?? ""))].filter(Boolean).sort();
+  if (days.length === 1) {
+    return renderReservationList({ title: o.title, dayISO: days[0], list, todayISO: o.todayISO });
+  }
+  return days
+    .map((d) =>
+      renderReservationList({
+        title: o.title,
+        dayISO: d,
+        list: list.filter((r) => r.day === d),
+        todayISO: o.todayISO,
+      })
+    )
+    .join("\n\n");
 }
 
 /**
@@ -165,4 +204,76 @@ export function scopeNoteFor(from?: string, to?: string): string {
   if (from) return `מ-${from} ואילך`;
   if (to) return `עד ${to}`;
   return "";
+}
+
+// ============================================================================
+//  המרה מתשובת המודל לטקסט וואטסאפ (כפתור "העתק לוואטסאפ" בצ'אט המעבדה)
+// ============================================================================
+
+/**
+ * ממיר markdown (כולל טבלאות) לטקסט ידידותי לוואטסאפ:
+ * טבלה -> שורה להזמנה, כוכבית בודדת להדגשה, בלי מקפים ארוכים/חצים שנשברים.
+ * זה מה שנשלח בפועל כשמעתיקים - ככה הצוות רואה את זה בקבוצה.
+ */
+export function mdToWhatsApp(md: string): string {
+  const src = md.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (cells: string[]) => cells.every((c) => /^[-:\s]*$/.test(c));
+  const clean = (s: string) =>
+    s
+      .replace(/\*\*/g, "*")            // ** -> * (הדגשת וואטסאפ)
+      .replace(/\s*[—–]\s*/g, " - ")    // מקף ארוך -> מקף רגיל
+      .replace(/\s*[←→⇐⇒]\s*/g, " ")    // חצים החוצה
+      .replace(/ {2,}/g, " ");
+  while (i < src.length) {
+    const line = src[i];
+    if (isRow(line)) {
+      const rows: string[][] = [];
+      while (i < src.length && isRow(src[i])) {
+        rows.push(src[i].trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+        i++;
+      }
+      const data = rows.filter((r) => !isSep(r));
+      if (!data.length) continue;
+      const header = data[0].map((h) => h.replace(/\*/g, "").trim());
+      const KNOWN = ["שם", "שעה", "סועדים", "שולחנות", "שולחן", "טלפון", "נייד", "פיקדון"];
+      for (const r of data.slice(1)) {
+        const cellOf = (names: string[]) => {
+          const idx = header.findIndex((h) => names.some((n) => h.includes(n)));
+          const cell = idx >= 0 ? clean(r[idx] ?? "").replace(/\*/g, "").trim() : "";
+          return cell === "-" || cell === "—" ? "" : cell;
+        };
+        const name = cellOf(["שם"]);
+        const time = cellOf(["שעה"]);
+        const seats = cellOf(["סועדים"]);
+        if (name || time || seats) {
+          // טבלת הזמנות -> בלוק דו-שורתי קריא בוואטסאפ:
+          // *שעה · שם · X סועדים* ומתחת: ש׳ שולחנות | טלפון | סטטוס פיקדון
+          const tables = cellOf(["שולחנות", "שולחן"]);
+          const phone = cellOf(["טלפון", "נייד"]);
+          const depRaw = cellOf(["פיקדון"]);
+          const deposit = !depRaw ? "" : /חסר|✗|✖|❌/.test(depRaw) ? "❌ חסר פיקדון" : /מובטח|✓|✔|✅/.test(depRaw) ? "✅" : depRaw;
+          const head = [time, name, seats && `${seats} סועדים`].filter(Boolean).join(" · ");
+          const details = [tables && `ש׳ ${tables.replace(/\s+/g, "")}`, phone && fmtPhoneIL(phone), deposit].filter(Boolean).join(" | ");
+          const extras = r
+            .map((c, ci) => ({ c: clean(c).replace(/\*/g, "").trim(), h: header[ci] || "" }))
+            .filter(({ c, h }) => c && c !== "-" && c !== "—" && !KNOWN.some((k) => h.includes(k)))
+            .map(({ c }) => c);
+          const block = [head && `*${head}*`, details, ...(extras.length ? [`💬 ${extras.join(" · ")}`] : [])].filter(Boolean).join("\n");
+          if (block) { out.push(block); out.push(""); }
+        } else {
+          // טבלה שאינה הזמנות - שורה פשוטה
+          const parts = r.map((c) => clean(c).replace(/\*/g, "").trim()).filter((c) => c && c !== "-" && c !== "—");
+          if (parts.length) out.push(parts.join(" · "));
+        }
+      }
+      continue;
+    }
+    if (/^\s*[-_*]{3,}\s*$/.test(line)) { out.push(""); i++; continue; }  // קו מפריד -> רווח
+    out.push(clean(line).replace(/^\s*[-*•]\s+/, "• "));                  // תבליט -> •
+    i++;
+  }
+  return out.join("\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }

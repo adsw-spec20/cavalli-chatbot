@@ -15,6 +15,9 @@ import {
   renderReservationList,
   filterByTimeRange,
   scopeNoteFor,
+  missingDepositFooter,
+  renderByDay,
+  mdToWhatsApp,
   type TabitResRow,
 } from "../src/lib/tabit-format";
 import { enrichDayResult } from "../src/lib/tabit-lab";
@@ -73,7 +76,8 @@ t("שורת ספירה", full.split("\n")[1], "4 הזמנות · 25 סועדים
 t("קיבוץ בוקר", full.includes("🌅 *בוקר*"), true);
 t("קיבוץ ערב", full.includes("🌆 *ערב*"), true);
 t("כל ארבע ההזמנות מופיעות", ["דנה לוי", "שלומי כהן", "יונתן", "(ללא שם)"].every((n) => full.includes(n)), true);
-t("שורת סיכום", full.trim().split("\n").pop(), "*סה״כ:* 4 הזמנות · 25 סועדים");
+// שורת הסיכום היא האחרונה רק כשאין פיקדונות חסרים; כשיש, האזהרה באה אחריה
+t("שורת סיכום", full.trim().split("\n").slice(-2)[0], "*סה״כ:* 4 הזמנות · 25 סועדים");
 
 const ranged = renderReservationList({
   title: "כל ההזמנות",
@@ -107,6 +111,44 @@ t(
   "*כל ההזמנות להיום* (17.9.26)\nאין הזמנות בטווח הזה."
 );
 
+// ===== פיקדונות: הגדרה אחת, ולא ספירה של המודל =====
+// שלושה מצבים ולא שניים. המודל ערבב בין "חסר" ל"ללא" וכתב 6 במקום 5.
+t("סופר רק חסרים", missingDepositFooter(ROWS), "❌ 1 הזמנות חסרות פיקדון");
+t("'ללא פיקדון' אינו 'חסר'", missingDepositFooter([ROWS[0], ROWS[3]]), "");
+t("אין חסרים - אין שורה", missingDepositFooter([ROWS[1]]), "");
+t("אזהרת הפיקדון נכנסת לבלוק אוטומטית", full.includes("❌ 1 הזמנות חסרות פיקדון"), true);
+t(
+  "שורת זנב מפורשת גוברת על האוטומטית",
+  renderReservationList({ title: "כל ההזמנות", dayISO: DAY, list: ROWS, footer: "שורה משלי", todayISO: TODAY }).trim().split("\n").pop(),
+  "שורה משלי"
+);
+
+// ===== רשימה שפרושה על כמה ימים =====
+const multiDay: TabitResRow[] = [
+  { id: "p", name: "שני יעקובוב", phone: "0501112222", seats: 2, day: "2026-09-17", time: "20:00", tables: [5], deposit: "secured" },
+  { id: "q", name: "שני כהן", phone: "0503334444", seats: 4, day: "2026-09-19", time: "19:00", tables: [7], deposit: "missing" },
+];
+const byDay = renderByDay(multiDay, { title: "הזמנות שנמצאו", todayISO: TODAY });
+t("בלוק לכל יום", (byDay.match(/הזמנות שנמצאו/g) ?? []).length, 2);
+t("יום ראשון ברשימה", byDay.includes("*הזמנות שנמצאו להיום* (17.9.26)"), true);
+t("יום שני ברשימה", byDay.includes("19.9.26"), true);
+t("יום יחיד מרונדר כבלוק אחד", (renderByDay([multiDay[0]], { title: "הזמנות שנמצאו", todayISO: TODAY }).match(/הזמנות שנמצאו/g) ?? []).length, 1);
+t("רשימה ריקה מקבלת טקסט ברור", renderByDay([], { title: "הזמנות שנמצאו", emptyText: "לא נמצא." }), "*הזמנות שנמצאו*\nלא נמצא.");
+
+// ===== כפתור "העתק לוואטסאפ": הבלוק המוכן חייב לעבור בלי שריטה =====
+// זה מה שהצוות מקבל בפועל בקבוצה. ההמרה נועדה לטבלאות markdown, והיא אסור
+// שתיגע בבלוק שכבר נבנה בפורמט וואטסאפ.
+t("בלוק מוכן עובר את ההמרה ללא שינוי", mdToWhatsApp(full), full);
+t("בלוק עם טווח עובר ללא שינוי", mdToWhatsApp(ranged), ranged);
+t("בלוק רב-יומי עובר ללא שינוי", mdToWhatsApp(renderByDay(multiDay, { title: "הזמנות שנמצאו", todayISO: TODAY })), renderByDay(multiDay, { title: "הזמנות שנמצאו", todayISO: TODAY }));
+// והיא עדיין עושה את העבודה שלה על טבלה, למקרה שהמודל מחזיר נתונים שאינם הזמנות
+t(
+  "טבלה עדיין מומרת",
+  mdToWhatsApp("| מקור | כמות |\n| --- | --- |\n| אונליין | 12 |").includes("אונליין · 12"),
+  true
+);
+t("מקף ארוך נוקה", mdToWhatsApp("היום — 12 הזמנות"), "היום - 12 הזמנות");
+
 // ===== החיבור למעבדה: מה שהכלי באמת מחזיר למודל =====
 // כאן נבדק שהסינון והרינדור אכן קורים בשרשרת של הכלי, ולא רק בפונקציה הטהורה.
 const toolOut = enrichDayResult(
@@ -129,6 +171,14 @@ const noFilter = enrichDayResult(
 t("בלי טווח - שומר על הספירה של הסוכן", [noFilter.count, noFilter.covers], [4, 25]);
 t("בלי טווח - אין תיאור טווח", noFilter.filtered_range, undefined);
 t("בלי טווח - עדיין מרנדר", String(noFilter.rendered).includes("דנה לוי"), true);
+
+const deposits = enrichDayResult(
+  "tabit_deposit_summary",
+  { day: DAY },
+  { day: DAY, secured: 2, missing: [ROWS[2]] }
+) as Record<string, unknown>;
+t("סיכום פיקדונות מקבל רשימה מוכנה", String(deposits.rendered).startsWith("*חסרי פיקדון"), true);
+t("סיכום פיקדונות כולל את ההזמנה החסרה", String(deposits.rendered).includes("יונתן"), true);
 
 const summary = enrichDayResult("tabit_covers_summary", { day: DAY }, { day: DAY, count: 4, covers: 25 }) as Record<string, unknown>;
 t("כלי סיכום לא מקבל רשימה מרונדרת", summary.rendered, undefined);
