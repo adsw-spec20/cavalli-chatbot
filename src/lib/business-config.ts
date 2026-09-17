@@ -131,6 +131,11 @@ export interface BusinessConfig {
     tiktok?: string;
     email?: string;
     reservationUrl?: string;
+    /**
+     * קישור להשארת ביקורת בגוגל. נשלח **רק** ללקוח שאמר במפורש שהיה ונהנה
+     * (ראה review-invite.ts). ריק = הבוט לא מזמין לביקורת בכלל.
+     */
+    reviewUrl?: string;
     /** קישור פנייה מהירה בוואטסאפ (wa.me) */
     whatsapp?: string;
   };
@@ -180,6 +185,7 @@ export const businessConfig: BusinessConfig = {
     facebook: "https://www.facebook.com/profile.php?id=61585784255056",
     tiktok: "https://www.tiktok.com/@cafecavalli",
     reservationUrl: "https://tabitisrael.co.il/site/cafe-cavali",
+    reviewUrl: "https://search.google.com/local/writereview?placeid=ChIJvX6bzja1AhURVDdvqJX9_EU",
     whatsapp: "https://wa.me/972509798917",
   },
 

@@ -233,6 +233,14 @@ export async function buildBrainSnapshot(query = ""): Promise<BrainSnapshot> {
         .join("\n"),
       origin: "config" as const,
     },
+    {
+      id: "cfg-review",
+      title: "קישור לביקורת בגוגל",
+      body: config.contact?.reviewUrl
+        ? `${config.contact.reviewUrl}\n\nנשלח אוטומטית רק ללקוח שכתב במפורש שהיה כאן ושנהנה, ולכל היותר פעם ב-90 יום. הבוט לעולם לא מציע ביקורת מיוזמתו.`
+        : "לא מוגדר - הבוט לא מזמין לביקורת כלל.",
+      origin: "config" as const,
+    },
     { id: "cfg-policies", title: "מדיניות ונהלים", body: (config.policies ?? []).join("\n\n"), origin: "config" as const },
     { id: "cfg-faqs", title: "שאלות נפוצות", body: config.faqs.map((f) => `ש: ${f.question}\nת: ${f.answer}`).join("\n\n"), origin: "config" as const },
     { id: "cfg-forbidden", title: "נושאים אסורים", body: config.forbiddenTopics.join("\n"), origin: "config" as const },

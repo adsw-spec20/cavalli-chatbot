@@ -16,6 +16,8 @@ const SUITES = [
   ["פורמט רשימות טאביט", "scripts/tabit-format-test.mts"],
   ["לוגיקת מעבדת טאביט", "scripts/tabit-smart-test.mts"],
   ["לחיצה כפולה וגבול הפרק", "scripts/episode-guard-test.mts"],
+  ["שער ההזמנה לביקורת", "scripts/review-invite-test.mts"],
+  ["ניקוי תשובת המודל", "scripts/sanitize-test.mts"],
 ];
 
 let failed = 0;

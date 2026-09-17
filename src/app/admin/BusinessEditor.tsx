@@ -792,6 +792,12 @@ export default function BusinessEditor({ token }: { token: string }) {
               <Field label="כתובת" value={cfg.contact.address} onChange={(v) => upContact({ address: v })} />
               <Field label="ניווט (Waze)" value={cfg.contact.navigationUrl} onChange={(v) => upContact({ navigationUrl: v })} />
               <Field label="קישור להזמנת מקום" value={cfg.contact.reservationUrl} onChange={(v) => upContact({ reservationUrl: v })} />
+              <Field
+                label="קישור לביקורת בגוגל"
+                value={cfg.contact.reviewUrl}
+                onChange={(v) => upContact({ reviewUrl: v })}
+                hint="נשלח רק ללקוח שכתב במפורש שהיה כאן ושנהנה, ולכל היותר פעם ברבעון. ריק = הבוט לא מזמין לביקורת בכלל."
+              />
               <Field label="אתר" value={cfg.contact.website} onChange={(v) => upContact({ website: v })} />
               <Field label="אינסטגרם" value={cfg.contact.instagram} onChange={(v) => upContact({ instagram: v })} />
               <Field label="פייסבוק" value={cfg.contact.facebook} onChange={(v) => upContact({ facebook: v })} />

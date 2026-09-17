@@ -27,6 +27,7 @@ import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint
 import { isOpenNow, israelDateISO, effectiveHoursToday, isWithinGateWindow, openStateLine } from "./business-hours";
 import { tabitIdentityHint } from "./tabit-lookup";
 import { dayHintForMessage, relativeWordsIn, hasExplicitDate, inMidnightWindow } from "./day-context";
+import { shouldInviteReview, reviewInviteLine } from "./review-invite";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
 import { contactPhonesText, type BusinessConfig } from "./business-config";
@@ -374,7 +375,8 @@ const PRICE_HINT = /כמה עולה|מה המחיר|מחיר של/;
  * (כטקסט או כבלוק JSON מגודר) והמרת הדגשה ** ל-* שמוצגת נכון בוואטסאפ.
  * משותף למסלול התשובה הרגילה ולמסלול ההסלמה (ששניהם שולחים טקסט של המודל).
  */
-function sanitizeModelText(raw: string): string {
+/** מיוצא לצורך בדיקה אופליין (scripts/sanitize-test.mts) - לא בשימוש מחוץ לקובץ. */
+export function sanitizeModelText(raw: string): string {
   let t = (raw ?? "").trim();
   for (const marker of ["<tool_call", "&lt;tool_call", "</tool_call", "<function_call", "<invoke"]) {
     const idx = t.indexOf(marker);
@@ -416,7 +418,13 @@ function sanitizeModelText(raw: string): string {
     .replace(/[←→⬅➡⇐⇒]/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return t.replace(/(^|[\s(])משהו אפשר לעזור\?/g, "$1אפשר לעזור במשהו?");
+  // ⚠️ 17.9: התיקון תפס רק את הצורה המדויקת "משהו אפשר לעזור?", והמודל ייצר
+  // "משהו אפשר לעזור **בו מהתפריט**?" - אותה שגיאה בדיוק עם זנב. עכשיו נתפסת
+  // כל הצורה, כולל הזנב, והזנב נשמר: "אפשר לעזור במשהו מהתפריט?".
+  return t.replace(
+    /(^|[\s(])משהו אפשר לעזור(?:\s+בו)?([^?\n]{0,40})\?/g,
+    (_m, pre: string, tail: string) => `${pre}אפשר לעזור במשהו${tail}?`
+  );
 }
 
 /** מסנג'ר/אינסטגרם לא מרנדרים *הדגשה* בכוכבית - הלקוח רואה כוכביות גולמיות
@@ -1538,6 +1546,27 @@ export async function handleIncomingMessage(
     ? dayHintForMessage(dayAnchor.content, dayAnchor.ts, Date.now(), midnightAlreadyAsked)
     : null;
 
+  // ----- הזמנה להשאיר ביקורת בגוגל (17.9) -----
+  // רק ללקוח שאמר במפורש שהיה כאן **וגם** שנהנה, ורק פעם אחת ברבעון. ההחלטה
+  // נעשית בקוד ולא במודל, כי הדרישה היא ודאות מלאה: לקוח שהתלונן וקיבל בקשה
+  // לביקורת זו פגיעה אמיתית, ולקוח מרוצה שלא קיבל לא הפסיד כלום. review-invite.ts.
+  const REVIEW_COOLDOWN_MS = 90 * 86_400_000;
+  const reviewInvite = (() => {
+    const url = cfgEarly.contact?.reviewUrl?.trim();
+    if (!url) return null;
+    const invitedRecently = stored.some(
+      (m) => m.role === "assistant" && m.meta?.reviewInvited && Date.now() - m.ts < REVIEW_COOLDOWN_MS
+    );
+    const ok = shouldInviteReview({
+      text: lastUserTurn,
+      episodeText: episodeUserMsgs.map((m) => m.content).join("\n"),
+      alreadyInvited: invitedRecently,
+      // שיחה שנמצאת אצל נציג כבר חזרה למעלה, ולכן נשאר רק דגל ההסלמה עצמו
+      escalated: conversation.escalated === true,
+    });
+    return ok ? reviewInviteLine(url) : null;
+  })();
+
   const quickKeys = matchQuickAnswers(lastUserTurn);
   const kbHit = quickKeys.length ? null : matchLearnedAnswer(lastUserTurn, freeQAs);
 
@@ -1833,6 +1862,9 @@ export async function handleIncomingMessage(
       // עם הכוכביות. נמדד על כל ההיסטוריה: 4,859 הודעות יצאו ככה, רובן דווקא
       // התשובה הנפוצה ביותר שיש לנו.
       canned = stripBoldForChannel(canned, input.channel);
+      // לא מצרפים להודעת "עניתי למעלה" - שם אין תשובה אמיתית להוסיף לה
+      const cannedReview = reviewInvite && !repeat ? reviewInvite : null;
+      if (cannedReview) canned = `${canned}\n\n${cannedReview}`;
       await namePromise.catch(() => undefined);
       await repo.addMessage({
         conversationId: conversation.id,
@@ -1842,6 +1874,7 @@ export async function handleIncomingMessage(
         meta: {
           canned: repeat ? `${cannedKey}-repeat` : cannedKey,
           ...(attach ? { sentMedia: [attach.id] } : igVideoLinked && !repeat ? { sentMedia: [igVideoLinked] } : {}),
+          ...(cannedReview ? { reviewInvited: true } : {}),
         },
       });
       await recordFreeReply();
@@ -2518,12 +2551,18 @@ export async function handleIncomingMessage(
     /* לא קריטי - ממשיכים */
   }
 
+  // ההזמנה לביקורת מצטרפת לתשובה החמה שהמודל כבר כתב, ולא מחליפה אותה
+  if (reviewInvite && !reply.includes(reviewInvite)) reply = `${reply}\n\n${reviewInvite}`;
+
   await repo.addMessage({
     conversationId: conversation.id,
     role: "assistant",
     content: reply,
     ts: Date.now(),
-    meta: sentMediaIds ? { sentMedia: sentMediaIds } : undefined,
+    meta: {
+      ...(sentMediaIds ? { sentMedia: sentMediaIds } : {}),
+      ...(reviewInvite ? { reviewInvited: true } : {}),
+    },
   });
 
   return { conversationId: conversation.id, reply, status: "bot", media };
