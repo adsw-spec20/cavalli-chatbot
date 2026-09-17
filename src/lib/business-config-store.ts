@@ -14,26 +14,45 @@ import type { BusinessConfig } from "./business-config";
 const SETTING_KEY = "business_config";
 
 /**
- * השלמת שדות חדשים בתוך מערך השעות.
+ * השלמת שדות שנולדו בקוד אחרי שבעל העסק כבר שמר קונפיג מהפאנל.
  *
- * ⚠️ המיזוג כאן הוא רדוד: `hours` שנשמר מהפאנל **דורס** את המערך מהקוד במלואו.
- * לכן שדה חדש בתוך שורת יום (כמו lastSeating שנוסף ב-17.9) לעולם לא היה מגיע
- * לפרודקשן - הקונפיג השמור פשוט לא מכיר אותו, והבוט היה ממשיך לא לדעת מתי
- * מפסיקים להושיב. ההשלמה נעשית רק כשהשדה **חסר** (undefined); null מפורש
- * הוא בחירה של בעל העסק ונשמר כמו שהוא.
+ * ⚠️ **המלכודת שחזרה פעמיים.** המיזוג עם ברירת המחדל הוא רדוד, ולכן כל ערך
+ * שנשמר מהפאנל **דורס את המקבילה שלו במלואה**:
+ *   - אובייקט `contact` שנשמר דורס את כל פרטי הקשר, ושדה חדש בתוכו נעלם.
+ *   - מערך `hours` שנשמר דורס את כל השורות, ושדה חדש בתוך שורה נעלם.
+ *
+ * זה קרה ב-17.9 עם lastSeating, תוקן, וקרה שוב באותו יום עם reviewUrl -
+ * הפיצ'ר עבד מקומית (אין שם קונפיג שמור) ולא עשה כלום בפרודקשן. לכן ההשלמה
+ * כאן **גנרית**: כל אובייקט־בן בברירת המחדל מוזג מתחת לזה שנשמר, וכך גם שדה
+ * שייוולד מחר יגיע ללקוחות בלי לזכור שום דבר.
+ *
+ * ההשלמה נוגעת רק בשדה **חסר** (undefined). מחרוזת ריקה או null הם בחירה
+ * מפורשת של בעל העסק ונשמרים כמו שהם.
  *
  * מיוצא לצורך בדיקה (scripts/open-state-test.mts) - לא בשימוש מחוץ לקובץ.
  */
-export function withHoursDefaults(cfg: BusinessConfig): BusinessConfig {
-  if (!Array.isArray(cfg.hours)) return cfg;
-  let changed = false;
-  const hours = cfg.hours.map((h) => {
-    if (h.lastSeating !== undefined) return h;
-    const fallback = defaultConfig.hours.find((d) => d.day === h.day)?.lastSeating ?? null;
-    changed = true;
-    return { ...h, lastSeating: fallback };
-  });
-  return changed ? { ...cfg, hours } : cfg;
+export function withConfigDefaults(cfg: BusinessConfig): BusinessConfig {
+  const out = { ...cfg } as Record<string, unknown>;
+  const defaults = defaultConfig as unknown as Record<string, unknown>;
+
+  // אובייקטי־בן (contact, parking וכל מה שייווסף) - ברירת המחדל מתחת לשמור
+  for (const [key, def] of Object.entries(defaults)) {
+    if (!def || typeof def !== "object" || Array.isArray(def)) continue;
+    const saved = out[key];
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      out[key] = { ...(def as object), ...(saved as object) };
+    }
+  }
+
+  // שורות השעות - השלמה לפי שם היום, כי כאן המפתח הוא ערך ולא מיקום
+  if (Array.isArray(cfg.hours)) {
+    out.hours = cfg.hours.map((h) =>
+      h.lastSeating !== undefined
+        ? h
+        : { ...h, lastSeating: defaultConfig.hours.find((d) => d.day === h.day)?.lastSeating ?? null }
+    );
+  }
+  return out as unknown as BusinessConfig;
 }
 
 /** טוען את המידע העסקי: הגרסה הערוכה מה-DB, או ברירת המחדל מהקוד. */
@@ -43,7 +62,7 @@ export async function loadBusinessConfig(): Promise<BusinessConfig> {
     if (!raw) return defaultConfig;
     const parsed = JSON.parse(raw) as Partial<BusinessConfig>;
     // מיזוג מעל ברירת המחדל כדי שלא יישבר אם חסר שדה בגרסה הערוכה
-    return withHoursDefaults({ ...defaultConfig, ...parsed });
+    return withConfigDefaults({ ...defaultConfig, ...parsed });
   } catch {
     return defaultConfig;
   }

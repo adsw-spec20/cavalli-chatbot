@@ -1561,8 +1561,10 @@ export async function handleIncomingMessage(
       text: lastUserTurn,
       episodeText: episodeUserMsgs.map((m) => m.content).join("\n"),
       alreadyInvited: invitedRecently,
-      // שיחה שנמצאת אצל נציג כבר חזרה למעלה, ולכן נשאר רק דגל ההסלמה עצמו
-      escalated: conversation.escalated === true,
+      // ⚠️ דגל ה-escalated על השיחה נשאר דלוק עד שהיא נסגרת ונפתחת מחדש, כלומר
+      // הסלמה משבוע שעבר הייתה חוסמת לנצח. מה שרלוונטי הוא האם הוסלם **בפרק
+      // הנוכחי** - אז באמת לא מבקשים ביקורת ממי שממתין לתשובה מהצוות.
+      escalated: stored.some((m) => m.ts >= episodeStartTs && m.meta?.escalation === true),
     });
     return ok ? reviewInviteLine(url) : null;
   })();

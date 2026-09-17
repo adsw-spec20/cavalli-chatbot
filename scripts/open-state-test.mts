@@ -7,7 +7,7 @@
  */
 import { businessConfig } from "../src/lib/business-config";
 import { openStateAt, openStateLine, lastSeatingForDate } from "../src/lib/business-hours";
-import { withHoursDefaults } from "../src/lib/business-config-store";
+import { withConfigDefaults } from "../src/lib/business-config-store";
 
 let pass = 0;
 const fails: string[] = [];
@@ -88,15 +88,26 @@ const savedFromPanel = {
     { day: "שבת", hours: null },
   ],
 };
-const healed = withHoursDefaults(savedFromPanel);
+const healed = withConfigDefaults(savedFromPanel);
 t("קונפיג שמור בלי השדה - מושלם משני עד חמישי", healed.hours.map((h) => h.lastSeating ?? null), [null, "23:00", "23:00", "23:00", "23:00", null, null]);
 t("אחרי ההשלמה החישוב עובד", openStateAt(healed, il("2026-09-17", "23:20")).pastLastSeating, true);
 
+// ⚠️ אותה מלכודת בדיוק, פעם שנייה: אובייקט contact שנשמר מהפאנל דורס את כל
+// פרטי הקשר, ולכן שדה חדש בתוכו (reviewUrl) לא הגיע לפרודקשן בכלל - הפיצ'ר
+// עבד מקומית ולא עשה כלום אצל לקוחות. ההשלמה חייבת להיות גנרית, לא לפי שדה.
+const panelContact = JSON.parse(JSON.stringify({ ...cfg, contact: { ...cfg.contact, reviewUrl: undefined } }));
+t("contact שנשמר לפני שהשדה נולד - מושלם", !!withConfigDefaults(panelContact).contact.reviewUrl, true);
+t("שדה קיים ב-contact לא נדרס", withConfigDefaults(panelContact).contact.phone, cfg.contact.phone);
+const clearedByOwner = JSON.parse(JSON.stringify({ ...cfg, contact: { ...cfg.contact, reviewUrl: "" } }));
+t("קישור שנוקה ידנית נשאר ריק", withConfigDefaults(clearedByOwner).contact.reviewUrl, "");
+const changedByOwner = JSON.parse(JSON.stringify({ ...cfg, contact: { ...cfg.contact, reviewUrl: "https://g.page/r/x/review" } }));
+t("קישור שנערך ידנית נשמר", withConfigDefaults(changedByOwner).contact.reviewUrl, "https://g.page/r/x/review");
+
 // בחירה מפורשת של בעל העסק לא נדרסת על ידי ההשלמה
 const ownerCleared = { ...cfg, hours: cfg.hours.map((h) => (h.day === "שני" ? { ...h, lastSeating: null } : h)) };
-t("null מפורש נשמר", withHoursDefaults(ownerCleared).hours.find((h) => h.day === "שני")?.lastSeating, null);
+t("null מפורש נשמר", withConfigDefaults(ownerCleared).hours.find((h) => h.day === "שני")?.lastSeating, null);
 const ownerChanged = { ...cfg, hours: cfg.hours.map((h) => (h.day === "שני" ? { ...h, lastSeating: "22:30" } : h)) };
-t("ערך שנערך נשמר", withHoursDefaults(ownerChanged).hours.find((h) => h.day === "שני")?.lastSeating, "22:30");
+t("ערך שנערך נשמר", withConfigDefaults(ownerChanged).hours.find((h) => h.day === "שני")?.lastSeating, "22:30");
 
 if (fails.length) {
   console.log(`\n${fails.length} נכשלו:\n`);
