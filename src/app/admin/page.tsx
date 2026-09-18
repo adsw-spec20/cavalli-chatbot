@@ -21,7 +21,8 @@ const Settings = dynamic(() => import("./Settings"), { loading: lazyLoading });
 const Media = dynamic(() => import("./Media"), { loading: lazyLoading });
 const Reservations = dynamic(() => import("./Reservations"), { loading: lazyLoading });
 const TabitHub = dynamic(() => import("./TabitHub"), { loading: lazyLoading });
-const Questionnaire = dynamic(() => import("./Questionnaire"), { loading: lazyLoading });
+// "בירור המוח" החליף את השאלון הסטטי (18.9): הוא נבנה מהמוח החי ומחזיר אליו
+const BrainReview = dynamic(() => import("./BrainReview"), { loading: lazyLoading });
 const TeamQuestions = dynamic(() => import("./TeamQuestions"), { loading: lazyLoading });
 const TestChat = dynamic(() => import("./TestChat"), { loading: lazyLoading });
 
@@ -106,7 +107,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "reservations", label: "הזמנות" },
   { key: "tabit", label: "טאביט" },
   { key: "knowledge", label: "ידע" },
-  { key: "questionnaire", label: "שאלון" },
+  { key: "questionnaire", label: "בירור המוח" },
   { key: "teamq", label: "שאלות לצוות" },
   { key: "dashboard", label: "דשבורד" },
   { key: "business", label: "מידע עסקי" },
@@ -124,7 +125,7 @@ const TAB_META: Record<Exclude<Tab, "inbox">, { title: string; subtitle: string 
   tabit: { title: "מרכז טאביט", subtitle: "תמונה חיה מטאביט (קריאה בלבד): יום והזמנות, מפת רצפה, ומעבדת צ'אט - הכל במקום אחד" },
   brain: { title: "מוח הבוט", subtitle: "כל מה שהבוט יודע במקום אחד: הוראות, מאגר התשובות החינמיות, מידע עסקי וידע נלמד - עם חיפוש רוחבי וגלאי סתירות" },
   knowledge: { title: "ניהול ידע", subtitle: "שאלות שהבוט לא ידע לענות עליהן, והידע שכבר נלמד - כל תשובה שנשמרת נכנסת לתוקף מיד" },
-  questionnaire: { title: "שאלון הידע", subtitle: "234 שאלות שנבנו מניתוח כל השיחות - כל תשובה נשמרת מיד ומוטמעת לבוט" },
+  questionnaire: { title: "בירור המוח", subtitle: "עוברים נושא-נושא על כל מה שהבוט יודע: מה להשאיר, מה לתקן, מה למחוק ומה חסר. כל תשובה נכנסת לבוט מיד" },
   teamq: { title: "שאלות לצוות", subtitle: "הרשימה של אדיר לצוות קוואלי - שאלה אחת בכל פעם, בקצב שלכם. כל תשובה נשמרת מיד" },
   dashboard: { title: "דשבורד", subtitle: "תמונת מצב חיה: עומס, ערוצים, נושאים ומגמות" },
   business: { title: "מידע עסקי", subtitle: "שעות, תפריט, תאריכים מיוחדים ופרטי קשר - הבוט מתעדכן מיד עם השמירה" },
@@ -917,7 +918,7 @@ export default function AdminPage() {
       {/* השאלון הגדול הוא כלי עבודה של המנהל הראשי בלבד (בקשה 29.8, למניעת
           בלבול עם "שאלות לצוות"); מוסתר גם כשהושלם */}
       {TABS.filter(
-        (t) => !(t.key === "questionnaire" && (quizComplete || role !== "master"))
+        (t) => !(t.key === "questionnaire" && role !== "master")
       )
         // "מוח הבוט" חושף את כל ההוראות והידע - מנהל ראשי בלבד
         // (מרכז טאביט נפתח לכל הצוות 15.9; היסטוריית המעבדה נשארה למנהל)
@@ -1139,7 +1140,7 @@ export default function AdminPage() {
           {tab === "knowledge" && (
             <Knowledge token={token} onMutate={loadConversations} onTest={openTest} onOpenConversation={openConversation} agentName={agentName} />
           )}
-          {tab === "questionnaire" && role === "master" && <Questionnaire token={token} agentName={agentName} />}
+          {tab === "questionnaire" && role === "master" && <BrainReview token={token} />}
           {tab === "teamq" && <TeamQuestions token={token} agentName={agentName} />}
           {tab === "dashboard" && <Dashboard token={token} onOpenInbox={openInbox} onOpenKnowledge={() => go("knowledge")} onOpenReservations={() => go("reservations")} />}
           {tab === "business" && <BusinessEditor token={token} />}

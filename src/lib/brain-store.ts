@@ -101,6 +101,28 @@ export async function setOverride(id: string, text: string, base: string, note?:
 }
 
 /**
+ * דריסה על **עוגן טקסט חופשי** - סעיף בודד בתוך כלל, ולא פריט שלם.
+ * ההבדל מ-setOverride: כאן טקסט ריק פירושו "הסר את הסעיף מהפרומפט" (ולא
+ * "בטל את הדריסה"). משמש את בירור המוח, שמחליט ברמת סעיף ולא ברמת כלל.
+ */
+export async function setAnchorOverride(id: string, text: string, base: string, note?: string): Promise<void> {
+  const cur = await loadOverrides();
+  await pushHistory(cur, `בירור המוח: ${id}`);
+  const items = { ...cur.items, [id]: { id, text, base, updatedAt: Date.now(), note } };
+  await saveOverrides({ items, version: cur.version + 1, updatedAt: Date.now() });
+}
+
+/** הסרת דריסה לפי מזהה (חזרה למצב שלפני העריכה) */
+export async function clearOverride(id: string): Promise<void> {
+  const cur = await loadOverrides();
+  if (!cur.items[id]) return;
+  await pushHistory(cur, `ביטול דריסה ${id}`);
+  const items = { ...cur.items };
+  delete items[id];
+  await saveOverrides({ items, version: cur.version + 1, updatedAt: Date.now() });
+}
+
+/**
  * מחיל דריסות על טקסט הפרומפט. מחליף כל סעיף שנערך בטקסט החדש.
  * מחזיר גם רשימת דריסות מיושנות - כאלה שהטקסט המקורי שלהן כבר לא נמצא.
  */
