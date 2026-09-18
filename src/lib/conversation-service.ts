@@ -26,7 +26,7 @@ import { bareHourHint } from "./time-hints";
 import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint } from "./reservation-slots";
 import { isOpenNow, israelDateISO, effectiveHoursToday, isWithinGateWindow, openStateLine } from "./business-hours";
 import { tabitIdentityHint } from "./tabit-lookup";
-import { dayHintForMessage, relativeWordsIn, hasExplicitDate, inMidnightWindow } from "./day-context";
+import { dayHintForMessage, relativeWordsIn, hasExplicitDate, inMidnightWindow, explicitDatesIn, israelPartsAt } from "./day-context";
 import { shouldInviteReview, reviewInviteLine } from "./review-invite";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
@@ -210,14 +210,15 @@ const QUICK_MATCHERS: { key: string; patterns: RegExp[]; exclude: RegExp }[] = [
   },
   {
     key: "reservePolicy",
-    // שאלות מדיניות הזמנה כלליות (בלי פרטי הזמנה ממשיים - אלה למודל)
+    // שאלות מדיניות הזמנה כלליות (בלי פרטי הזמנה ממשיים - אלה למודל).
+    // שישי הוסר מכאן (18.9): בקשת שישי חייבת קודם בירור כמה סועדים (8+ -> ברק,
+    // 1-7 -> בסיס מקום פנוי) - המודל מטפל לפי סעיף שישי בפרומפט, בלי לחשוף מדיניות.
     patterns: [
       /צריך להזמין (מקום )?מראש/,
       /חובה להזמין/,
       /אפשר (להזמין|לשמור) מקום מראש\??$/,
-      /(אפשר|ניתן) (להזמין|לשמור) (מקום|שולחן) ל?(יום )?שישי\??$/,
     ],
-    exclude: /אנשים|איש|סועדים|בשעה|\d{1,2}:\d{2}|על שם|בבוקר|בערב|בצהריים|מחר|היום|תאריך/,
+    exclude: /אנשים|איש|סועדים|בשעה|\d{1,2}:\d{2}|על שם|בבוקר|בערב|בצהריים|מחר|היום|תאריך|שישי/,
   },
   {
     key: "jobs",
@@ -773,13 +774,15 @@ function buildQuickAnswer(
         : `מחר (${tom.dayName}) אנחנו סגורים 🙂`;
     }
     case "reserveHowto": {
-      // בלי הפניה לוואטסאפ: הלקוח כבר מדבר איתנו כאן, וזה אותו מענה בכל הערוצים
+      // בלי הפניה לוואטסאפ: הלקוח כבר מדבר איתנו כאן, וזה אותו מענה בכל הערוצים.
+      // הצ'אט ראשון (בקשת בעל העסק 18.9): זו הדרך שהלקוח כבר נמצא בה, ובה
+      // הבקשה מגיעה ישירות לצוות - הפניה לאתר/טלפון קודם רק מוציאה אותו מכאן.
       const ways = [
+        `- כאן בצ'אט, הכי פשוט 🙂 כתבו לי כמה תהיו ומתי, ואעביר את הבקשה לצוות`,
         cfg.contact.reservationUrl ? `- אונליין: ${cfg.contact.reservationUrl}` : "",
         cfg.contact.phone ? `- בטלפון: ${contactPhonesText(cfg)}` : "",
-        `- או פשוט כאן בצ'אט 🙂 כתבו לי כמה תהיו ומתי, ואעביר את הבקשה לצוות`,
       ].filter(Boolean).join("\n");
-      return `אפשר להזמין מקום בכמה דרכים:\n${ways}\n\nכדאי לדעת: הזמנות מראש הן לשעות הערב (מ-18:00) בימים שני-חמישי. בימי ראשון (שנסגרים ב-18:00), בשעות היום ובימי שישי מגיעים בלי הזמנה - על בסיס מקום פנוי 🙂`;
+      return `אפשר להזמין מקום בכמה דרכים:\n${ways}\n\nכדאי לדעת: הזמנות מראש הן לשעות הערב (מ-18:00) בימים שני-חמישי. בימי ראשון (שנסגרים ב-18:00), בשעות היום ובימי שישי מגיעים על בסיס מקום פנוי 🙂`;
     }
   }
   return null;
@@ -877,11 +880,12 @@ const HISTORY_LIMIT_AFTER_AGENT = 24;
 
 // ----- עזרי רשתות הביטחון להזמנות (27.8, תקרית כרם) -----
 
-/** משפט ההעברה-לצוות התקני בסוף זרימת הזמנה (הפיקדון מוזכר רק כאן, אחרי האישור) */
+/** הודעת הסיום של זרימת ההזמנה - נוסח קבוע של בעל העסק (18.9).
+ *  הפיקדון מוזכר כאן ורק כאן, אחרי שהלקוח אישר את הסיכום. */
 function reservationHandoffLine(lang: "he" | "en"): string {
   return lang === "en"
-    ? "I've passed your request to our team - they'll check availability and update you right here soon. If there's room, you'll get a payment link to complete a 100 ILS deposit, and the reservation is final once it's paid 🙂"
-    : "קיבלתי את כל הפרטים 🙂 אני מעביר את הבקשה לצוות - הם יבדקו שיש מקום פנוי ויעדכנו כאן בצ'אט בהקדם. אם יש מקום, תקבלו קישור לתשלום פיקדון של 100 ש\"ח, וההזמנה סופית אחרי התשלום.";
+    ? "Great, I've got all the details 🙂\nI'm passing your request to the team now - they'll check availability and get back to you right here soon.\n\nIf there's room, you'll get a link to pay a *100 ILS deposit*.\nOnce it's paid, the reservation is final ❤️"
+    : "מעולה, קיבלתי את כל הפרטים 🙂\nאני מעביר עכשיו את הבקשה לצוות, והם יבדקו זמינות ויחזרו אליך כאן בצ׳אט בהקדם.\n\nאם יהיה מקום פנוי, תקבלו קישור לתשלום *פיקדון של 100 ש״ח*.\nלאחר ביצוע התשלום, ההזמנה תאושר סופית ❤️";
 }
 
 /** אישור קצר וחד-משמעי של הלקוח ("כן", "נכון", "מאשר") - ותו לא */
@@ -1533,7 +1537,11 @@ export async function handleIncomingMessage(
   const episodeUserMsgs = stored.filter((m) => m.role === "user" && m.ts >= episodeStartTs).slice(-6);
   const isRiskyMidnight = (m: { content: string; ts: number }) =>
     inMidnightWindow(m.ts) && !hasExplicitDate(m.content) && relativeWordsIn(m.content).some((w) => w.riskyAfterMidnight);
-  const dayAnchor = [...episodeUserMsgs].reverse().find((m) => relativeWordsIn(m.content).length > 0);
+  // העוגן: גם תאריך מספרי מפורש ("17.9") נחשב - כדי שהיום-בשבוע שלו יפוענח
+  // בקוד ולא ינוחש על ידי המודל (תקלת "17.9 זה שישי", 18.9)
+  const dayAnchor = [...episodeUserMsgs]
+    .reverse()
+    .find((m) => relativeWordsIn(m.content).length > 0 || explicitDatesIn(m.content, israelPartsAt(m.ts).dateISO).length > 0);
   // מפסיקים לשאול בשני מקרים: כבר שאלנו פעם אחת בפרק הזה, או שהלקוח כבר ענה
   // לנו עם יום/תאריך מפורש. בלי השני, לקוח ששאלנו אותו "היום או מחר?" וענה
   // "חמישי" היה נשאל שוב - כי "חמישי" אינה מילת זמן יחסית והעוגן לא התקדם.
@@ -1984,7 +1992,15 @@ export async function handleIncomingMessage(
   // ומעביר למודל - כדי שלא ישאל פעמיים ולא יתבלבל בפרטים. רמז בלבד: השיחה קובעת.
   let reservationSlots: string | undefined;
   if (looksLikeReservationFlow(history)) {
-    reservationSlots = reservationSlotsHint(extractReservationSlots(history)) ?? undefined;
+    // שערי המדיניות (יום/כמות) חלים רק על בקשה חדשה. בשיחה על הזמנה קיימת
+    // (שינוי/ביטול/בירור) הם מזיקים - שם צריך להעביר לצוות, לא לשאול "כמה תהיו".
+    const existingResvContext = [...stored.slice(-6).map((m) => m.content), lastUserTurn].some((t) =>
+      /לבטל|ביטול|בטל את|לשנות|שינוי|להזיז|לעדכן|יש לי הזמנה|ההזמנה שלי|הזמנתי|הזמנה קיימת|my reservation|i have a reservation|reservation for|change my|cancel/i.test(
+        t
+      )
+    );
+    reservationSlots =
+      reservationSlotsHint(extractReservationSlots(history), { policyGates: !existingResvContext }) ?? undefined;
   }
 
   // קריאה למודל עם ניסיונות חוזרים לשגיאות רגעיות (429 / 5xx / חיבור). הרבה
@@ -2309,14 +2325,12 @@ export async function handleIncomingMessage(
     // (קרה בפועל אחרי "תודה רבה!" בסוף הזרימה), createReservation מחזיר את
     // הכרטיס הקיים - ואז הדבקת משפט ההעברה שוב שלחה ללקוח את כל הסיכום מחדש.
     if (createdIsNew) {
-      // הודעת הסיום חייבת תמיד את שני החלקים: העברה לצוות + הפיקדון (כלל
-      // בעל העסק: הפיקדון נאמר בסוף, אחרי האישור - וכאן זה הסוף). תשובה
-      // קצרה מוחלפת; ארוכה בלי פיקדון מקבלת את השורה המלאה בנוסף.
-      if (reply.trim().length < 40) {
-        reply = handoffLine;
-      } else if (!/פיקדון|deposit/i.test(reply)) {
-        reply = `${reply}\n\n${handoffLine}`;
-      }
+      // הודעת הסיום היא נוסח קבוע של בעל העסק (18.9), ולכן היא מחליפה את מה
+      // שהמודל ניסח - כך הלקוח מקבל תמיד בדיוק את אותה הודעה. היחיד שנשמר:
+      // תשובה ארוכה שאינה סגירה סטנדרטית (הלקוח שאל עוד משהו באותה הודעה) -
+      // שם התשובה נשמרת וההודעה הקבועה מצורפת אחריה.
+      const plainClosing = reply.trim().length < 200 || /פיקדון|deposit/i.test(reply);
+      reply = plainClosing ? handoffLine : `${reply}\n\n${handoffLine}`;
     }
   }
 

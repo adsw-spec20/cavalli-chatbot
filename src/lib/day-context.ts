@@ -176,6 +176,29 @@ export function tenseOf(text: string): Tense {
   return "unknown";
 }
 
+/**
+ * תאריכים מספריים מפורשים בטקסט ("17.9", "17/9", "17.9.26") - כדי לפענח את
+ * היום-בשבוע שלהם בקוד. נולד מתקלה אמיתית (18.9): לקוח כתב "17.9" והמודל
+ * חישב לבד שזה "יום שישי" (זה חמישי) ובנה על זה תשובה שגויה שלמה.
+ * אותם סייגים כמו hasExplicitDate: החלק השני חייב להיות חודש חוקי, כדי
+ * ש"21.30" (שעה) לא ייחשב תאריך.
+ */
+export function explicitDatesIn(text: string, refISO: string): { raw: string; iso: string }[] {
+  const refYear = Number(refISO.slice(0, 4));
+  const out: { raw: string; iso: string }[] = [];
+  for (const m of text.matchAll(/(^|[^\d:])(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?(?![\d:])/g)) {
+    const day = Number(m[2]);
+    const month = Number(m[3]);
+    if (!(day >= 1 && day <= 31 && month >= 1 && month <= 12)) continue;
+    let year = m[4] ? Number(m[4]) : refYear;
+    if (year < 100) year += 2000;
+    if (year < 2000 || year > 2100) continue;
+    const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    if (!out.some((o) => o.iso === iso)) out.push({ raw: `${day}.${month}`, iso });
+  }
+  return out;
+}
+
 // ===== ההקשר שמוזרק לבוט הלקוחות =====
 
 export interface DayHint {
@@ -201,7 +224,17 @@ export function dayHintForMessage(
   alreadyAsked = false
 ): DayHint | null {
   const words = relativeWordsIn(text);
-  if (!words.length) return null;
+  const writtenParts = israelPartsAt(writtenAtMs);
+  // תאריך מספרי מפורש ("17.9") - היום-בשבוע שלו מחושב בקוד, שהמודל לא ינחש
+  const dates = explicitDatesIn(text, writtenParts.dateISO);
+  if (!words.length) {
+    if (!dates.length) return null;
+    const parts = dates.map((d) => `"${d.raw}" = ${formatDayHe(d.iso)}`);
+    return {
+      needsConfirm: false,
+      line: `פענוח תאריכים בהודעת הלקוח, מחושב בקוד: ${parts.join(", ")}. השתמש ביום-בשבוע הזה כמו שהוא - אל תחשב בעצמך.`,
+    };
+  }
 
   const written = israelPartsAt(writtenAtMs);
   const resolve = (w: RelativeWord) => addDaysISO(written.dateISO, w.offsetDays);
@@ -224,7 +257,10 @@ export function dayHintForMessage(
     };
   }
 
-  const parts = words.map((w) => `"${w.word}" = ${formatDayHe(resolve(w))}`);
+  const parts = [
+    ...words.map((w) => `"${w.word}" = ${formatDayHe(resolve(w))}`),
+    ...dates.map((d) => `"${d.raw}" = ${formatDayHe(d.iso)}`),
+  ];
   const gapMin = Math.round((nowMs - writtenAtMs) / 60_000);
   // מציינים את זמן הכתיבה רק כשהוא באמת שונה מעכשיו, אחרת זה רעש מיותר בכל הודעה
   const when =

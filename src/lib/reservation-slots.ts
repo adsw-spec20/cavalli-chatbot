@@ -149,8 +149,17 @@ export function extractReservationSlots(
 
 const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
-/** הרמז כפי שהוא נשלח למודל. null = אין מה לומר (לא נמסר שום פרט). */
-export function reservationSlotsHint(slots: ReservationSlots): string | null {
+/**
+ * הרמז כפי שהוא נשלח למודל. null = אין מה לומר (לא נמסר שום פרט).
+ *
+ * policyGates=false מבטל את שערי המדיניות (יום/כמות). חובה לכבות אותם בשיחה
+ * על **הזמנה קיימת** (שינוי, ביטול, בירור): שם הלקוח לא מבקש מקום חדש, ושאלת
+ * "כמה תהיו?" במקום העברה לצוות היא תקלה (נתפס ב-eval 18.9).
+ */
+export function reservationSlotsHint(
+  slots: ReservationSlots,
+  opts?: { policyGates?: boolean }
+): string | null {
   const known: string[] = [];
   if (slots.people !== undefined) known.push(`${slots.people} אנשים`);
   if (slots.dateISO) {
@@ -161,11 +170,31 @@ export function reservationSlotsHint(slots: ReservationSlots): string | null {
   if (slots.seating) known.push(`ישיבה ${slots.seating}`);
   if (slots.name) known.push(`על שם ${slots.name}`);
   if (slots.phone) known.push(`טלפון ${slots.phone}`);
-  if (!known.length) return null;
+  // שערי המדיניות (18.9) - הוראה קשיחה שמוזרקת לתוך ההודעה עצמה, כי כלל
+  // בפרומפט לא הספיק: המודל נטה להניח "היום" ולענות את תשובת היום הנוכחי
+  // (בשישי הוא ענה "בשישי אין הזמנות" ללקוח שלא ציין יום בכלל).
+  const gates: string[] = [];
+  if (opts?.policyGates === false) {
+    // שיחה על הזמנה קיימת - אין כאן החלטת זמינות חדשה
+  } else if (!slots.dateISO) {
+    gates.push(
+      `⚠️ **היום עוד לא נאמר.** אסור לענות שום דבר על זמינות - לא "מגיעים על בסיס מקום פנוי", ` +
+        `לא שעות פתיחה, לא "סגור" ולא הפניה לברק. אל תניח שהכוונה להיום. התשובה היחידה המותרת עכשיו: ` +
+        `לשאול בחום לאיזה יום.`
+    );
+  } else if (slots.people === undefined) {
+    gates.push(
+      `⚠️ **מספר הסועדים עוד לא נאמר.** אסור לענות על זמינות לפני שתדע כמה הם (התשובה תלויה בגודל) - ` +
+        `שאל "כמה תהיו?" וזו כל ההודעה.`
+    );
+  }
+
+  if (!known.length) return gates.length ? gates.join(" ") : null;
 
   return (
     `פרטי הזמנה שכבר נמסרו בשיחה (חולצו אוטומטית - אם זה סותר את מה שהלקוח כתב, ` +
     `השיחה עצמה קובעת ואתה מתעלם מהשורה הזאת): ${known.join(" · ")}. ` +
-    (slots.missing.length ? `עוד חסר: ${slots.missing.join(", ")}.` : `הכל נאסף - אפשר לסכם ולבקש אישור.`)
+    (slots.missing.length ? `עוד חסר: ${slots.missing.join(", ")}.` : `הכל נאסף - אפשר לסכם ולבקש אישור.`) +
+    (gates.length ? ` ${gates.join(" ")}` : "")
   );
 }

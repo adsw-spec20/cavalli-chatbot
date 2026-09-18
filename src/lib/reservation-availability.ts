@@ -7,7 +7,9 @@
  * עכשיו?". חשוב מזה: זה בדיוק המקום שהמודל הכי טעה בו בעבר (לקח הזמנות לשישי,
  * לראשון בערב ולשעות היום), וקוד לא טועה בזה.
  *
- * כלל האמת: הזמנות מראש רק שני-חמישי, מ-18:00, עד 8 סועדים.
+ * **ההכרעה עצמה לא נמצאת כאן** אלא ב-reservation-policy.ts (מקור אמת אחד
+ * שממנו נבנה גם הפרומפט). כאן רק הפענוח: האם זו בכלל בקשת הזמנה, לאיזה יום,
+ * לאיזו שעה וכמה סועדים.
  *
  * שמרני בכוונה: עונה רק כשיש כוונת הזמנה מפורשת *וגם* יום שניתן לפענח
  * חד-משמעית. כל ספק - מחזיר null והשיחה ממשיכה למודל כרגיל.
@@ -15,6 +17,13 @@
 
 import type { BusinessConfig } from "./business-config";
 import { resolveReservationDate } from "./reservations";
+import {
+  decideReservation,
+  BOOKING_DAYS,
+  BOOKING_FROM_HOUR,
+  GROUP_MIN_FOR_BARAK,
+  RESERVATION_TEXTS,
+} from "./reservation-policy";
 
 /** כוונת הזמנה מפורשת */
 const INTENT =
@@ -34,7 +43,8 @@ export type UnavailableReason =
   | "sunday"
   | "daytime"
   | "closed"
-  | "group";
+  | "group"
+  | "ask_size";
 
 export interface AvailabilityAnswer {
   reason: UnavailableReason;
@@ -43,7 +53,8 @@ export interface AvailabilityAnswer {
 
 /** מספר הסועדים אם צוין במפורש ("ל-4", "4 אנשים", "זוג") */
 function parsePeople(t: string): number | null {
-  if (/זוג(?![א-ת])|זוגי/.test(t)) return 2;
+  if (/זוג(?![א-ת])|זוגי|שנינו/.test(t)) return 2;
+  if (/שלושתנו/.test(t)) return 3;
   // חזק: מספר צמוד למילת כמות ("10 אנשים", "4 מקומות")
   const strong = t.match(/(\d{1,3})\s*(?:אנשים|איש(?![א-ת])|סועדים|נפשות|מקומות)/);
   if (strong) {
@@ -89,26 +100,16 @@ function hoursFor(cfg: BusinessConfig, iso: string): string | null {
   return cfg.hours.find((h) => h.day === heDay)?.hours ?? null;
 }
 
-// בלי אימוג'י בסוף: השורה שלפניה כבר נגמרת באחד, ושני סמיילים בהודעה של שתי
-// שורות נראה מוגזם (נראה בוואטסאפ חי 24.8).
-const EVENING_OFFER =
-  "אם תרצו לשריין שולחן מראש, אפשר לערבי שני-חמישי מ-18:00 - ואשמח לסדר את זה כאן בצ'אט.";
-
-/** "מחר" / "היום" / "ביום שלישי" - כדי שהתשובה תרגיש כמו מענה לשאלה ולא כמו עלון */
-function whenLabel(iso: string, now: Date): string {
-  const today = now.toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
-  if (iso === today) return "היום";
-  const [y, m, d] = today.split("-").map(Number);
-  const tomorrow = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
-  if (iso === tomorrow) return "מחר";
-  const [iy, im, id] = iso.split("-").map(Number);
-  const dow = new Date(Date.UTC(iy, im - 1, id)).getUTCDay();
-  return `ביום ${["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"][dow]}`;
+/** השעה הנוכחית בישראל, בשעות שלמות */
+function nowHourIL(now: Date): number {
+  return Number(
+    new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", hour: "2-digit", hour12: false }).format(now)
+  );
 }
 
 /**
- * מחזיר תשובה קבועה כשאי אפשר להזמין בזמן המבוקש, או null כשהבקשה תקינה
- * (או שלא הצלחנו להכריע) - ואז השיחה ממשיכה למודל כרגיל.
+ * מחזיר תשובה קבועה כשאפשר להכריע בקוד, או null כשהשיחה צריכה להמשיך למודל
+ * (משבצת תקינה להזמנה, או חוסר מידע שהמודל יברר).
  */
 export function checkReservationAvailability(
   raw: string,
@@ -120,78 +121,53 @@ export function checkReservationAvailability(
   if (!INTENT.test(t)) return null;
   if (OFF_TOPIC.test(t)) return null;
 
-  // קבוצה גדולה -> ברק, בלי קשר ליום ולשעה
   const people = parsePeople(t);
-  if (people !== null && people > 8) {
-    return {
-      reason: "group",
-      text:
-        `לקבוצה בגודל כזה הכי נוח לתאם ישירות מול ברק, איש הקשר שלנו לקבוצות ואירועים: *050-236-6466* 🙂\n` +
-        `הוא ייתן לכם את כל הפרטים.`,
-    };
-  }
-
-  // חייב יום שניתן לפענח חד-משמעית - אחרת למודל
   const iso = resolveReservationDate(t, undefined, now);
-  if (!iso) return null;
+
+  // בלי יום שניתן לפענח אי אפשר להכריע - חוץ ממקרה אחד: קבוצה גדולה הולכת
+  // לברק בכל יום ובכל שעה, ולכן מותר לענות עליה גם בלי לדעת מתי.
+  if (!iso) {
+    if (people !== null && people >= GROUP_MIN_FOR_BARAK) {
+      return { reason: "group", text: RESERVATION_TEXTS.barak };
+    }
+    return null;
+  }
 
   const [y, m, d] = iso.split("-").map(Number);
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  const hours = hoursFor(cfg, iso);
 
-  // סגור לגמרי באותו יום (כולל שעות חריגות שהוזנו בפאנל)
-  if (!hours) {
-    if (dow === 6) {
-      return {
-        reason: "saturday",
-        text: `בשבת אנחנו סגורים 🙂 פתוחים שוב ביום ראשון.\n${EVENING_OFFER}`,
-      };
-    }
-    return {
-      reason: "closed",
-      text: `בתאריך הזה אנחנו סגורים 🙂\n${EVENING_OFFER}`,
-    };
-  }
-
-  if (dow === 5) {
-    return {
-      reason: "friday",
-      text:
-        `בימי שישי אנחנו לא לוקחים הזמנות מראש - מגיעים ויושבים על בסיס מקום פנוי, ופתוחים עד 15:00 🙂\n` +
-        EVENING_OFFER,
-    };
-  }
-
-  if (dow === 0) {
-    return {
-      reason: "sunday",
-      text:
-        `ביום ראשון אנחנו פתוחים עד 18:00, ולכן אין בו הזמנות ערב - במהלך היום פשוט מגיעים, על בסיס מקום פנוי 🙂\n` +
-        EVENING_OFFER,
-    };
-  }
-
-  // שני-חמישי: הזמנות רק מ-18:00
-  const hour = parseHour(t);
-  if (hour !== null && hour >= 18) return null; // בקשה תקינה -> זרימת ההזמנה במודל
-  if (hour === null) {
-    // בלי שעה מפורשת אי אפשר לדעת אם הכוונה לערב - חוץ ממקרה אחד: "יש מקום
-    // להיום?" כשעכשיו עוד יום. שם התשובה על שעות היום נכונה וגם משלימה את
-    // התמונה (מה שכן אפשר בערב), אז היא בטוחה. כל שאר המקרים -> מודל.
-    const nowHour = Number(
-      new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", hour: "2-digit", hour12: false }).format(now)
-    );
+  // שעה מפורשת; ואם אין - מקרה אחד בטוח: "יש מקום להיום?" כשעכשיו עוד יום.
+  // שם השעה הנוכחית היא הכוונה בפועל, וכל שאר המקרים נשארים "לא ידוע".
+  let hour = parseHour(t);
+  if (hour === null && BOOKING_DAYS.includes(dow)) {
     const isToday = iso === now.toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
-    if (!isToday || nowHour >= 18) return null;
+    const nowHour = nowHourIL(now);
+    if (isToday && nowHour < BOOKING_FROM_HOUR) hour = nowHour;
   }
 
-  const when = whenLabel(iso, now);
-  // "היום בשעות היום" מגושם - לכן פתיח אחר כשמדובר בהיום עצמו
-  const lead = when === "היום" ? "היום פשוט מגיעים בלי הזמנה" : `${when} בשעות היום מגיעים בלי הזמנה`;
-  return {
-    reason: "daytime",
-    text:
-      `${lead} - על בסיס מקום פנוי, ותמיד נשמח לארח 🙂\n` +
-      `הזמנות מראש הן לשעות הערב, מ-18:00, בימים שני-חמישי - אם בא לכם, אפשר לשריין כאן בצ'אט.`,
-  };
+  const decision = decideReservation({
+    dayOfWeek: dow,
+    openThatDay: !!hoursFor(cfg, iso),
+    hour,
+    people,
+  });
+  // "book" / "defer" - אין תשובה קבועה, השיחה ממשיכה למודל
+  if (!decision.text) return null;
+
+  const reason: UnavailableReason =
+    decision.verdict === "barak"
+      ? "group"
+      : decision.verdict === "ask_size"
+        ? "ask_size"
+        : decision.verdict === "closed"
+          ? dow === 6
+            ? "saturday"
+            : "closed"
+          : dow === 5
+            ? "friday"
+            : dow === 0
+              ? "sunday"
+              : "daytime";
+
+  return { reason, text: decision.text };
 }
