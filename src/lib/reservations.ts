@@ -53,7 +53,8 @@ export function reservationDateLabel(iso?: string): string | undefined {
 export function resolveReservationDate(
   dateText: string,
   modelISO?: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  opts?: { nextWeek?: boolean }
 ): string | undefined {
   const { iso: today, dow: todayDow } = israelToday(now);
   const t = (dateText || "").trim();
@@ -78,12 +79,22 @@ export function resolveReservationDate(
     }
   }
 
-  // יום בשבוע ("יום חמישי", "בחמישי") -> המופע הקרוב. אבל אם צוין שבוע אחר
-  // ("בעוד שבועיים", "שבוע הבא") אי אפשר לדעת בוודאות - עדיף גיבוי המודל.
-  if (!/בעוד|שבוע/.test(t)) {
+  // יום בשבוע ("יום חמישי", "בחמישי") -> המופע הקרוב.
+  // "שבוע הבא" (בהודעה הזאת או קודם בשיחה - opts.nextWeek): המופע חייב ליפול
+  // בשבוע הקלנדרי הבא (ראשון-שבת). בלי זה לקוח שכתב "לשבוע הבא" ואז "שישי"
+  // ביום שישי קיבל את היום עצמו, הבוט זיהה סתירה ושאל שוב (דווח 18.9).
+  // "בעוד שבועיים" וכד' נשארים לא מוכרעים - שם באמת אי אפשר לדעת.
+  const saysNextWeek = /(ה)?שבוע הבא/.test(t);
+  const vagueWeek = /בעוד/.test(t) || (/שבוע/.test(t) && !saysNextWeek);
+  if (!vagueWeek) {
+    const nextWeek = saysNextWeek || opts?.nextWeek === true;
     for (let i = 0; i < HE_DAYS.length; i++) {
       if (new RegExp(`(?:^|[\\s,בלו])${HE_DAYS[i]}(?:\\b|$|[\\s,.!?])`).test(t)) {
-        const ahead = (i - todayDow + 7) % 7;
+        let ahead = (i - todayDow + 7) % 7;
+        if (nextWeek) {
+          const daysToNextSunday = (7 - todayDow) % 7 || 7;
+          if (ahead < daysToNextSunday) ahead += 7;
+        }
         return addDaysISO(today, ahead); // אותו יום כמו היום = היום (הצוות מאמת ממילא)
       }
     }

@@ -8,6 +8,8 @@
 import { decideReservation, GROUP_MIN_FOR_BARAK, RESERVATION_TEXTS } from "../src/lib/reservation-policy";
 import { checkReservationAvailability } from "../src/lib/reservation-availability";
 import { businessConfig } from "../src/lib/business-config";
+import { resolveReservationDate } from "../src/lib/reservations";
+import { extractReservationSlots } from "../src/lib/reservation-slots";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra?: unknown) {
@@ -106,6 +108,22 @@ t("מנוע: קבוצה בלי יום -> ברק",
 t("מנוע: ערב שלישי תקין -> ממשיך למודל",
   e("יש מקום ביום שלישי ב-20:00 ל-4?", tuesday) === null);
 t("מנוע: הודעה לא קשורה -> null", e("מה שעות הפעילות?", tuesday) === null);
+
+// ===== 6. "שבוע הבא" + שם יום (דווח 18.9: "שישי" נפתר להיום ולא לשבוע הבא) =====
+const friNow = new Date("2026-09-18T17:07:00+03:00"); // יום שישי
+t("'שישי' בלי הקשר ביום שישי = היום", resolveReservationDate("שישי", undefined, friNow) === "2026-09-18");
+t("'שישי' אחרי 'שבוע הבא' = 25.9", resolveReservationDate("שישי", undefined, friNow, { nextWeek: true }) === "2026-09-25");
+t("'שלישי' אחרי 'שבוע הבא' = 22.9 (כבר בשבוע הבא)", resolveReservationDate("שלישי", undefined, friNow, { nextWeek: true }) === "2026-09-22");
+t("'שבוע הבא ביום שישי' באותה הודעה = 25.9", resolveReservationDate("שבוע הבא ביום שישי", undefined, friNow) === "2026-09-25");
+t("'בעוד שבועיים' נשאר לא מוכרע", resolveReservationDate("בעוד שבועיים", undefined, friNow) === undefined);
+{
+  const slots = extractReservationSlots([
+    { role: "user", content: "אני רוצה להזמין מקום לשבוע הבא", ts: friNow.getTime() },
+    { role: "assistant", content: "לאיזה יום בשבוע הבא?", ts: friNow.getTime() },
+    { role: "user", content: "שישי", ts: friNow.getTime() },
+  ]);
+  t("השיחה שדווחה: 'שבוע הבא' -> 'שישי' = 25.9", slots.dateISO === "2026-09-25", slots.dateISO);
+}
 
 console.log(`\n${fail === 0 ? "🎉" : "⚠"} ${pass} עברו, ${fail} נכשלו`);
 process.exit(fail === 0 ? 0 : 1);

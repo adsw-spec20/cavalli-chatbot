@@ -122,11 +122,17 @@ export function extractReservationSlots(
   const userMsgs = messages.filter((m) => m.role === "user");
   const slots: ReservationSlots = { missing: [] };
 
+  // "שבוע הבא" נאמר פעם אחת ואז רק שם היום ("שישי") - ההקשר חייב לעבור בין
+  // ההודעות, אחרת היום נפתר לשבוע הנוכחי (דווח 18.9).
+  const saidNextWeek = userMsgs.some((m) => /(ה)?שבוע הבא/.test(m.content));
+
   for (const msg of userMsgs) {
     const t = msg.content;
     const people = parsePeople(t);
     if (people !== undefined) slots.people = people;
-    const iso = resolveReservationDate(t, undefined, msg.ts ? new Date(msg.ts) : undefined);
+    const iso = resolveReservationDate(t, undefined, msg.ts ? new Date(msg.ts) : undefined, {
+      nextWeek: saidNextWeek,
+    });
     if (iso) slots.dateISO = iso;
     const time = parseTime(t);
     if (time) slots.time = time;
@@ -185,7 +191,8 @@ export function reservationSlotsHint(
   } else if (slots.people === undefined) {
     gates.push(
       `⚠️ **מספר הסועדים עוד לא נאמר.** אסור לענות על זמינות לפני שתדע כמה הם (התשובה תלויה בגודל) - ` +
-        `שאל "כמה תהיו?" וזו כל ההודעה.`
+        `שאל "כמה תהיו?" וזו כל ההודעה. **ובמיוחד אל תענה תשובה כללית עם הסתייגות** ` +
+        `("...ואם אתם קבוצה גדולה אפשר מול ברק") - זו בדיוק התשובה הכפולה האסורה. קודם המספר.`
     );
   }
 
