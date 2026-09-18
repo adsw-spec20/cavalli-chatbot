@@ -125,5 +125,22 @@ t("'בעוד שבועיים' נשאר לא מוכרע", resolveReservationDate("
   t("השיחה שדווחה: 'שבוע הבא' -> 'שישי' = 25.9", slots.dateISO === "2026-09-25", slots.dateISO);
 }
 
+// ===== 7. תאריך מספרי לא נקרא ככמות סועדים (דווח 18.9: "7.9 אנשים" -> 9 -> ברק) =====
+{
+  const sep7 = new Date("2026-09-01T12:00:00+03:00"); // שלישי, לפני 7.9
+  t("'ל-7.9 אנשים' לא מופנה לברק", e("אפשר להזמין מקום ל-7.9 אנשים", sep7)?.reason !== "group",
+    e("אפשר להזמין מקום ל-7.9 אנשים", sep7)?.reason);
+  t("'7.9' עדיין נקרא כתאריך", resolveReservationDate("אפשר מקום ל-7.9", undefined, sep7) === "2026-09-07");
+  const slots = extractReservationSlots([
+    { role: "user", content: "אפשר להזמין מקום ל-7.9 אנשים", ts: sep7.getTime() },
+  ]);
+  t("חילוץ: '7.9 אנשים' לא מייצר כמות סועדים", slots.people === undefined, slots.people);
+  // ומספר אמיתי כן נקלט
+  t("'12 אנשים' עדיין נקלט", e("אפשר להזמין מקום ל-12 אנשים", sep7)?.reason === "group");
+  t("'4 אנשים' עדיין נקלט", extractReservationSlots([
+    { role: "user", content: "נהיה 4 אנשים", ts: sep7.getTime() },
+  ]).people === 4);
+}
+
 console.log(`\n${fail === 0 ? "🎉" : "⚠"} ${pass} עברו, ${fail} נכשלו`);
 process.exit(fail === 0 ? 0 : 1);
