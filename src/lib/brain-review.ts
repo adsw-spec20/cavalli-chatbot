@@ -212,7 +212,9 @@ export function atomizeprompt(prompt: string): ReviewAtom[] {
         parentId,
         parentTitle,
         text,
-        tokens: tok(text),
+        // נספר על הטקסט הגזום, כי זה מה שהעוגן מחליף בפועל - ספירה שכוללת
+        // הזחה ורווחים הבטיחה חיסכון גדול ממה שמחיקה באמת מסירה.
+        tokens: tok(trimmed),
         topic: assignTopic(text),
         bornAt: trimmed.match(DATE_IN_TEXT)?.[1],
       });
@@ -259,32 +261,16 @@ export interface ReviewQuestion {
   parentId?: string;
   /** הנחיה טכנית שאין לבעל העסק מה להחליט עליה - לא מוצגת ולא נספרת */
   hidden?: boolean;
-  /**
-   * כשזה נוסח שנוצר מעריכה: המזהה והטקסט של הסעיף **המקורי** בפרומפט.
-   * קריטי לעריכה חוזרת - הדריסות מוחלות על הפרומפט הנקי, ולכן עריכה של נוסח
-   * שכבר נערך חייבת לעדכן את אותה דריסה ולא לשרשר דריסה שנייה מעליה (שרשור
-   * כזה תלוי בסדר ההחלה, ומתפרק ברגע שהסדר משתנה).
-   */
-  originId?: string;
-  originText?: string;
+  /** מחושב בקריאה (לא נשמר): הנוסח שבתוקף עכשיו, אם הסעיף נערך */
+  currentText?: string;
+  /** מחושב בקריאה: הסעיף הוסר מהמוח */
+  removed?: boolean;
 }
 
 export interface ReviewAnswer {
   status: AnswerStatus;
   answer?: string;
   at: number;
-  /** באטום שנערך: המזהה של הנוסח החדש, כדי שביטול ינקה גם אותו */
-  newId?: string;
-}
-
-/**
- * טקסט שכבר נערך בבירור הופך לחלק מדריסה. אחרי עריכה הפרומפט נחתך מחדש,
- * והשאריות של אותו נוסח עלולות לחזור כ"שאלות חדשות" - לכן כל אטום שנמצא
- * **בתוך** נוסח שכבר נערך נחשב מוכרע.
- */
-function decidedByOverride(overrideTexts: string[], atomText: string): boolean {
-  const t = atomText.trim();
-  return overrideTexts.some((o) => o.includes(t));
 }
 
 type QuestionStore = Record<string, ReviewQuestion>;
@@ -309,12 +295,25 @@ async function saveState(s: StateStore) {
   await getRepo().setSetting(STATE_KEY, JSON.stringify(s));
 }
 
-/** הפרומפט הפעיל (כולל דריסות) - זה מה שהבוט באמת מקבל */
-async function activePrompt(): Promise<string> {
-  const [config, media, overrides] = await Promise.all([loadBusinessConfig(), loadMedia(), loadOverrides()]);
-  const base = buildSystemPrompt(config, media);
-  return applyPromptOverrides(base, overrides).prompt;
+/**
+ * שני הפרומפטים, ולמה ההבחנה הזאת קריטית:
+ *
+ * **base** - הפרומפט כפי שהקוד בונה אותו, בלי שום עריכה. ממנו ורק ממנו חותכים
+ * אטומים. **live** - אחרי החלת העריכות, וזה מה שהבוט באמת מקבל ולפי זה נמדדים
+ * הטוקנים.
+ *
+ * בגרסה הראשונה חתכנו מה-live, וזה היה באג עמוק: החיתוך נקבע לפי גבולות
+ * (תבליט, שורה ריקה, אורך), ולכן עריכה שמשנה את הגבולות - הוספת תבליט, הוספת
+ * פסקה, קיצור הסעיף, או אפילו שינוי המילה הראשונה כך שהשורה כבר לא מתחילה
+ * בתבליט - ייצרה אטומים שאינם תואמים למה שנשמר. התוצאה: העריכה נכנסה לבוט אבל
+ * נעלמה מהמסך (דווח 19.9). מה-base הגבולות קבועים, והעריכה היא תכונה של
+ * הסעיף ולא ישות חדשה.
+ */
+async function basePrompt(): Promise<string> {
+  const [config, media] = await Promise.all([loadBusinessConfig(), loadMedia()]);
+  return buildSystemPrompt(config, media);
 }
+
 
 export interface TopicSummary {
   key: string;
@@ -337,32 +336,21 @@ export interface ReviewOverview {
   totalAtoms: number;
 }
 
-/** כמה טוקנים הוסרו עד כה (סכום האטומים שנמחקו) */
-async function computeSaved(state: StateStore, questions: QuestionStore): Promise<number> {
-  let saved = 0;
-  for (const [id, ans] of Object.entries(state)) {
-    if (ans.status !== "deleted") continue;
-    const q = questions[id];
-    // בסעיף שנערך ואז נמחק, החיסכון נמדד מול הסעיף **המקורי** שיצא מהפרומפט
-    saved += q ? (q.originText ? tok(q.originText) : (q.tokens ?? 0)) : 0;
-  }
-  return saved;
-}
 
 /**
  * תמונת מצב למסך הראשי: נושאים, התקדמות וטוקנים.
- * האטומים נחתכים בכל קריאה מהפרומפט **החי**, כך שהתור לעולם לא מתיישן.
+ * האטומים נחתכים מה-base, ולכן מספר השאלות יציב ואינו משתנה מעריכות.
  */
 export async function getOverview(): Promise<ReviewOverview> {
-  const [prompt, state, questions, openQa, ov] = await Promise.all([
-    activePrompt(),
+  const [base, state, questions, openQa, ov] = await Promise.all([
+    basePrompt(),
     loadState(),
     loadQuestions(),
     getRepo().listLearnedQA("open").catch(() => []),
     loadOverrides(),
   ]);
-  const atoms = atomizeprompt(prompt);
-  const edited = Object.values(ov.items).map((o) => o.text).filter(Boolean);
+  const atoms = atomizeprompt(base);
+  const live = applyPromptOverrides(base, ov).prompt;
 
   const byTopic = new Map<string, { total: number; done: number; tokens: number }>();
   const bump = (topic: string, done: boolean, tokens: number) => {
@@ -376,22 +364,18 @@ export async function getOverview(): Promise<ReviewOverview> {
   // הנחיות טכניות (שכבר סווגו כך בניסוח) אינן שאלות ואינן נספרות
   for (const a of atoms) {
     if (questions[a.id]?.hidden) continue;
-    bump(a.topic, !!state[a.id] || decidedByOverride(edited, a.text), a.tokens);
-  }
-  // סעיף שנמחק יצא מהפרומפט, ולכן גם מהחיתוך. בלי לספור אותו כאן המחיקה
-  // הייתה מקטינה את המכנה במקום לקדם את הסרגל - עבודה שנעשתה ולא נראתה.
-  // (עריכה לא נספרת כאן: הנוסח החדש הוא אטום קיים שכבר נספר למעלה.)
-  const present = new Set(atoms.map((a) => a.id));
-  for (const [id, ans] of Object.entries(state)) {
-    if (ans.status !== "deleted" || present.has(id)) continue;
-    const q = questions[id];
-    if (q && !q.hidden) bump(q.topic, true, 0);
+    const edit = ov.items[a.id];
+    bump(a.topic, !!state[a.id], edit ? tok(edit.text) : a.tokens);
   }
   // שאלות העשרה: פערי ידע אמיתיים שהצטברו
   for (const q of openQa) bump(assignTopic(q.question), !!state[`gap-${q.id}`], 0);
 
   // כמה מהאטומים כבר מנוסחים - מה שמנוסח נטען מיד, והשאר דורש קריאה למודל
   const phrased = atoms.filter((a) => isPhrased(questions, a)).length;
+
+  // החיסכון נמדד ישירות: כמה הפרומפט שהבוט מקבל קטן מול הפרומפט המקורי.
+  // סכימה של אטומים שנמחקו הייתה מפספסת עריכות שקיצרו (או האריכו) סעיף.
+  const tokensSaved = Math.max(0, tok(base) - tok(live));
 
   const topics: TopicSummary[] = [...byTopic.entries()]
     .map(([key, v]) => ({ key, ...topicTitle(key), ...v }))
@@ -405,8 +389,8 @@ export async function getOverview(): Promise<ReviewOverview> {
     topics,
     totalQuestions: topics.reduce((s, t) => s + t.total, 0),
     totalDone: topics.reduce((s, t) => s + t.done, 0),
-    promptTokens: tok(prompt),
-    tokensSaved: await computeSaved(state, questions),
+    promptTokens: tok(live),
+    tokensSaved,
     phrased,
     totalAtoms: atoms.length,
   };
@@ -503,7 +487,7 @@ async function phraseQuestions(
 let prewarming = false;
 
 export async function prewarmQuestions(): Promise<{ phrased: number; total: number }> {
-  const [prompt, stored] = await Promise.all([activePrompt(), loadQuestions()]);
+  const [prompt, stored] = await Promise.all([basePrompt(), loadQuestions()]);
   const atoms = atomizeprompt(prompt);
   const missing = atoms.filter((a) => !isPhrased(stored, a));
   if (!missing.length || prewarming) return { phrased: atoms.length - missing.length, total: atoms.length };
@@ -546,18 +530,14 @@ async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>
  * כולל את שאלות ההעשרה מפערי הידע שהצטברו.
  */
 export async function getTopicQuestions(topicKey: string): Promise<{ questions: ReviewQuestion[]; state: StateStore }> {
-  const [prompt, stored, state, openQa, ov] = await Promise.all([
-    activePrompt(),
+  const [base, stored, state, openQa, ov] = await Promise.all([
+    basePrompt(),
     loadQuestions(),
     loadState(),
     getRepo().listLearnedQA("open").catch(() => []),
     loadOverrides(),
   ]);
-  const edited = Object.values(ov.items).map((o) => o.text).filter(Boolean);
-  const atoms = atomizeprompt(prompt)
-    .filter((a) => a.topic === topicKey)
-    // אטום שנמצא בתוך נוסח שכבר נערך - כבר הוכרע, לא שואלים עליו שוב
-    .filter((a) => !decidedByOverride(edited, a.text) || !!state[a.id]);
+  const atoms = atomizeprompt(base).filter((a) => a.topic === topicKey);
 
   // ניסוח למי שעוד אין לו (או שהטקסט השתנה מאז)
   const missing = atoms.filter((a) => !stored[a.id] || stored[a.id].text !== a.text.trim());
@@ -565,24 +545,25 @@ export async function getTopicQuestions(topicKey: string): Promise<{ questions: 
     const phrased = await phraseQuestions(missing);
     for (const a of missing) {
       const p = phrased.get(a.id);
-      const base = fallbackQuestion(a);
-      stored[a.id] = p
-        ? { ...base, question: p.question, summary: p.summary || base.summary, hidden: p.hidden }
-        : base;
+      const fb = fallbackQuestion(a);
+      stored[a.id] = p ? { ...fb, question: p.question, summary: p.summary || fb.summary, hidden: p.hidden } : fb;
     }
     await saveQuestions(stored);
   }
 
-  const questions: ReviewQuestion[] = atoms.map((a) => stored[a.id]).filter((q) => q && !q.hidden);
-
-  // סעיפים שנמחקו אינם קיימים יותר בפרומפט, ולכן לא יוצאים מהחיתוך - בלי
-  // להחזיר אותם לרשימה אי אפשר היה לחזור על מחיקה ולשחזר אותה.
-  const present = new Set(atoms.map((a) => a.id));
-  for (const [id, ans] of Object.entries(state)) {
-    if (ans.status !== "deleted" || present.has(id)) continue;
-    const q = stored[id];
-    if (q && !q.hidden && q.topic === topicKey) questions.push(q);
-  }
+  // הנוסח שבתוקף מצורף לכל סעיף שנערך, כדי שהמסך יראה את המצב האמיתי במוח
+  // ולא את הנוסח שהוחלף.
+  const questions: ReviewQuestion[] = atoms
+    .filter((a) => stored[a.id] && !stored[a.id].hidden)
+    .map((a) => {
+      // ספירת הטוקנים נלקחת מהחיתוך הנוכחי ולא מהרשומה השמורה, שעלולה להיות ישנה
+      const q: ReviewQuestion = { ...stored[a.id], tokens: a.tokens };
+      const edit = ov.items[a.id];
+      if (!edit) return q;
+      return edit.text.trim()
+        ? { ...q, currentText: edit.text, tokens: tok(edit.text) }
+        : { ...q, removed: true, tokens: 0 };
+    });
 
   // שאלות העשרה: מה שלקוחות שאלו והבוט לא ידע
   for (const qa of openQa) {
@@ -621,24 +602,6 @@ export interface AnswerInput {
 export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
   const { questionId, status, answer } = input;
   const repo = getRepo();
-  let createdId: string | undefined;
-
-  // שינוי החלטה שכבר ניתנה: קודם מנקים את העקבות שלה. בלי זה, מעבר מ"שנה"
-  // ל"נכון השאר" היה משאיר את הדריסה הישנה בתוקף, והתשובה החדשה הייתה שקר.
-  const before = await loadState();
-  const prev = before[questionId];
-  if (prev) {
-    const wasWrite = prev.status === "changed" || prev.status === "deleted";
-    const isWrite = status === "changed" || status === "deleted";
-    if (wasWrite && !isWrite) await clearOverride(anchorOf(await loadQuestions(), questionId).id);
-    if (prev.newId) {
-      delete before[questionId];
-      delete before[prev.newId];
-      const qs = await loadQuestions();
-      delete qs[prev.newId];
-      await Promise.all([saveState(before), saveQuestions(qs)]);
-    }
-  }
 
   if (questionId.startsWith("gap-")) {
     const qaId = questionId.slice(4);
@@ -650,57 +613,36 @@ export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
     if (!q?.text) throw new Error("לא נמצא הטקסט המקורי של הסעיף");
     const next = status === "deleted" ? "" : (answer ?? "").trim();
     if (status === "changed" && !next) throw new Error("חסר טקסט חדש");
-    // העוגן הוא תמיד הסעיף המקורי בפרומפט - גם בעריכה של נוסח שכבר נערך.
-    const anchor = anchorOf(questions, questionId);
-    await setAnchorOverride(anchor.id, next, anchor.text, status === "deleted" ? "הוסר בבירור המוח" : "נערך בבירור המוח");
-    // הטקסט החדש הוא אטום חדש (המזהה נגזר מהתוכן) - מסמנים גם אותו כנסקר,
-    // אחרת אותה החלטה הייתה חוזרת מיד כשאלה "חדשה".
-    if (status === "changed") {
-      const st = await loadState();
-      const newId = atomId(next);
-      createdId = newId;
-      st[newId] = { status: "kept", at: Date.now() };
-      const qs = await loadQuestions();
-      qs[newId] = { ...q, id: newId, text: next, tokens: tok(next), originId: anchor.id, originText: anchor.text };
-      await Promise.all([saveState(st), saveQuestions(qs)]);
+    // מזהה הסעיף הוא גם מזהה הדריסה, והעוגן הוא תמיד הטקסט המקורי - ולכן
+    // עריכה חוזרת פשוט מעדכנת את אותה דריסה, כמה פעמים שירצו.
+    await setAnchorOverride(questionId, next, q.text, status === "deleted" ? "הוסר בבירור המוח" : "נערך בבירור המוח");
+  } else {
+    const prev = (await loadState())[questionId];
+    // "נכון, השאר" על סעיף שהוסר = החזרה שלו למוח (זו המשמעות היחידה
+    // ההגיונית). על סעיף שנערך הוא דווקא *לא* מבטל: המסך מציג את הנוסח הערוך,
+    // ולכן "השאר" מאשר אותו. לחזרה לנוסח המקורי יש "שחזר את הנוסח המקורי".
+    if (prev?.status === "deleted" && status === "kept") await clearOverride(questionId);
+    if (status === "unsure") {
+      const q = (await loadQuestions())[questionId];
+      await repo
+        .addOpenQuestion({ question: `לבירור מול הצוות: ${q?.summary || q?.question || questionId}`, topic: "בירור המוח" })
+        .catch(() => undefined);
     }
-  } else if (status === "unsure") {
-    const questions = await loadQuestions();
-    const q = questions[questionId];
-    await repo
-      .addOpenQuestion({ question: `לבירור מול הצוות: ${q?.summary || q?.question || questionId}`, topic: "בירור המוח" })
-      .catch(() => undefined);
   }
 
   const state = await loadState();
-  state[questionId] = { status, answer: answer?.trim() || undefined, at: Date.now(), newId: createdId };
+  state[questionId] = { status, answer: answer?.trim() || undefined, at: Date.now() };
   await saveState(state);
   return { ok: true };
 }
 
-/** הסעיף המקורי בפרומפט שאליו הדריסה מעוגנת (גם אם זה כבר נוסח ערוך) */
-function anchorOf(questions: QuestionStore, questionId: string): { id: string; text: string } {
-  const q = questions[questionId];
-  return { id: q?.originId ?? questionId, text: q?.originText ?? q?.text ?? "" };
-}
-
-/** ביטול תשובה אחת (חזרה אחורה על החלטה, והנוסח המקורי חוזר) */
+/** ביטול תשובה אחת: הדריסה מוסרת, הנוסח המקורי חוזר, והשאלה חוזרת לתור */
 export async function undoAnswer(questionId: string): Promise<void> {
-  const [state, questions] = await Promise.all([loadState(), loadQuestions()]);
-  const prev = state[questionId];
-  const origin = questions[questionId]?.originId;
-  if (origin) {
-    // ביטול על נוסח שנוצר מעריכה = חזרה לסעיף המקורי. חייבים לנקות גם את
-    // התשובה שנרשמה על הסעיף המקורי, אחרת הוא נשאר "מוכרע" ולא יחזור לתור.
-    await clearOverride(origin);
-    delete state[origin];
-    delete questions[questionId];
-    await saveQuestions(questions);
-  } else if (prev && (prev.status === "changed" || prev.status === "deleted")) {
-    await clearOverride(anchorOf(questions, questionId).id);
-  }
-  // הנוסח החדש שנוצר בעריכה מפסיק להתקיים - מנקים גם אותו
-  if (prev?.newId) delete state[prev.newId];
+  const state = await loadState();
+  // מסירים לפי קיום הדריסה ולא לפי הסטטוס הרשום: אחרי עריכה שאושרה ב"נכון,
+  // השאר" הסטטוס הוא kept בזמן שהעריכה עדיין בתוקף, ובדיקת סטטוס הייתה
+  // משאירה אותה שם. clearOverride על מזהה בלי דריסה הוא ממילא ללא השפעה.
+  await clearOverride(questionId);
   delete state[questionId];
   await saveState(state);
 }

@@ -35,8 +35,10 @@ interface Question {
   text?: string;
   tokens?: number;
   evidence?: string;
-  /** קיים כשזה נוסח שנוצר מעריכה - ואז אפשר לחזור לסעיף המקורי */
-  originId?: string;
+  /** הנוסח שבתוקף עכשיו, כשהסעיף נערך (text נשאר הנוסח המקורי) */
+  currentText?: string;
+  /** הסעיף הוסר מהמוח */
+  removed?: boolean;
 }
 type AnswerStatus = "kept" | "changed" | "deleted" | "answered" | "irrelevant" | "unsure" | "skipped";
 interface AnswerRec {
@@ -177,10 +179,13 @@ export default function BrainReview({ token }: { token: string }) {
   const prevAnswer = current ? state[current.id] : undefined;
   const doneInTopic = answered.length;
 
+  /** הנוסח שבתוקף במוח עכשיו - זה מה שעורכים ומה שמציגים, לא הנוסח שהוחלף */
+  const liveText = current?.currentText ?? current?.text ?? "";
+
   useEffect(() => {
     setMode("buttons");
     setShowText(false);
-    setDraft(current?.kind === "enrich" ? "" : (current?.text ?? ""));
+    setDraft(current?.kind === "enrich" ? "" : (current?.currentText ?? current?.text ?? ""));
   }, [current]);
 
   async function answer(status: AnswerStatus, text?: string) {
@@ -383,9 +388,9 @@ export default function BrainReview({ token }: { token: string }) {
           {revisiting && prevAnswer && (
             <div className="flex items-center gap-2 flex-wrap text-[12px] bg-[var(--panel2)] rounded-xl px-3 py-2">
               <span>
-                ענית כאן: <b>{current.originId ? "נוסח מחדש" : STATUS_LABEL[prevAnswer.status]}</b>
+                ענית כאן: <b>{STATUS_LABEL[prevAnswer.status]}</b>
               </span>
-              {(prevAnswer.status === "changed" || prevAnswer.status === "deleted" || current.originId) && (
+              {(prevAnswer.status === "changed" || prevAnswer.status === "deleted") && (
                 <button onClick={() => undo(current.id)} disabled={busy} className="text-[var(--accent)] underline">
                   שחזר את הנוסח המקורי
                 </button>
@@ -413,12 +418,28 @@ export default function BrainReview({ token }: { token: string }) {
           {current.text && (
             <div>
               <button onClick={() => setShowText((s) => !s)} className="text-xs text-[var(--accent)] underline">
-                {showText ? "הסתר את הנוסח המדויק" : "הצג את הנוסח המדויק"}
+                {showText ? "הסתר את הנוסח המדויק" : current.removed ? "הצג את מה שהוסר" : "הצג את הנוסח המדויק"}
               </button>
               {showText && (
-                <pre className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed bg-[var(--panel2)] rounded-xl p-3 max-h-56 overflow-y-auto">
-                  {current.text}
-                </pre>
+                <>
+                  <pre
+                    className={`mt-2 whitespace-pre-wrap text-[12px] leading-relaxed bg-[var(--panel2)] rounded-xl p-3 max-h-56 overflow-y-auto ${
+                      current.removed ? "line-through opacity-60" : ""
+                    }`}
+                  >
+                    {current.removed ? current.text : liveText}
+                  </pre>
+                  {current.currentText && (
+                    <details className="mt-1.5">
+                      <summary className="text-[11px] text-[var(--muted)] cursor-pointer">
+                        זה נוסח ערוך. להצגת הנוסח המקורי
+                      </summary>
+                      <pre className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed bg-[var(--panel2)] rounded-xl p-3 max-h-56 overflow-y-auto opacity-70">
+                        {current.text}
+                      </pre>
+                    </details>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -459,11 +480,11 @@ export default function BrainReview({ token }: { token: string }) {
                 disabled={busy}
                 className="text-sm font-semibold rounded-xl px-4 py-2 bg-emerald-500/15 text-emerald-600 border border-emerald-500/40"
               >
-                ✅ נכון, השאר
+                {current.removed ? "↩️ החזר למוח" : "✅ נכון, השאר"}
               </button>
               <button
                 onClick={() => {
-                  setDraft(current.text ?? "");
+                  setDraft(liveText);
                   setMode("edit");
                   setShowText(true);
                 }}
@@ -542,7 +563,7 @@ export default function BrainReview({ token }: { token: string }) {
                   }`}
                 >
                   <span className="text-[10px] shrink-0 mt-0.5 px-1.5 py-0.5 rounded-full bg-[var(--panel2)] text-[var(--muted)] whitespace-nowrap">
-                    {q.originId ? "נוסח מחדש" : STATUS_LABEL[state[q.id].status]}
+                    {STATUS_LABEL[state[q.id].status]}
                   </span>
                   <span className="text-[13px] leading-snug min-w-0">{q.question}</span>
                 </button>
