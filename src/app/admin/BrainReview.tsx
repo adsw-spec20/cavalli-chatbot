@@ -23,6 +23,8 @@ interface Overview {
   totalDone: number;
   promptTokens: number;
   tokensSaved: number;
+  phrased: number;
+  totalAtoms: number;
 }
 interface Question {
   id: string;
@@ -33,6 +35,8 @@ interface Question {
   text?: string;
   tokens?: number;
   evidence?: string;
+  /** קיים כשזה נוסח שנוצר מעריכה - ואז אפשר לחזור לסעיף המקורי */
+  originId?: string;
 }
 type AnswerStatus = "kept" | "changed" | "deleted" | "answered" | "irrelevant" | "unsure" | "skipped";
 interface AnswerRec {
@@ -42,6 +46,16 @@ interface AnswerRec {
 }
 
 const fmt = (n: number) => n.toLocaleString("he-IL");
+
+const STATUS_LABEL: Record<AnswerStatus, string> = {
+  kept: "נכון, השאר",
+  changed: "נוסח מחדש",
+  deleted: "הוסר מהמוח",
+  answered: "נענה",
+  irrelevant: "לא רלוונטי",
+  unsure: "לבירור מול הצוות",
+  skipped: "נדלג",
+};
 
 function Bar({ done, total }: { done: number; total: number }) {
   const pct = total ? Math.round((done / total) * 100) : 0;
@@ -70,34 +84,82 @@ export default function BrainReview({ token }: { token: string }) {
   const [mode, setMode] = useState<"buttons" | "edit">("buttons");
   const [showText, setShowText] = useState(false);
   const [lastAnswered, setLastAnswered] = useState<string | null>(null);
+  /** שאלה שכבר נענתה ונפתחה שוב לשינוי ההחלטה */
+  const [revisitId, setRevisitId] = useState<string | null>(null);
+  const [showDone, setShowDone] = useState(false);
 
   const loadOverview = useCallback(async () => {
     try {
-      setOverview(await api<Overview>(token, "/brain-review"));
+      const d = await api<Overview>(token, "/brain-review");
+      setOverview(d);
       setErr("");
+      return d;
     } catch (e) {
       setErr(e instanceof Error ? e.message : "טעינה נכשלה");
+      return null;
     }
   }, [token]);
 
+  // ההכנה (ניסוח השאלות) היא הדבר היחיד שדורש מודל, ובלעדיה כל נושא נפתח
+  // בהמתנה. מבקשים אותה ברקע מיד עם פתיחת המסך, ומרעננים עד שהיא נגמרת - כך
+  // שעד שנבחר נושא השאלות שלו כבר מוכנות.
   useEffect(() => {
-    loadOverview();
-  }, [loadOverview]);
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    (async () => {
+      const first = await loadOverview();
+      if (!alive || !first || first.phrased >= first.totalAtoms) return;
+      api(token, "/brain-review?prewarm=1").catch(() => undefined);
+      let seen = first.phrased;
+      let stuck = 0;
+      const tick = async () => {
+        if (!alive) return;
+        const d = await loadOverview();
+        if (!alive || !d || d.phrased >= d.totalAtoms) return;
+        // ההכנה רצה בפונקציית רקע שיש לה תקרת זמן. אם המספר לא זז שתי בדיקות
+        // ברצף, הריצה כנראה נקטעה - מבקשים שוב, והיא ממשיכה מאיפה שנעצרה.
+        if (d.phrased === seen) stuck++;
+        else {
+          stuck = 0;
+          seen = d.phrased;
+        }
+        if (stuck >= 2) {
+          stuck = 0;
+          api(token, "/brain-review?prewarm=1").catch(() => undefined);
+        }
+        timer = setTimeout(tick, 4000);
+      };
+      timer = setTimeout(tick, 4000);
+    })();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [loadOverview, token]);
+
+  const loadTopic = useCallback(
+    async (key: string, reset: boolean) => {
+      if (reset) setLoading(true);
+      setErr("");
+      try {
+        const d = await api<{ questions: Question[]; state: Record<string, AnswerRec> }>(token, `/brain-review?topic=${key}`);
+        setQuestions(d.questions || []);
+        setState(d.state || {});
+        if (reset) setIdx(0);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : "טעינה נכשלה");
+      } finally {
+        if (reset) setLoading(false);
+      }
+    },
+    [token]
+  );
 
   async function openTopic(key: string) {
     setTopicKey(key);
-    setLoading(true);
-    setErr("");
-    try {
-      const d = await api<{ questions: Question[]; state: Record<string, AnswerRec> }>(token, `/brain-review?topic=${key}`);
-      setQuestions(d.questions || []);
-      setState(d.state || {});
-      setIdx(0);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "טעינה נכשלה");
-    } finally {
-      setLoading(false);
-    }
+    setRevisitId(null);
+    setShowDone(false);
+    await loadTopic(key, true);
   }
 
   /** השאלות שעוד לא ענו עליהן, בסדר: סקירה ואז העשרה */
@@ -105,8 +167,15 @@ export default function BrainReview({ token }: { token: string }) {
     () => questions.filter((q) => !state[q.id] || state[q.id].status === "skipped"),
     [questions, state]
   );
-  const current = pending[idx];
-  const doneInTopic = questions.length - pending.length;
+  /** מה שכבר הוכרע - פתוח לשינוי בכל רגע */
+  const answered = useMemo(
+    () => questions.filter((q) => state[q.id] && state[q.id].status !== "skipped"),
+    [questions, state]
+  );
+  const revisiting = revisitId ? questions.find((q) => q.id === revisitId) : undefined;
+  const current = revisiting ?? pending[idx];
+  const prevAnswer = current ? state[current.id] : undefined;
+  const doneInTopic = answered.length;
 
   useEffect(() => {
     setMode("buttons");
@@ -118,14 +187,22 @@ export default function BrainReview({ token }: { token: string }) {
     if (!current || busy) return;
     setBusy(true);
     setErr("");
+    const id = current.id;
     try {
       await api(token, "/brain-review", {
         method: "POST",
-        body: JSON.stringify({ questionId: current.id, status, answer: text }),
+        body: JSON.stringify({ questionId: id, status, answer: text }),
       });
-      setState((s) => ({ ...s, [current.id]: { status, answer: text, at: Date.now() } }));
-      setLastAnswered(status === "skipped" ? null : current.id);
-      if (status === "skipped") setIdx((i) => i + 1);
+      setLastAnswered(status === "skipped" ? null : id);
+      setRevisitId(null);
+      if (status === "skipped") {
+        setState((s) => ({ ...s, [id]: { status, at: Date.now() } }));
+        setIdx((i) => i + 1);
+      } else if (topicKey) {
+        // שינוי או מחיקה משנים את הפרומפט עצמו, ולכן גם את רשימת הסעיפים -
+        // מרעננים מהשרת במקום לנחש מקומית.
+        await loadTopic(topicKey, false);
+      }
       loadOverview();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "השמירה נכשלה");
@@ -134,18 +211,16 @@ export default function BrainReview({ token }: { token: string }) {
     }
   }
 
-  async function undo() {
-    if (!lastAnswered || busy) return;
+  /** ביטול החלטה: הסעיף חוזר לנוסח המקורי והשאלה חוזרת לתור */
+  async function undo(id: string) {
+    if (busy) return;
     setBusy(true);
+    setErr("");
     try {
-      await api(token, "/brain-review", { method: "POST", body: JSON.stringify({ questionId: lastAnswered, action: "undo" }) });
-      setState((s) => {
-        const n = { ...s };
-        delete n[lastAnswered];
-        return n;
-      });
-      setLastAnswered(null);
-      setIdx(0);
+      await api(token, "/brain-review", { method: "POST", body: JSON.stringify({ questionId: id, action: "undo" }) });
+      if (lastAnswered === id) setLastAnswered(null);
+      setRevisitId(null);
+      if (topicKey) await loadTopic(topicKey, false);
       loadOverview();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "הביטול נכשל");
@@ -164,6 +239,24 @@ export default function BrainReview({ token }: { token: string }) {
         </div>
 
         {err && <div className="text-sm text-red-400">⚠ {err}</div>}
+
+        {overview && overview.phrased < overview.totalAtoms && (
+          <div className="bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2.5 text-[13px] space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="animate-pulse" aria-hidden>
+                ⏳
+              </span>
+              <span>
+                מכין את השאלות ברקע - <b style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(overview.phrased)}</b> מתוך{" "}
+                <b style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(overview.totalAtoms)}</b> מוכנות
+              </span>
+            </div>
+            <Bar done={overview.phrased} total={overview.totalAtoms} />
+            <div className="text-[11px] text-[var(--muted)]">
+              אפשר להתחיל עכשיו, זה רק אומר שנושא שעוד לא הוכן ייקח כמה שניות להיפתח. ההכנה נעשית פעם אחת בלבד.
+            </div>
+          </div>
+        )}
 
         {overview && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -246,8 +339,12 @@ export default function BrainReview({ token }: { token: string }) {
         <span className="text-xs text-[var(--muted)]" style={{ fontVariantNumeric: "tabular-nums" }}>
           {fmt(doneInTopic)} / {fmt(questions.length)}
         </span>
-        {lastAnswered && (
-          <button onClick={undo} disabled={busy} className="mr-auto text-xs text-[var(--muted)] hover:text-[var(--text)] underline">
+        {lastAnswered && !revisitId && (
+          <button
+            onClick={() => undo(lastAnswered)}
+            disabled={busy}
+            className="mr-auto text-xs text-[var(--muted)] hover:text-[var(--text)] underline"
+          >
             ביטול אחרון
           </button>
         )}
@@ -262,7 +359,9 @@ export default function BrainReview({ token }: { token: string }) {
         <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-8 text-center space-y-2">
           <div className="text-3xl">🎉</div>
           <div className="font-semibold">סיימת את הנושא הזה</div>
-          <div className="text-sm text-[var(--muted)]">כל התשובות כבר בתוקף אצל הבוט.</div>
+          <div className="text-sm text-[var(--muted)]">
+            כל התשובות כבר בתוקף אצל הבוט. תמיד אפשר לפתוח שאלה שכבר ענית ולשנות את ההחלטה.
+          </div>
           <button
             onClick={() => {
               setTopicKey(null);
@@ -276,7 +375,30 @@ export default function BrainReview({ token }: { token: string }) {
       )}
 
       {!loading && current && (
-        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-4 space-y-3">
+        <div
+          className={`bg-[var(--panel)] border rounded-2xl p-4 space-y-3 ${
+            revisiting ? "border-[var(--accent)]" : "border-[var(--border)]"
+          }`}
+        >
+          {revisiting && prevAnswer && (
+            <div className="flex items-center gap-2 flex-wrap text-[12px] bg-[var(--panel2)] rounded-xl px-3 py-2">
+              <span>
+                ענית כאן: <b>{current.originId ? "נוסח מחדש" : STATUS_LABEL[prevAnswer.status]}</b>
+              </span>
+              {(prevAnswer.status === "changed" || prevAnswer.status === "deleted" || current.originId) && (
+                <button onClick={() => undo(current.id)} disabled={busy} className="text-[var(--accent)] underline">
+                  שחזר את הנוסח המקורי
+                </button>
+              )}
+              <button
+                onClick={() => setRevisitId(null)}
+                className="mr-auto text-[var(--muted)] hover:text-[var(--text)] underline"
+              >
+                חזרה לתור
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 text-[11px] text-[var(--muted)]">
             <span className={`px-2 py-0.5 rounded-full ${current.kind === "enrich" ? "bg-emerald-500/15 text-emerald-500" : "bg-[var(--panel2)]"}`}>
               {current.kind === "enrich" ? "מידע חסר" : "סקירה"}
@@ -387,6 +509,44 @@ export default function BrainReview({ token }: { token: string }) {
                   ביטול
                 </button>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* מה שכבר הוכרע - פתוח לשינוי. לחיצה אחת בלי לקרוא היא טעות קלה לעשות,
+          ובלי הדרך הזאת היא הייתה בלתי הפיכה אחרי שהשאלה הבאה נטענה. */}
+      {!loading && answered.length > 0 && (
+        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-hidden">
+          <button
+            onClick={() => setShowDone((s) => !s)}
+            className="w-full px-4 py-3 flex items-center gap-2 text-right hover:bg-[var(--panel2)] transition"
+          >
+            <span className="text-sm font-semibold">✅ שאלות שכבר ענית</span>
+            <span className="text-[11px] text-[var(--muted)]" style={{ fontVariantNumeric: "tabular-nums" }}>
+              {fmt(answered.length)}
+            </span>
+            <span className="mr-auto text-[var(--muted)] text-xs">{showDone ? "▲" : "▼"}</span>
+          </button>
+          {showDone && (
+            <div className="border-t border-[var(--border)] divide-y divide-[var(--border)]">
+              {answered.map((q) => (
+                <button
+                  key={q.id}
+                  onClick={() => {
+                    setRevisitId(q.id);
+                    setShowDone(false);
+                  }}
+                  className={`w-full px-4 py-2.5 text-right hover:bg-[var(--panel2)] transition flex items-start gap-2 ${
+                    revisitId === q.id ? "bg-[var(--panel2)]" : ""
+                  }`}
+                >
+                  <span className="text-[10px] shrink-0 mt-0.5 px-1.5 py-0.5 rounded-full bg-[var(--panel2)] text-[var(--muted)] whitespace-nowrap">
+                    {q.originId ? "נוסח מחדש" : STATUS_LABEL[state[q.id].status]}
+                  </span>
+                  <span className="text-[13px] leading-snug min-w-0">{q.question}</span>
+                </button>
+              ))}
             </div>
           )}
         </div>

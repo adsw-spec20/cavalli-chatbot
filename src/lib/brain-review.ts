@@ -259,6 +259,14 @@ export interface ReviewQuestion {
   parentId?: string;
   /** הנחיה טכנית שאין לבעל העסק מה להחליט עליה - לא מוצגת ולא נספרת */
   hidden?: boolean;
+  /**
+   * כשזה נוסח שנוצר מעריכה: המזהה והטקסט של הסעיף **המקורי** בפרומפט.
+   * קריטי לעריכה חוזרת - הדריסות מוחלות על הפרומפט הנקי, ולכן עריכה של נוסח
+   * שכבר נערך חייבת לעדכן את אותה דריסה ולא לשרשר דריסה שנייה מעליה (שרשור
+   * כזה תלוי בסדר ההחלה, ומתפרק ברגע שהסדר משתנה).
+   */
+  originId?: string;
+  originText?: string;
 }
 
 export interface ReviewAnswer {
@@ -324,13 +332,19 @@ export interface ReviewOverview {
   promptTokens: number;
   /** כמה טוקנים כבר נחסכו בזכות הבירור */
   tokensSaved: number;
+  /** כמה שאלות כבר נוסחו (ולכן נטענות מיד) מתוך כמה - להתקדמות ההכנה */
+  phrased: number;
+  totalAtoms: number;
 }
 
 /** כמה טוקנים הוסרו עד כה (סכום האטומים שנמחקו) */
 async function computeSaved(state: StateStore, questions: QuestionStore): Promise<number> {
   let saved = 0;
   for (const [id, ans] of Object.entries(state)) {
-    if (ans.status === "deleted") saved += questions[id]?.tokens ?? 0;
+    if (ans.status !== "deleted") continue;
+    const q = questions[id];
+    // בסעיף שנערך ואז נמחק, החיסכון נמדד מול הסעיף **המקורי** שיצא מהפרומפט
+    saved += q ? (q.originText ? tok(q.originText) : (q.tokens ?? 0)) : 0;
   }
   return saved;
 }
@@ -364,8 +378,20 @@ export async function getOverview(): Promise<ReviewOverview> {
     if (questions[a.id]?.hidden) continue;
     bump(a.topic, !!state[a.id] || decidedByOverride(edited, a.text), a.tokens);
   }
+  // סעיף שנמחק יצא מהפרומפט, ולכן גם מהחיתוך. בלי לספור אותו כאן המחיקה
+  // הייתה מקטינה את המכנה במקום לקדם את הסרגל - עבודה שנעשתה ולא נראתה.
+  // (עריכה לא נספרת כאן: הנוסח החדש הוא אטום קיים שכבר נספר למעלה.)
+  const present = new Set(atoms.map((a) => a.id));
+  for (const [id, ans] of Object.entries(state)) {
+    if (ans.status !== "deleted" || present.has(id)) continue;
+    const q = questions[id];
+    if (q && !q.hidden) bump(q.topic, true, 0);
+  }
   // שאלות העשרה: פערי ידע אמיתיים שהצטברו
   for (const q of openQa) bump(assignTopic(q.question), !!state[`gap-${q.id}`], 0);
+
+  // כמה מהאטומים כבר מנוסחים - מה שמנוסח נטען מיד, והשאר דורש קריאה למודל
+  const phrased = atoms.filter((a) => isPhrased(questions, a)).length;
 
   const topics: TopicSummary[] = [...byTopic.entries()]
     .map(([key, v]) => ({ key, ...topicTitle(key), ...v }))
@@ -381,7 +407,15 @@ export async function getOverview(): Promise<ReviewOverview> {
     totalDone: topics.reduce((s, t) => s + t.done, 0),
     promptTokens: tok(prompt),
     tokensSaved: await computeSaved(state, questions),
+    phrased,
+    totalAtoms: atoms.length,
   };
+}
+
+/** אטום נחשב מנוסח כשיש לו שאלה שמורה על הטקסט הנוכחי שלו בדיוק */
+function isPhrased(questions: QuestionStore, a: ReviewAtom): boolean {
+  const q = questions[a.id];
+  return !!q && q.text === a.text.trim();
 }
 
 /** תבנית נפילה כשאין ניסוח מהמודל - תמיד יש שאלה, גם בלי AI */
@@ -412,50 +446,99 @@ async function phraseQuestions(
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 45_000 });
   const model = process.env.BRAIN_REVIEW_MODEL ?? "claude-haiku-4-5-20251001";
 
-  const BATCH = 10;
+  // 8 סעיפים לקריאה: מספיק גדול כדי לא לשלם על ההקשר שוב ושוב, מספיק קטן כדי
+  // שההמתנה תהיה קצרה (זמן התשובה נגזר בעיקר מאורך הפלט).
+  const BATCH = 8;
   const batches: ReviewAtom[][] = [];
   for (let i = 0; i < atoms.length; i += BATCH) batches.push(atoms.slice(i, i + BATCH));
 
-  await Promise.all(
-    batches.map(async (batch) => {
-      const list = batch
-        .map((a, i) => `[${i + 1}] (מתוך "${a.parentTitle}")\n${a.text.trim().slice(0, 900)}`)
-        .join("\n\n");
-      try {
-        const resp = await client.messages.create({
-          model,
-          max_tokens: 2000,
-          system:
-            "בעל מסעדה עובר על ההנחיות שהצטברו לצ'אטבוט שלו ומחליט מה להשאיר, מה לתקן ומה למחוק. " +
-            "לכל הנחיה שאני נותן לך, החזר:\n" +
-            "• summary - משפט אחד בעברית פשוטה: מה ההנחיה הזאת גורמת לבוט לעשות מול לקוח. בלי ציטוט ובלי ז'רגון טכני.\n" +
-            "• question - שאלה אחת קצרה בגוף שני שמאפשרת לו להחליט. השאלה חייבת להיות על **המציאות בעסק** " +
-            "(\"זה עדיין המצב?\", \"עדיין רוצה שהוא יגיד את זה ככה?\", \"המספר הזה נכון?\") ולא על מבנה טכני.\n" +
-            "• owner_decision - false אם זו הנחיה טכנית פנימית לבוט שלבעל העסק אין עליה שום דעת " +
-            "(סדר שלבים, מבנה תשובה, הוראות עיצוב), true אם יש כאן עובדה, מדיניות, ניסוח ללקוח או החלטה עסקית.\n" +
-            'החזר JSON בלבד: {"items":[{"n":1,"summary":"...","question":"...","owner_decision":true}]}',
-          messages: [{ role: "user", content: list }],
-        });
-        const txt = resp.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
-        const json = txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1);
-        const parsed = JSON.parse(json) as {
-          items?: { n: number; summary?: string; question?: string; owner_decision?: boolean }[];
-        };
-        for (const it of parsed.items ?? []) {
-          const atom = batch[it.n - 1];
-          if (atom && it.question)
-            out.set(atom.id, {
-              question: it.question,
-              summary: it.summary ?? "",
-              hidden: it.owner_decision === false,
-            });
-        }
-      } catch {
-        /* נופלים לתבנית */
+  await pool(batches, 6, async (batch) => {
+    const list = batch
+      .map((a, i) => `[${i + 1}] (מתוך "${a.parentTitle}")\n${a.text.trim().slice(0, 900)}`)
+      .join("\n\n");
+    try {
+      const resp = await client.messages.create({
+        model,
+        max_tokens: 2000,
+        system:
+          "בעל מסעדה עובר על ההנחיות שהצטברו לצ'אטבוט שלו ומחליט מה להשאיר, מה לתקן ומה למחוק. " +
+          "לכל הנחיה שאני נותן לך, החזר:\n" +
+          "• summary - משפט אחד בעברית פשוטה: מה ההנחיה הזאת גורמת לבוט לעשות מול לקוח. בלי ציטוט ובלי ז'רגון טכני.\n" +
+          "• question - שאלה אחת קצרה בגוף שני שמאפשרת לו להחליט. השאלה חייבת להיות על **המציאות בעסק** " +
+          "(\"זה עדיין המצב?\", \"עדיין רוצה שהוא יגיד את זה ככה?\", \"המספר הזה נכון?\") ולא על מבנה טכני.\n" +
+          "• owner_decision - false אם זו הנחיה טכנית פנימית לבוט שלבעל העסק אין עליה שום דעת " +
+          "(סדר שלבים, מבנה תשובה, הוראות עיצוב), true אם יש כאן עובדה, מדיניות, ניסוח ללקוח או החלטה עסקית.\n" +
+          'החזר JSON בלבד: {"items":[{"n":1,"summary":"...","question":"...","owner_decision":true}]}',
+        messages: [{ role: "user", content: list }],
+      });
+      const txt = resp.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
+      const json = txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1);
+      const parsed = JSON.parse(json) as {
+        items?: { n: number; summary?: string; question?: string; owner_decision?: boolean }[];
+      };
+      for (const it of parsed.items ?? []) {
+        const atom = batch[it.n - 1];
+        if (atom && it.question)
+          out.set(atom.id, {
+            question: it.question,
+            summary: it.summary ?? "",
+            hidden: it.owner_decision === false,
+          });
       }
-    })
-  );
+    } catch {
+      /* נופלים לתבנית */
+    }
+  });
   return out;
+}
+
+/**
+ * מנסח מראש את כל מה שעוד לא נוסח, בכל הנושאים.
+ *
+ * למה: הניסוח הוא הדבר היחיד כאן שדורש מודל, והוא נעשה בפתיחה הראשונה של כל
+ * נושא - מה שהפך את הלחיצה על נושא להמתנה של עשרות שניות. עכשיו זה רץ ברקע
+ * ברגע שהמסך נפתח, וכשבעל העסק בוחר נושא השאלות כבר מוכנות ונטענות מיד.
+ * מנוסח נשמר לתמיד, ולכן זה קורה פעם אחת לכל סעיף (ושוב רק אם הטקסט שונה).
+ */
+let prewarming = false;
+
+export async function prewarmQuestions(): Promise<{ phrased: number; total: number }> {
+  const [prompt, stored] = await Promise.all([activePrompt(), loadQuestions()]);
+  const atoms = atomizeprompt(prompt);
+  const missing = atoms.filter((a) => !isPhrased(stored, a));
+  if (!missing.length || prewarming) return { phrased: atoms.length - missing.length, total: atoms.length };
+
+  prewarming = true;
+  try {
+    // שומרים קבוצה-קבוצה ולא בסוף: לפונקציה על Vercel יש תקרת זמן, ושמירה
+    // אחת בסוף הייתה מאבדת את כל העבודה אם הריצה נקטעת. ככה הריצה הבאה
+    // ממשיכה בדיוק מאיפה שנעצרנו.
+    const GROUP = 40;
+    for (let i = 0; i < missing.length; i += GROUP) {
+      const group = missing.slice(i, i + GROUP);
+      const phrased = await phraseQuestions(group);
+      // נטען מחדש לפני כל שמירה: ייתכן שבינתיים נשמרה תשובה, ואין לדרוס אותה
+      const fresh = await loadQuestions();
+      for (const a of group) {
+        const p = phrased.get(a.id);
+        const base = fallbackQuestion(a);
+        fresh[a.id] = p ? { ...base, question: p.question, summary: p.summary || base.summary, hidden: p.hidden } : base;
+      }
+      await saveQuestions(fresh);
+    }
+    return { phrased: atoms.length, total: atoms.length };
+  } finally {
+    prewarming = false;
+  }
+}
+
+/** מריץ עבודות במקביל עד תקרה - כדי שהכנה של כל המוח לא תיתקל בהגבלת קצב */
+async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) await fn(items[next++]);
+  });
+  await Promise.all(workers);
 }
 
 /**
@@ -491,6 +574,15 @@ export async function getTopicQuestions(topicKey: string): Promise<{ questions: 
   }
 
   const questions: ReviewQuestion[] = atoms.map((a) => stored[a.id]).filter((q) => q && !q.hidden);
+
+  // סעיפים שנמחקו אינם קיימים יותר בפרומפט, ולכן לא יוצאים מהחיתוך - בלי
+  // להחזיר אותם לרשימה אי אפשר היה לחזור על מחיקה ולשחזר אותה.
+  const present = new Set(atoms.map((a) => a.id));
+  for (const [id, ans] of Object.entries(state)) {
+    if (ans.status !== "deleted" || present.has(id)) continue;
+    const q = stored[id];
+    if (q && !q.hidden && q.topic === topicKey) questions.push(q);
+  }
 
   // שאלות העשרה: מה שלקוחות שאלו והבוט לא ידע
   for (const qa of openQa) {
@@ -531,6 +623,23 @@ export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
   const repo = getRepo();
   let createdId: string | undefined;
 
+  // שינוי החלטה שכבר ניתנה: קודם מנקים את העקבות שלה. בלי זה, מעבר מ"שנה"
+  // ל"נכון השאר" היה משאיר את הדריסה הישנה בתוקף, והתשובה החדשה הייתה שקר.
+  const before = await loadState();
+  const prev = before[questionId];
+  if (prev) {
+    const wasWrite = prev.status === "changed" || prev.status === "deleted";
+    const isWrite = status === "changed" || status === "deleted";
+    if (wasWrite && !isWrite) await clearOverride(anchorOf(await loadQuestions(), questionId).id);
+    if (prev.newId) {
+      delete before[questionId];
+      delete before[prev.newId];
+      const qs = await loadQuestions();
+      delete qs[prev.newId];
+      await Promise.all([saveState(before), saveQuestions(qs)]);
+    }
+  }
+
   if (questionId.startsWith("gap-")) {
     const qaId = questionId.slice(4);
     if (status === "answered" && answer?.trim()) await repo.answerLearnedQA(qaId, answer.trim());
@@ -539,10 +648,11 @@ export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
     const questions = await loadQuestions();
     const q = questions[questionId];
     if (!q?.text) throw new Error("לא נמצא הטקסט המקורי של הסעיף");
-    // עוגן: הטקסט המדויק כפי שהוא בפרומפט. ריק = הסעיף מוסר.
     const next = status === "deleted" ? "" : (answer ?? "").trim();
     if (status === "changed" && !next) throw new Error("חסר טקסט חדש");
-    await setAnchorOverride(questionId, next, q.text, status === "deleted" ? "הוסר בבירור המוח" : "נערך בבירור המוח");
+    // העוגן הוא תמיד הסעיף המקורי בפרומפט - גם בעריכה של נוסח שכבר נערך.
+    const anchor = anchorOf(questions, questionId);
+    await setAnchorOverride(anchor.id, next, anchor.text, status === "deleted" ? "הוסר בבירור המוח" : "נערך בבירור המוח");
     // הטקסט החדש הוא אטום חדש (המזהה נגזר מהתוכן) - מסמנים גם אותו כנסקר,
     // אחרת אותה החלטה הייתה חוזרת מיד כשאלה "חדשה".
     if (status === "changed") {
@@ -551,7 +661,7 @@ export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
       createdId = newId;
       st[newId] = { status: "kept", at: Date.now() };
       const qs = await loadQuestions();
-      qs[newId] = { ...q, id: newId, text: next, tokens: tok(next) };
+      qs[newId] = { ...q, id: newId, text: next, tokens: tok(next), originId: anchor.id, originText: anchor.text };
       await Promise.all([saveState(st), saveQuestions(qs)]);
     }
   } else if (status === "unsure") {
@@ -568,12 +678,26 @@ export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
   return { ok: true };
 }
 
-/** ביטול תשובה אחת (חזרה אחורה על החלטה) */
+/** הסעיף המקורי בפרומפט שאליו הדריסה מעוגנת (גם אם זה כבר נוסח ערוך) */
+function anchorOf(questions: QuestionStore, questionId: string): { id: string; text: string } {
+  const q = questions[questionId];
+  return { id: q?.originId ?? questionId, text: q?.originText ?? q?.text ?? "" };
+}
+
+/** ביטול תשובה אחת (חזרה אחורה על החלטה, והנוסח המקורי חוזר) */
 export async function undoAnswer(questionId: string): Promise<void> {
-  const state = await loadState();
+  const [state, questions] = await Promise.all([loadState(), loadQuestions()]);
   const prev = state[questionId];
-  if (prev && (prev.status === "changed" || prev.status === "deleted")) {
-    await clearOverride(questionId);
+  const origin = questions[questionId]?.originId;
+  if (origin) {
+    // ביטול על נוסח שנוצר מעריכה = חזרה לסעיף המקורי. חייבים לנקות גם את
+    // התשובה שנרשמה על הסעיף המקורי, אחרת הוא נשאר "מוכרע" ולא יחזור לתור.
+    await clearOverride(origin);
+    delete state[origin];
+    delete questions[questionId];
+    await saveQuestions(questions);
+  } else if (prev && (prev.status === "changed" || prev.status === "deleted")) {
+    await clearOverride(anchorOf(questions, questionId).id);
   }
   // הנוסח החדש שנוצר בעריכה מפסיק להתקיים - מנקים גם אותו
   if (prev?.newId) delete state[prev.newId];

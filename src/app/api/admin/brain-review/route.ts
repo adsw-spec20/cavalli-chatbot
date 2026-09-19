@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { isMasterAuthorized } from "@/lib/admin-auth";
-import { getOverview, getTopicQuestions, applyAnswer, undoAnswer, type AnswerStatus } from "@/lib/brain-review";
+import {
+  getOverview,
+  getTopicQuestions,
+  applyAnswer,
+  undoAnswer,
+  prewarmQuestions,
+  type AnswerStatus,
+} from "@/lib/brain-review";
 
 /**
  * בירור המוח - למנהל הראשי בלבד.
  * GET              -> מפת הנושאים וההתקדמות
  * GET ?topic=key   -> שאלות הנושא (מנסח בדרך את מה שעוד לא נוסח)
+ * GET ?prewarm=1   -> מנסח ברקע את כל מה שחסר, ומחזיר תשובה מיד
  * POST             -> תשובה אחת, שנכנסת לבוט מיד; או ביטול החלטה.
  */
 
@@ -18,6 +27,11 @@ const STATUSES: AnswerStatus[] = ["kept", "changed", "deleted", "answered", "irr
 export async function GET(req: NextRequest) {
   if (!isMasterAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const topic = req.nextUrl.searchParams.get("topic");
+  // ההכנה רצה אחרי שהתשובה נשלחה, כדי שהמסך לא יחכה לה
+  if (req.nextUrl.searchParams.get("prewarm")) {
+    after(() => prewarmQuestions().catch(() => undefined));
+    return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
+  }
   try {
     const data = topic ? await getTopicQuestions(topic) : await getOverview();
     return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
