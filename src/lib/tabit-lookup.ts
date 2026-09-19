@@ -183,6 +183,13 @@ export interface IdentityHintInput {
   today: string;
   /** חישוב חלון 24 השעות, נעשה בקוד של conversation-service */
   windowLabel: (r: { dateISO?: string; time?: string }) => string;
+  /**
+   * היום שהלקוח מבקש עכשיו מקום אליו (מחילוץ פרטי ההזמנה), אם ידוע. מבדיל בין
+   * לקוח שמדבר על ההזמנה הקיימת לבין לקוח שמבקש מקום חדש ליום אחר - שם אין
+   * סיבה להזכיר את הקיימת (19.9: "רק שלא תשכח - יש לך הזמנה ל-29.9 ב-20:00
+   * ל-10 אנשים" ללקוח שביקש שולחן לזוג ליום אחר).
+   */
+  requestedDateISO?: string;
 }
 
 /**
@@ -201,7 +208,7 @@ export async function tabitIdentityHint(input: IdentityHintInput): Promise<strin
  * אותו באמת - כל מסלולי הפרטיות נבדקים ב-scripts/tabit-lookup-test.mts.
  */
 export function buildIdentityHint(all: TabitReservation[], input: IdentityHintInput): string | undefined {
-  const { channel, channelUserId, customerText, today, windowLabel } = input;
+  const { channel, channelUserId, customerText, today, windowLabel, requestedDateISO } = input;
   if (!mentionsExistingReservation(customerText)) return undefined;
 
   // ⚠️ הגשר משאיר ב-snapshot גם הזמנות שבוטלו (הוא מסנן רק walk-in), ולכן
@@ -222,13 +229,21 @@ export function buildIdentityHint(all: TabitReservation[], input: IdentityHintIn
     const label = windowLabel({ dateISO: r.day, time: r.time });
     const core = `ע"ש ${r.name ?? "לא ידוע"}, ${hebrewDateText(r.day)} בשעה ${r.time ?? "לא ידועה"}, ${r.seats ?? "?"} אנשים [${label}]`;
     if (result.level === "verified") {
-      return `[יומן ההזמנות - נמצאה הזמנה רשומה על המספר שממנו הלקוח כותב עכשיו בוואטסאפ, כלומר הזהות ודאית: ${core}. התייחס אליה ישירות, אל תבקש ממנו פרטי זיהוי, ומותר לך לאשר לו את הפרטים האלה.]`;
+      // החיפוש נדלק גם על בקשת מקום חדשה ("לשמור שולחן"), ולכן השורה חייבת
+      // לומר מתי ההזמנה בכלל רלוונטית. הקוד מכריע לפי היום המבוקש כשהוא ידוע.
+      const relevance =
+        requestedDateISO && r.day && requestedDateISO === r.day
+          ? ` הלקוח מבקש עכשיו מקום **לאותו יום** של ההזמנה הזאת - שאל בקצרה אם זו תוספת להזמנה הקיימת או הזמנה נפרדת.`
+          : requestedDateISO
+            ? ` הלקוח מבקש עכשיו מקום **ליום אחר** - זו בקשה חדשה ונפרדת. **אל תזכיר את ההזמנה הקיימת** אלא אם הוא שואל עליה.`
+            : ` אם הלקוח מבקש מקום חדש ולא מדבר על ההזמנה הזאת - אל תזכיר אותה מיוזמתך.`;
+      return `[יומן ההזמנות - נמצאה הזמנה רשומה על המספר שממנו הלקוח כותב עכשיו בוואטסאפ, כלומר הזהות ודאית: ${core}. כשהוא מדבר על ההזמנה הזאת - התייחס אליה ישירות ואל תבקש ממנו פרטי זיהוי. את השעה וכמות האנשים אמור **רק אם הוא שואל עליהן במפורש**.${relevance}]`;
     }
     return `[יומן ההזמנות - הפרטים שהלקוח מסר (שם, טלפון ותאריך) תואמים להזמנה: ${core}. מותר לאשר לו שההזמנה קיימת ולהמשיך לטפל בבקשה. את השעה וכמות האנשים אמור **רק אם הוא שואל עליהן במפורש**.]`;
   }
 
   if (multiple) {
-    return `[יומן ההזמנות - יותר מהזמנה אחת מתאימה לפרטים שיש עד כה. אסור למנות אותן, לתאר אותן, או לרמוז כמה יש. בקש מהלקוח בטבעיות לאיזה תאריך ההזמנה שלו.]`;
+    return `[יומן ההזמנות - יותר מהזמנה אחת מתאימה לפרטים שיש עד כה. אסור למנות אותן, לתאר אותן, או לרמוז כמה יש. אם הלקוח מדבר על הזמנה קיימת - בקש ממנו בטבעיות לאיזה תאריך ההזמנה שלו. אם הוא מבקש מקום חדש - התעלם מהשורה הזאת.]`;
   }
 
   // אין התאמה. מפרידים בין "עוד לא מסר כלום" לבין "מסר ועדיין לא נסגר",

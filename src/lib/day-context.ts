@@ -16,6 +16,8 @@
  * לבדוק אותה עם זמנים קבועים. הבדיקות: scripts/day-context-test.mts.
  */
 
+import { weekdayDateIn, weekdayMentionIn } from "./date-resolve";
+
 const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
 /** סוף חלון "אחרי חצות" בדקות מחצות. עד 05:00 הדובר עדיין חושב שזה אתמול. */
@@ -217,22 +219,41 @@ export interface DayHint {
  * alreadyAsked = כבר שאלנו פעם אחת בפרק הזה. אז לא שואלים שוב, פותרים לפי
  * זמן הכתיבה ואומרים למודל במפורש לאיזה תאריך - חקירה חוזרת גרועה משגיאה.
  */
+/**
+ * האם בהודעה יש הפניה ליום כלשהו - מילה יחסית, תאריך מספרי או יום בשבוע.
+ * משמש לבחירת ההודעה שממנה נגזר רמז היום. עד 19.9 יום בשבוע לא נחשב, ולכן
+ * הרמז נתקע על "מחר" מהודעה קודמת: הלקוח כתב "אז ליום ראשון הבא", והמודל
+ * המשיך לקבל "מחר = ראשון 20.9, אל תחשב בעצמך" - וענה שוב על 20.9.
+ */
+export function hasDayReference(text: string, refISO: string): boolean {
+  return relativeWordsIn(text).length > 0 || explicitDatesIn(text, refISO).length > 0 || !!weekdayMentionIn(text);
+}
+
+function dowOfISO(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
 export function dayHintForMessage(
   text: string,
   writtenAtMs: number,
   nowMs: number,
-  alreadyAsked = false
+  alreadyAsked = false,
+  opts?: { nextWeek?: boolean }
 ): DayHint | null {
   const words = relativeWordsIn(text);
   const writtenParts = israelPartsAt(writtenAtMs);
   // תאריך מספרי מפורש ("17.9") - היום-בשבוע שלו מחושב בקוד, שהמודל לא ינחש
   const dates = explicitDatesIn(text, writtenParts.dateISO);
+  // יום בשבוע ("יום ראשון הבא") - אותו פענוח בדיוק כמו של פרטי ההזמנה
+  const weekday = weekdayDateIn(text, writtenParts.dateISO, dowOfISO(writtenParts.dateISO), opts);
+  const weekdayPart = weekday && !dates.length ? [`"${weekday.raw}" = ${formatDayHe(weekday.iso)}`] : [];
   if (!words.length) {
-    if (!dates.length) return null;
-    const parts = dates.map((d) => `"${d.raw}" = ${formatDayHe(d.iso)}`);
+    if (!dates.length && !weekdayPart.length) return null;
+    const parts = [...dates.map((d) => `"${d.raw}" = ${formatDayHe(d.iso)}`), ...weekdayPart];
     return {
       needsConfirm: false,
-      line: `פענוח תאריכים בהודעת הלקוח, מחושב בקוד: ${parts.join(", ")}. השתמש ביום-בשבוע הזה כמו שהוא - אל תחשב בעצמך.`,
+      line: `פענוח היום שהלקוח ציין, מחושב בקוד: ${parts.join(", ")}. השתמש ביום ובתאריך האלה כמו שהם - אל תחשב בעצמך.`,
     };
   }
 
@@ -260,6 +281,9 @@ export function dayHintForMessage(
   const parts = [
     ...words.map((w) => `"${w.word}" = ${formatDayHe(resolve(w))}`),
     ...dates.map((d) => `"${d.raw}" = ${formatDayHe(d.iso)}`),
+    // "מחר, יום שישי" כשמחר הוא חמישי - שתי השורות יחד חושפות את הסתירה
+    // למודל, והפרומפט כבר אומר לו לשאול במקרה כזה במקום לנחש
+    ...weekdayPart,
   ];
   const gapMin = Math.round((nowMs - writtenAtMs) / 60_000);
   // מציינים את זמן הכתיבה רק כשהוא באמת שונה מעכשיו, אחרת זה רעש מיותר בכל הודעה

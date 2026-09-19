@@ -18,6 +18,7 @@ import {
   tenseOf,
   dayHintForMessage,
   labDayHint,
+  hasDayReference,
 } from "../src/lib/day-context";
 
 let pass = 0;
@@ -160,6 +161,22 @@ t(
 t("מעבדה - ביום רגיל אין הזרקה", labDayHint("כמה יש היום?", THU_1400), null);
 t("מעבדה - תאריך מפורש אין הזרקה", labDayHint("כמה היה ב-16.9?", THU_0005), null);
 t("מעבדה - בלי מילת זמן אין הזרקה", labDayHint("כמה שולחנות פנויים?", THU_0005), null);
+
+// ===== יום בשבוע מזיז את העוגן (דווח 19.9) =====
+// הלקוח כתב "מחר" (ראשון 20.9, סגור) ואז "אז ליום ראשון הבא". העוגן חיפש רק
+// מילים יחסיות ותאריכים מספריים, ולכן המשיך לומר למודל "מחר = ראשון 20.9".
+const SAT_2117 = il("2026-09-19", "21:17");
+t("יום בשבוע נחשב הפניה ליום", hasDayReference("אז ליום ראשון הבא ב20:00", "2026-09-19"), true);
+t("'שני אנשים' אינו הפניה ליום", hasDayReference("אנחנו שני אנשים", "2026-09-19"), false);
+t("בלי יום - אין הפניה", hasDayReference("אז פשוט לבוא בלי לשמור מקום?", "2026-09-19"), false);
+const nextSun = dayHintForMessage("אז ליום ראשון הבא ב20:00", SAT_2117, SAT_2117);
+t("'יום ראשון הבא' במוצ\"ש = ראשון 27.9", !!nextSun?.line.includes("= יום ראשון 27.9"), true);
+t("'יום ראשון הבא' - לא שואל", nextSun?.needsConfirm, false);
+t("'חמישי' עם שבוע הבא מקודם בשיחה = 24.9",
+  !!dayHintForMessage("חמישי", SAT_2117, SAT_2117, false, { nextWeek: true })?.line.includes("24.9"), true);
+t("'מחר, יום שישי' ביום רביעי - שתי השורות, כדי שהסתירה תיראה",
+  (() => { const l = dayHintForMessage("מחר, יום שישי", il("2026-09-16", "12:00"), il("2026-09-16", "12:00"))?.line ?? "";
+    return l.includes("= יום חמישי 17.9") && l.includes("= יום שישי 18.9"); })(), true);
 
 if (fails.length) {
   console.log(`\n${fails.length} נכשלו:\n`);

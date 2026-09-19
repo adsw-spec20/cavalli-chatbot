@@ -99,7 +99,7 @@ export const GATE_WINDOW_BUFFER_MIN = 60;
 
 /** מפרק מחרוזת שעות "HH:MM-HH:MM" ל-{start,end} בדקות מחצות. 00:00 בסוף = 24:00.
  *  אם הסגירה חוצה חצות (סגירה קטנה מהפתיחה) - מוסיפים יום לסגירה. */
-function parseHoursRange(hours: string | null): { start: number; end: number } | null {
+export function parseHoursRange(hours: string | null): { start: number; end: number } | null {
   if (!hours) return null;
   const m = hours.match(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/);
   if (!m) return null;
@@ -111,7 +111,7 @@ function parseHoursRange(hours: string | null): { start: number; end: number } |
 }
 
 /** השעות התקפות לתאריך נתון (דריסה נקודתית אם קיימת, אחרת השעות הקבועות של אותו יום). */
-function hoursForDate(config: BusinessConfig, dateISO: string): string | null {
+export function hoursForDate(config: BusinessConfig, dateISO: string): string | null {
   const override = config.hoursOverrides?.find((o) => o.date === dateISO);
   if (override) return override.hours;
   const [y, mo, d] = dateISO.split("-").map(Number);

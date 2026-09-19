@@ -12,6 +12,8 @@ import { spawnSync } from "node:child_process";
 const SUITES = [
   ["פענוח מילות זמן וחצות", "scripts/day-context-test.mts"],
   ["פתוח/סגור והושבה אחרונה", "scripts/open-state-test.mts"],
+  ["מדיניות ההזמנות ושעות הפעילות", "scripts/reservation-policy-test.mts"],
+  ["חילוץ פרטי הזמנה", "scripts/test-resv-slots.mts"],
   ["זיהוי הזמנה ביומן טאביט", "scripts/tabit-lookup-test.mts"],
   ["פורמט רשימות טאביט", "scripts/tabit-format-test.mts"],
   ["לוגיקת מעבדת טאביט", "scripts/tabit-smart-test.mts"],

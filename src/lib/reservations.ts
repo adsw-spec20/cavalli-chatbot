@@ -14,6 +14,7 @@ import { getRepo } from "./db";
 import { israelDateISO } from "./business-hours";
 import { sendAlertEmail, sendTeamWhatsAppAlert, escapeHtml } from "./alerts";
 import { sendTeamPush } from "./push";
+import { HE_DAYS } from "./date-resolve";
 
 const KEY = "reservations";
 const MAX_KEPT = 300;
@@ -23,84 +24,14 @@ const MAX_KEPT = 300;
 // "יום שני", ואחרי תיקון נדד בין 13.8 ל-14.8 באותה שיחה - והטעות התפשטה ליומן,
 // להסלמות ולתשובות הצוות). לכן הקוד גוזר את התאריך בעצמו ממילות הלקוח כשאפשר,
 // והערכת המודל משמשת רק כגיבוי - ולעולם לא תאריך שכבר עבר.
-
-const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
-
-/** התאריך (YYYY-MM-DD) והיום-בשבוע הנוכחיים בישראל */
-function israelToday(now: Date): { iso: string; dow: number } {
-  const iso = now.toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
-  const wd = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jerusalem", weekday: "short" }).format(now);
-  return { iso, dow: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(wd) };
-}
-
-function addDaysISO(iso: string, days: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
-}
+// הלוגיקה עצמה ב-date-resolve.ts (טהורה, משותפת גם ל-day-context).
+export { resolveReservationDate } from "./date-resolve";
 
 /** תווית אחידה לצוות וללוג: "2026-08-13" -> "יום חמישי 13.8" */
 export function reservationDateLabel(iso?: string): string | undefined {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return undefined;
   const [y, m, d] = iso.split("-").map(Number);
   return `יום ${HE_DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d}.${m}`;
-}
-
-/**
- * גוזר את תאריך ההזמנה (ISO) ממילות הלקוח: "היום"/"מחר"/"מחרתיים", יום בשבוע,
- * או תאריך מפורש ("13.8"). כשאי אפשר לגזור בוודאות - נופל להערכת המודל
- * (רק אם תקינה ולא בעבר), אחרת undefined והצוות מסתמך על dateText.
- */
-export function resolveReservationDate(
-  dateText: string,
-  modelISO?: string,
-  now: Date = new Date(),
-  opts?: { nextWeek?: boolean }
-): string | undefined {
-  const { iso: today, dow: todayDow } = israelToday(now);
-  const t = (dateText || "").trim();
-  const modelFallback =
-    modelISO && /^\d{4}-\d{2}-\d{2}$/.test(modelISO) && modelISO >= today ? modelISO : undefined;
-
-  if (/מחרתיים/.test(t)) return addDaysISO(today, 2);
-  if (/מחר/.test(t)) return addDaysISO(today, 1);
-  if (/היום|הערב|הלילה/.test(t)) return today;
-
-  // תאריך מפורש "13.8" / "13/8" / "13.8.26" - קודם ליום-בשבוע (ספציפי יותר)
-  const em = t.match(/(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?/);
-  if (em) {
-    const d = Number(em[1]);
-    const mo = Number(em[2]);
-    let y = em[3] ? Number(em[3]) : Number(today.slice(0, 4));
-    if (y < 100) y += 2000;
-    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
-      const mk = (yy: number) => `${yy}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      // בלי שנה מפורשת ותאריך שכבר עבר - כנראה הכוונה לשנה הבאה
-      return !em[3] && mk(y) < today ? mk(y + 1) : mk(y);
-    }
-  }
-
-  // יום בשבוע ("יום חמישי", "בחמישי") -> המופע הקרוב.
-  // "שבוע הבא" (בהודעה הזאת או קודם בשיחה - opts.nextWeek): המופע חייב ליפול
-  // בשבוע הקלנדרי הבא (ראשון-שבת). בלי זה לקוח שכתב "לשבוע הבא" ואז "שישי"
-  // ביום שישי קיבל את היום עצמו, הבוט זיהה סתירה ושאל שוב (דווח 18.9).
-  // "בעוד שבועיים" וכד' נשארים לא מוכרעים - שם באמת אי אפשר לדעת.
-  const saysNextWeek = /(ה)?שבוע הבא/.test(t);
-  const vagueWeek = /בעוד/.test(t) || (/שבוע/.test(t) && !saysNextWeek);
-  if (!vagueWeek) {
-    const nextWeek = saysNextWeek || opts?.nextWeek === true;
-    for (let i = 0; i < HE_DAYS.length; i++) {
-      if (new RegExp(`(?:^|[\\s,בלו])${HE_DAYS[i]}(?:\\b|$|[\\s,.!?])`).test(t)) {
-        let ahead = (i - todayDow + 7) % 7;
-        if (nextWeek) {
-          const daysToNextSunday = (7 - todayDow) % 7 || 7;
-          if (ahead < daysToNextSunday) ahead += 7;
-        }
-        return addDaysISO(today, ahead); // אותו יום כמו היום = היום (הצוות מאמת ממילא)
-      }
-    }
-  }
-
-  return modelFallback;
 }
 
 export type ReservationStatus = "pending" | "approved" | "declined" | "cancelled";

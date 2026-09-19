@@ -12,13 +12,20 @@
  * להפוך לפרט שגוי בכרטיס - היא לכל היותר רמז שהמודל מתעלם ממנו.
  */
 
-import { resolveReservationDate } from "./reservations";
+import { resolveReservationDate } from "./date-resolve";
+import { tablesTimesSeats, type VerdictLine } from "./reservation-availability";
 import type { ConversationMessage } from "./channels/types";
 
 export interface ReservationSlots {
   people?: number;
   dateISO?: string;
   time?: string;
+  /**
+   * שעה שנאמרה ליום **אחר** לפני שהלקוח החליף יום. לא נחשבת כידועה: 19.9
+   * הלקוח עבר מראשון 20:00 לחמישי, והבוט כתב "חמישי בשעה 20:00 - מעולה"
+   * כשלחמישי לא נאמרה שעה בכלל.
+   */
+  priorTime?: { time: string; dateISO: string };
   seating?: "בפנים" | "בחוץ";
   name?: string;
   phone?: string;
@@ -44,6 +51,9 @@ const HE_NUM_WORDS: Record<string, number> = {
 const HE_NUM_ALT = Object.keys(HE_NUM_WORDS).join("|");
 
 function parsePeople(t: string): number | undefined {
+  // "4 שולחנות של 2 אנשים" = 8, לא 2 (19.9)
+  const tables = tablesTimesSeats(t);
+  if (tables !== null) return tables;
   if (/זוג(?![א-ת])|זוגי/.test(t)) return 2;
   // ה-lookbehind חוסם חצי מתאריך ("ל-7.9 אנשים" נקרא כ-9 והופנה לברק, 18.9)
   const strong = t.match(/(?<![\d.,/])(\d{1,3})\s*(?:אנשים|איש(?![א-ת])|סועדים|נפשות|מקומות)/);
@@ -134,9 +144,17 @@ export function extractReservationSlots(
     const iso = resolveReservationDate(t, undefined, msg.ts ? new Date(msg.ts) : undefined, {
       nextWeek: saidNextWeek,
     });
-    if (iso) slots.dateISO = iso;
     const time = parseTime(t);
-    if (time) slots.time = time;
+    // הלקוח החליף יום בלי לומר שעה: השעה הקודמת שייכת ליום הקודם
+    if (iso && slots.dateISO && iso !== slots.dateISO && !time && slots.time) {
+      slots.priorTime = { time: slots.time, dateISO: slots.dateISO };
+      slots.time = undefined;
+    }
+    if (iso) slots.dateISO = iso;
+    if (time) {
+      slots.time = time;
+      slots.priorTime = undefined;
+    }
     if (/בפנים|פנימי|בתוך/.test(t)) slots.seating = "בפנים";
     else if (/בחוץ|חיצוני|בגינה|בחצר/.test(t)) slots.seating = "בחוץ";
     const name = parseName(t);
@@ -165,14 +183,15 @@ const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי
  */
 export function reservationSlotsHint(
   slots: ReservationSlots,
-  opts?: { policyGates?: boolean }
+  opts?: { policyGates?: boolean; verdict?: VerdictLine | null }
 ): string | null {
+  const dayLabel = (iso: string) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return `יום ${HE_DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d}.${m}`;
+  };
   const known: string[] = [];
   if (slots.people !== undefined) known.push(`${slots.people} אנשים`);
-  if (slots.dateISO) {
-    const [y, m, d] = slots.dateISO.split("-").map(Number);
-    known.push(`יום ${HE_DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d}.${m}`);
-  }
+  if (slots.dateISO) known.push(dayLabel(slots.dateISO));
   if (slots.time) known.push(`בשעה ${slots.time}`);
   if (slots.seating) known.push(`ישיבה ${slots.seating}`);
   if (slots.name) known.push(`על שם ${slots.name}`);
@@ -181,6 +200,9 @@ export function reservationSlotsHint(
   // בפרומפט לא הספיק: המודל נטה להניח "היום" ולענות את תשובת היום הנוכחי
   // (בשישי הוא ענה "בשישי אין הזמנות" ללקוח שלא ציין יום בכלל).
   const gates: string[] = [];
+  // סגור (כל היום או בשעה המבוקשת) - הגודל לא משנה כלום, ושער הכמות רק היה
+  // מונע מהמודל לומר את הדבר היחיד שנכון לומר
+  const closedVerdict = opts?.verdict?.verdict === "closed" || opts?.verdict?.verdict === "closed_hour";
   if (opts?.policyGates === false) {
     // שיחה על הזמנה קיימת - אין כאן החלטת זמינות חדשה
   } else if (!slots.dateISO) {
@@ -189,7 +211,7 @@ export function reservationSlotsHint(
         `לא "מגיעים על בסיס מקום פנוי", לא "סגור", לא הפניה לברק ולא שעות פתיחה כתשובה על זמינות. ` +
         `אל תניח שהכוונה להיום. באותה הודעה שאל לאיזה יום.`
     );
-  } else if (slots.people === undefined) {
+  } else if (slots.people === undefined && !closedVerdict) {
     gates.push(
       `⚠️ **מספר הסועדים עוד לא נאמר.** ענה על מה שהלקוח שאל עכשיו - ואם שאל אם הכמות משנה, ` +
         `התשובה הכנה היא שכן, לקבוצה גדולה יש דרך אחרת. **אבל אסור שתופיע בתשובה הכרעת זמינות** ` +
@@ -201,10 +223,20 @@ export function reservationSlotsHint(
 
   if (!known.length) return gates.length ? gates.join(" ") : null;
 
+  // שעה שנאמרה ליום הקודם - מותר להציע אותה, אסור להניח אותה
+  const prior =
+    !slots.time && slots.priorTime
+      ? ` השעה ${slots.priorTime.time} נאמרה קודם לגבי ${dayLabel(slots.priorTime.dateISO)}, **לא** לגבי היום הנוכחי - ` +
+        `אל תניח שהיא חלה גם עליו ואל תכתוב אותה בסיכום; אם זה טבעי, שאל "גם ב-${slots.priorTime.time}?".`
+      : "";
+  const verdictLine = opts?.policyGates !== false && opts?.verdict?.line ? ` ${opts.verdict.line}` : "";
+
   return (
     `פרטי הזמנה שכבר נמסרו בשיחה (חולצו אוטומטית - אם זה סותר את מה שהלקוח כתב, ` +
     `השיחה עצמה קובעת ואתה מתעלם מהשורה הזאת): ${known.join(" · ")}. ` +
     (slots.missing.length ? `עוד חסר: ${slots.missing.join(", ")}.` : `הכל נאסף - אפשר לסכם ולבקש אישור.`) +
+    prior +
+    verdictLine +
     (gates.length ? ` ${gates.join(" ")}` : "")
   );
 }

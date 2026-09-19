@@ -21,12 +21,12 @@ import {
   resolveReservationDate,
   reservationDateLabel,
 } from "./reservations";
-import { checkReservationAvailability } from "./reservation-availability";
+import { checkReservationAvailability, hasReservationIntent, policyVerdictFor } from "./reservation-availability";
 import { bareHourHint } from "./time-hints";
 import { looksLikeReservationFlow, extractReservationSlots, reservationSlotsHint } from "./reservation-slots";
 import { isOpenNow, israelDateISO, effectiveHoursToday, isWithinGateWindow, openStateLine } from "./business-hours";
 import { tabitIdentityHint } from "./tabit-lookup";
-import { dayHintForMessage, relativeWordsIn, hasExplicitDate, inMidnightWindow, explicitDatesIn, israelPartsAt } from "./day-context";
+import { dayHintForMessage, relativeWordsIn, hasExplicitDate, inMidnightWindow, hasDayReference, israelPartsAt } from "./day-context";
 import { shouldInviteReview, reviewInviteLine } from "./review-invite";
 import { isGateConfigured, gateHoursBypassed, openParkingGate } from "./palgate";
 import { getTodayUsage, recordLlmUsage, recordFreeReply } from "./usage";
@@ -908,12 +908,29 @@ function isReservationSummaryMsg(text: string): boolean {
  * ראשון נסגר ב-18:00 (אין ערב), שישי אין הזמנות בכלל, שבת סגור.
  * הנתיב הדטרמיניסטי לא יוצר בקשה שלא עומדת בזה - משאיר למודל/לצוות.
  */
-function reservationPolicyOk(dateISO?: string, time?: string): boolean {
-  if (!dateISO || !time || !/^\d{4}-\d{2}-\d{2}$/.test(dateISO)) return false;
-  const [y, m, d] = dateISO.split("-").map(Number);
-  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=ראשון
-  if (dow < 1 || dow > 4) return false; // רק שני(1) עד חמישי(4)
-  return time >= "18:00";
+/**
+ * ההודעות של בקשת ההזמנה הנוכחית: מאז הבקשה הקודמת שנפתחה / פתיחת הפרק האחרון,
+ * עם חותמות הזמן (כדי ש"מחר" ייפתר לפי מתי נכתב). 30 אחרונות לכל היותר.
+ */
+function reservationWindow<T extends { role: string; ts: number; meta?: Record<string, unknown> }>(stored: T[]): T[] {
+  const boundaryTs = stored.reduce(
+    (acc, m) =>
+      m.role === "system" && (m.meta?.reservation === true || m.meta?.reopened === true) && m.ts > acc ? m.ts : acc,
+    0
+  );
+  // >= ולא >: סימון הפתיחה מחדש נכתב רגע לפני הודעת הלקוח שפתחה את הפרק, ובאותה
+  // מילישנייה ההודעה הזאת הייתה נופלת מהחלון (הסימון עצמו הוא system ומסונן ממילא)
+  return stored.filter((m) => m.ts >= boundaryTs).slice(-30);
+}
+
+/**
+ * האם המשבצת היא תא ה-✅ בטבלה. עובר דרך אותה הכרעה בדיוק כמו המנוע והמודל
+ * (19.9) - כולל ימים שנסגרו בפאנל (חג בשני-חמישי) והושבה אחרונה, שהבדיקה
+ * הקודמת (יום בשבוע + "מ-18:00") לא ראתה.
+ */
+function reservationPolicyOk(cfg: BusinessConfig, dateISO?: string, time?: string, people?: number): boolean {
+  if (!dateISO || !time) return false;
+  return policyVerdictFor(cfg, { dateISO, time, people })?.verdict === "book";
 }
 
 // טיפול ברצף הודעות + הגבלת קצב
@@ -1539,9 +1556,12 @@ export async function handleIncomingMessage(
     inMidnightWindow(m.ts) && !hasExplicitDate(m.content) && relativeWordsIn(m.content).some((w) => w.riskyAfterMidnight);
   // העוגן: גם תאריך מספרי מפורש ("17.9") נחשב - כדי שהיום-בשבוע שלו יפוענח
   // בקוד ולא ינוחש על ידי המודל (תקלת "17.9 זה שישי", 18.9)
+  // וגם יום בשבוע ("אז ליום ראשון הבא") - אחרת הרמז נתקע על "מחר" מהודעה
+  // קודמת וממשיך לומר למודל תאריך שהלקוח כבר עזב (19.9)
   const dayAnchor = [...episodeUserMsgs]
     .reverse()
-    .find((m) => relativeWordsIn(m.content).length > 0 || explicitDatesIn(m.content, israelPartsAt(m.ts).dateISO).length > 0);
+    .find((m) => hasDayReference(m.content, israelPartsAt(m.ts).dateISO));
+  const episodeSaidNextWeek = episodeUserMsgs.some((m) => /(ה)?שבוע הבא/.test(m.content));
   // מפסיקים לשאול בשני מקרים: כבר שאלנו פעם אחת בפרק הזה, או שהלקוח כבר ענה
   // לנו עם יום/תאריך מפורש. בלי השני, לקוח ששאלנו אותו "היום או מחר?" וענה
   // "חמישי" היה נשאל שוב - כי "חמישי" אינה מילת זמן יחסית והעוגן לא התקדם.
@@ -1551,7 +1571,9 @@ export async function handleIncomingMessage(
   const midnightAlreadyAsked =
     answeredSinceAnchor || episodeUserMsgs.filter(isRiskyMidnight).length >= 2;
   const dayHint = dayAnchor
-    ? dayHintForMessage(dayAnchor.content, dayAnchor.ts, Date.now(), midnightAlreadyAsked)
+    ? dayHintForMessage(dayAnchor.content, dayAnchor.ts, Date.now(), midnightAlreadyAsked, {
+        nextWeek: episodeSaidNextWeek,
+      })
     : null;
 
   // ----- הזמנה להשאיר ביקורת בגוגל (17.9) -----
@@ -1966,6 +1988,31 @@ export async function handleIncomingMessage(
     /* לא קריטי - ממשיכים בלי */
   }
 
+  // רמז פרטי הזמנה (24.8): כשהשיחה היא זרימת הזמנה, הקוד מחלץ את מה שכבר נמסר
+  // ומעביר למודל - כדי שלא ישאל פעמיים ולא יתבלבל בפרטים. רמז בלבד: השיחה קובעת.
+  // גם הודעה עם כוונת הזמנה מפורשת שהמנוע לא ענה עליה ("יש מקום הערב?" בראשון)
+  // נכנסת - אחרת דווקא היא מגיעה למודל בלי הכרעה.
+  // החילוץ רץ על הפרק הנוכחי בלבד ועם חותמות הזמן: "מחר" נפתר לפי מתי נכתב,
+  // ופרטים מביקור קודם (השיחה היא חלון מתמשך אחד ללקוח) לא דולפים לבקשה חדשה.
+  // אותו חלון בדיוק כמו רשתות הביטחון שלמטה.
+  const inReservationFlow = looksLikeReservationFlow(history) || hasReservationIntent(lastUserTurn);
+  const newRequestSlots = inReservationFlow ? extractReservationSlots(reservationWindow(stored)) : null;
+  // שערי המדיניות (יום/כמות) חלים רק על בקשה חדשה. בשיחה על הזמנה קיימת
+  // (שינוי/ביטול/בירור) הם מזיקים - שם צריך להעביר לצוות, לא לשאול "כמה תהיו".
+  const existingResvContext = [...stored.slice(-6).map((m) => m.content), lastUserTurn].some((t) =>
+    /לבטל|ביטול|בטל את|לשנות|שינוי|להזיז|לעדכן|יש לי הזמנה|ההזמנה שלי|הזמנתי|הזמנה קיימת|my reservation|i have a reservation|reservation for|change my|cancel/i.test(
+      t
+    )
+  );
+  let reservationSlots: string | undefined;
+  if (newRequestSlots) {
+    // הכרעת המדיניות לפרטים שנאספו - מחושבת בקוד, כולל שעות הפעילות של אותו
+    // תאריך (19.9: "ראשון ב-20:00" קיבל "פשוט מגיעים" כשנסגרים ב-18:00)
+    const verdict = existingResvContext ? null : policyVerdictFor(cfgEarly, newRequestSlots);
+    reservationSlots =
+      reservationSlotsHint(newRequestSlots, { policyGates: !existingResvContext, verdict }) ?? undefined;
+  }
+
   // ----- זיהוי הזמנה ביומן טאביט (16.9) -----
   // רוב ההזמנות נעשות בטאביט ולא אצלנו, ולכן הבוט היה עיוור להן: גם כשלקוח
   // אמר "יש לי הזמנה מחר", מבחינת הבוט לא הייתה שום הזמנה. החיפוש כאן נעשה
@@ -1983,24 +2030,12 @@ export async function handleIncomingMessage(
       customerText,
       today: israelDateISO(),
       windowLabel,
+      // היום שהלקוח מבקש עכשיו מקום אליו - כדי שהזמנה קיימת ליום אחר לא תוזכר
+      // סתם. רק בבקשה חדשה: כשהוא מדבר על ההזמנה הקיימת, היום שלה הוא הנושא.
+      requestedDateISO: existingResvContext ? undefined : newRequestSlots?.dateISO,
     });
   } catch {
     /* לא קריטי - ממשיכים בלי */
-  }
-
-  // רמז פרטי הזמנה (24.8): כשהשיחה היא זרימת הזמנה, הקוד מחלץ את מה שכבר נמסר
-  // ומעביר למודל - כדי שלא ישאל פעמיים ולא יתבלבל בפרטים. רמז בלבד: השיחה קובעת.
-  let reservationSlots: string | undefined;
-  if (looksLikeReservationFlow(history)) {
-    // שערי המדיניות (יום/כמות) חלים רק על בקשה חדשה. בשיחה על הזמנה קיימת
-    // (שינוי/ביטול/בירור) הם מזיקים - שם צריך להעביר לצוות, לא לשאול "כמה תהיו".
-    const existingResvContext = [...stored.slice(-6).map((m) => m.content), lastUserTurn].some((t) =>
-      /לבטל|ביטול|בטל את|לשנות|שינוי|להזיז|לעדכן|יש לי הזמנה|ההזמנה שלי|הזמנתי|הזמנה קיימת|my reservation|i have a reservation|reservation for|change my|cancel/i.test(
-        t
-      )
-    );
-    reservationSlots =
-      reservationSlotsHint(extractReservationSlots(history), { policyGates: !existingResvContext }) ?? undefined;
   }
 
   // קריאה למודל עם ניסיונות חוזרים לשגיאות רגעיות (429 / 5xx / חיבור). הרבה
@@ -2348,14 +2383,7 @@ export async function handleIncomingMessage(
       // חלון חילוץ: רק מאז ההזמנה הקודמת / פתיחת הפרק האחרון של השיחה -
       // שפרטים מביקור קודם (השיחה היא חלון מתמשך אחד ללקוח) לא ידלפו לבקשה
       // חדשה. התאריכים נפתרים לפי זמן הכתיבה של כל הודעה (ts).
-      const boundaryTs = stored.reduce(
-        (acc, m) =>
-          m.role === "system" && (m.meta?.reservation === true || m.meta?.reopened === true) && m.ts > acc
-            ? m.ts
-            : acc,
-        0
-      );
-      const windowMsgs = stored.filter((m) => m.ts > boundaryTs).slice(-30);
+      const windowMsgs = reservationWindow(stored);
       const slots = extractReservationSlots(windowMsgs);
       const complete = slots.missing.length === 0;
 
@@ -2365,7 +2393,7 @@ export async function handleIncomingMessage(
         const pendingExists = (await loadReservations()).some(
           (r) => r.status === "pending" && r.conversationId === conversation.id
         );
-        const policyOk = reservationPolicyOk(slots.dateISO, slots.time);
+        const policyOk = reservationPolicyOk(cfgEarly, slots.dateISO, slots.time, slots.people);
         const dLabel = reservationDateLabel(slots.dateISO);
 
         // --- רשת ב: אישור לסיכום שהמודל לא תרגם לבקשה -> הקוד פותח אותה ---

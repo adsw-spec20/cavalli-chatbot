@@ -27,10 +27,13 @@ export const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "ח�
  * walk_in  - בסיס מקום פנוי
  * barak    - קבוצה גדולה, מפנים לברק
  * closed   - המסעדה סגורה באותו יום
+ * closed_hour - היום פתוח, אבל **בשעה המבוקשת** סגורים (ראשון ב-20:00, אחרי
+ *            ההושבה האחרונה, לפני הפתיחה). אין נוסח קבוע: המודל מנסח לפי
+ *            שורת ההכרעה שהקוד מזריק לו (reservation-availability.ts)
  * ask_size - חסר מספר הסועדים, ובלעדיו אי אפשר לענות (9+ היו הולכים לברק)
  * defer    - אין מספיק מידע להכרעה בקוד; המודל ממשיך את השיחה
  */
-export type ReservationVerdict = "book" | "walk_in" | "barak" | "closed" | "ask_size" | "defer";
+export type ReservationVerdict = "book" | "walk_in" | "barak" | "closed" | "closed_hour" | "ask_size" | "defer";
 
 /**
  * הנוסחים המדויקים ללקוח (נכתבו על ידי בעל העסק 18.9).
@@ -68,6 +71,32 @@ export interface PolicyQuery {
   hour: number | null;
   /** מספר הסועדים, או null כשאינו ידוע */
   people: number | null;
+  /** הדקות בתוך השעה (20:30 -> 30). ברירת מחדל 0 */
+  minute?: number;
+  /**
+   * שעות הפעילות באותו תאריך, בדקות מחצות (כולל דריסות מהפאנל). כשחסר - השעה
+   * המבוקשת לא נבדקת מול שעות הפתיחה.
+   */
+  window?: OpenWindow | null;
+}
+
+/** שעות הפעילות של יום אחד, בדקות מחצות. סגירה ב-00:00 = 1440. */
+export interface OpenWindow {
+  open: number;
+  close: number;
+  /** ההושבה האחרונה, או null כשלא הוגדרה לאותו יום */
+  lastSeating: number | null;
+}
+
+/**
+ * האם השעה המבוקשת נופלת מחוץ לשעות הפעילות של אותו יום.
+ * נולד מתקלה אמיתית (19.9): לקוח ביקש ראשון ב-20:00, והבוט ענה "פשוט מגיעים
+ * על בסיס מקום פנוי" - אבל בראשון נסגרים ב-18:00. הטבלה אמרה "ראשון = מקום
+ * פנוי" ואף אחד לא בדק את השעה.
+ */
+export function outsideOpenWindow(minuteOfDay: number, w: OpenWindow): boolean {
+  if (minuteOfDay < w.open || minuteOfDay >= w.close) return true;
+  return w.lastSeating !== null && minuteOfDay > w.lastSeating;
 }
 
 export interface PolicyDecision {
@@ -80,9 +109,10 @@ export interface PolicyDecision {
  * ההכרעה היחידה. סדר הבדיקות הוא המדיניות עצמה:
  *   1. סגור באותו יום - גובר על הכל, **גם על קבוצה גדולה** (החלטת בעל העסק:
  *      "בשבת סגורים תמיד, לא משנה כמה אנשים").
- *   2. 9 סועדים ומעלה - ברק, בכל יום ובכל שעה.
- *   3. שני-חמישי מ-18:00 - שומרים כאן.
- *   4. כל השאר - בסיס מקום פנוי, **אבל רק אחרי שיודעים כמה הם**: בלי המספר
+ *   2. סגור **בשעה המבוקשת** - מאותו היגיון בדיוק: סגור גובר על גודל.
+ *   3. 9 סועדים ומעלה - ברק, בכל יום ובכל שעה שבה פתוחים.
+ *   4. שני-חמישי מ-18:00 - שומרים כאן.
+ *   5. כל השאר - בסיס מקום פנוי, **אבל רק אחרי שיודעים כמה הם**: בלי המספר
  *      אי אפשר לדעת אם התשובה הנכונה היא מקום-פנוי או ברק.
  */
 export function decideReservation(q: PolicyQuery): PolicyDecision {
@@ -91,6 +121,9 @@ export function decideReservation(q: PolicyQuery): PolicyDecision {
       verdict: "closed",
       text: q.dayOfWeek === 6 ? RESERVATION_TEXTS.saturday : RESERVATION_TEXTS.closedOther,
     };
+  }
+  if (q.hour !== null && q.window && outsideOpenWindow(q.hour * 60 + (q.minute ?? 0), q.window)) {
+    return { verdict: "closed_hour", text: null };
   }
   if (q.people !== null && q.people >= GROUP_MIN_FOR_BARAK) {
     return { verdict: "barak", text: RESERVATION_TEXTS.barak };
