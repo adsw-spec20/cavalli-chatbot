@@ -424,14 +424,16 @@ export async function getOverview(): Promise<ReviewOverview> {
     byTopic.set(topic, cur);
   };
 
-  // הנחיות טכניות (שכבר סווגו כך בניסוח) אינן שאלות ואינן נספרות
+  // הנחיות טכניות (שכבר סווגו כך בניסוח) אינן שאלות ואינן נספרות.
+  // "דלג" אינו הכרעה: השאלה חוזרת לתור, ולכן היא לא נספרת כנסגרה (אחרת
+  // המונה היה גדול מרשימת מה שנסגר בפועל).
   for (const a of atoms) {
     if (questions[a.id]?.hidden) continue;
     const edit = ov.items[a.id];
-    bump(a.topic, !!state[a.id], edit ? tok(edit.text) : a.tokens);
+    bump(a.topic, isDecided(state[a.id]), edit ? tok(edit.text) : a.tokens);
   }
   // שאלות העשרה: פערי ידע אמיתיים שהצטברו
-  for (const q of openQa) bump(assignTopic(q.question), !!state[`gap-${q.id}`], 0);
+  for (const q of openQa) bump(assignTopic(q.question), isDecided(state[`gap-${q.id}`]), 0);
 
   // כמה מהאטומים כבר מנוסחים - מה שמנוסח נטען מיד, והשאר דורש קריאה למודל
   const phrased = atoms.filter((a) => isPhrased(questions, a)).length;
@@ -454,6 +456,11 @@ export async function getOverview(): Promise<ReviewOverview> {
     phrased,
     totalAtoms: atoms.length,
   };
+}
+
+/** שאלה "נסגרה" = ניתנה עליה הכרעה. דילוג והערה-בלבד אינם הכרעה. */
+function isDecided(ans?: ReviewAnswer): boolean {
+  return !!ans && ans.status !== "skipped";
 }
 
 /** אטום נחשב מנוסח כשיש לו שאלה שמורה על הטקסט הנוכחי שלו בדיוק */
@@ -643,6 +650,39 @@ export async function getTopicQuestions(topicKey: string): Promise<{ questions: 
 
   const { num } = buildNumbering(allAtoms, stored, openQa);
   return { questions: questions.map((q) => ({ ...q, num: num.get(q.id) })), state };
+}
+
+/**
+ * כל מה שנסגר, מכל הנושאים, בסדר המספור. נפתח מה-KPI במסך הראשי כדי שאפשר
+ * יהיה לחזור לכל החלטה בלי לזכור באיזה נושא היא הייתה.
+ *
+ * לא כולל שאלות "מידע חסר" שנענו: ברגע שנענו הן יוצאות מרשימת הפערים ואין
+ * להן רשומת שאלה שמורה, ולכן גם אין מה להציג. הן מנוהלות בלשונית הידע.
+ */
+export async function getAnsweredQuestions(): Promise<{ questions: ReviewQuestion[]; state: StateStore }> {
+  const [base, stored, state, openQa, ov] = await Promise.all([
+    basePrompt(),
+    loadQuestions(),
+    loadState(),
+    getRepo().listLearnedQA("open").catch(() => []),
+    loadOverrides(),
+  ]);
+  const atoms = atomizeprompt(base);
+  const { num } = buildNumbering(atoms, stored, openQa);
+
+  const questions = atoms
+    .filter((a) => stored[a.id] && !stored[a.id].hidden && isDecided(state[a.id]))
+    .map((a) => {
+      const q: ReviewQuestion = { ...stored[a.id], tokens: a.tokens, num: num.get(a.id) };
+      const edit = ov.items[a.id];
+      if (!edit) return q;
+      return edit.text.trim()
+        ? { ...q, currentText: edit.text, tokens: tok(edit.text) }
+        : { ...q, removed: true, tokens: 0 };
+    })
+    .sort((x, y) => (x.num ?? 0) - (y.num ?? 0));
+
+  return { questions, state };
 }
 
 // ===== כתיבה חזרה =====

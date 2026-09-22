@@ -10,6 +10,7 @@ import {
   saveNote,
   exportReview,
   resetReview,
+  getAnsweredQuestions,
   type AnswerStatus,
 } from "@/lib/brain-review";
 
@@ -51,7 +52,11 @@ export async function GET(req: NextRequest) {
     }
   }
   try {
-    const data = topic ? await getTopicQuestions(topic) : await getOverview();
+    const data = req.nextUrl.searchParams.get("answered")
+      ? await getAnsweredQuestions()
+      : topic
+        ? await getTopicQuestions(topic)
+        : await getOverview();
     return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });

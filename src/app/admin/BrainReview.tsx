@@ -94,6 +94,8 @@ export default function BrainReview({ token }: { token: string }) {
   /** שאלה שכבר נענתה ונפתחה שוב לשינוי ההחלטה */
   const [revisitId, setRevisitId] = useState<string | null>(null);
   const [showDone, setShowDone] = useState(false);
+  /** רשימת כל מה שנסגר בכל הנושאים (null = לא פתוחה) */
+  const [allDone, setAllDone] = useState<Question[] | null>(null);
   /** הערה חופשית על השאלה הנוכחית - נשמרת יחד עם ההחלטה, ולא מגיעה לבוט */
   const [note, setNote] = useState("");
   const [showNote, setShowNote] = useState(false);
@@ -166,11 +168,28 @@ export default function BrainReview({ token }: { token: string }) {
     [token]
   );
 
-  async function openTopic(key: string) {
+  async function openTopic(key: string, revisit?: string) {
     setTopicKey(key);
-    setRevisitId(null);
+    setRevisitId(revisit ?? null);
     setShowDone(false);
+    setAllDone(null);
     await loadTopic(key, true);
+  }
+
+  /** רשימת כל מה שנסגר, מכל הנושאים - נפתחת מה-KPI */
+  async function openAllDone() {
+    if (busy) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const d = await api<{ questions: Question[]; state: Record<string, AnswerRec> }>(token, "/brain-review?answered=1");
+      setAllDone(d.questions || []);
+      setState(d.state || {});
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "טעינה נכשלה");
+    } finally {
+      setBusy(false);
+    }
   }
 
   /** השאלות שעוד לא ענו עליהן, בסדר: סקירה ואז העשרה */
@@ -317,6 +336,75 @@ export default function BrainReview({ token }: { token: string }) {
     }
   }
 
+  // ===== כל מה שנסגר, מכל הנושאים =====
+  if (!topicKey && allDone) {
+    const topicOf = (key: string) => overview?.topics.find((t) => t.key === key);
+    return (
+      <div className="space-y-3 max-w-[860px]">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setAllDone(null)}
+            className="text-sm rounded-lg px-3 py-1.5 border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"
+          >
+            → חזרה
+          </button>
+          <b className="text-sm">✅ שאלות שנסגרו</b>
+          <span className="text-xs text-[var(--muted)]" style={{ fontVariantNumeric: "tabular-nums" }}>
+            {fmt(allDone.length)}
+          </span>
+        </div>
+        <div className="text-[12px] text-[var(--muted)]">לחיצה על שאלה פותחת אותה לשינוי ההחלטה, הנוסח או ההערה.</div>
+
+        {err && <div className="text-sm text-red-400">⚠ {err}</div>}
+
+        {!allDone.length && (
+          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-6 text-center text-sm text-[var(--muted)]">
+            עוד לא נסגרה אף שאלה.
+          </div>
+        )}
+
+        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
+          {allDone.map((q) => {
+            const t = topicOf(q.topic);
+            const rec = state[q.id];
+            return (
+              <button
+                key={q.id}
+                onClick={() => openTopic(q.topic, q.id)}
+                className="w-full px-3.5 py-3 text-right hover:bg-[var(--panel2)] transition flex items-start gap-2.5"
+              >
+                <span
+                  className="text-[11px] shrink-0 mt-0.5 font-bold text-[var(--muted)] w-8"
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  {q.num ? fmt(q.num) : ""}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--panel2)] text-[var(--muted)] whitespace-nowrap">
+                      {rec ? STATUS_LABEL[rec.status] : ""}
+                    </span>
+                    {t && (
+                      <span className="text-[10px] text-[var(--muted)]">
+                        {t.icon} {t.title}
+                      </span>
+                    )}
+                    {q.currentText && <span className="text-[10px] text-emerald-600">✏️ נוסח חדש</span>}
+                    {q.removed && <span className="text-[10px] text-red-500">🗑️ הוסר</span>}
+                  </span>
+                  <span className="block text-[13px] leading-snug mt-1">{q.question}</span>
+                  {rec?.note && (
+                    <span className="block text-[11px] text-[var(--muted)] mt-0.5">🗒️ {rec.note}</span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   // ===== מפת הנושאים =====
   if (!topicKey) {
     return (
@@ -371,12 +459,18 @@ export default function BrainReview({ token }: { token: string }) {
 
         {overview && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2.5">
+            <button
+              onClick={openAllDone}
+              disabled={busy || !overview.totalDone}
+              className="bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2.5 text-right enabled:hover:border-[var(--accent)] transition disabled:cursor-default"
+            >
               <div className="text-2xl font-bold font-display" style={{ fontVariantNumeric: "tabular-nums" }}>
                 {fmt(overview.totalDone)}
               </div>
-              <div className="text-[11px] text-[var(--muted)] mt-0.5">שאלות שנסגרו</div>
-            </div>
+              <div className="text-[11px] text-[var(--muted)] mt-0.5">
+                שאלות שנסגרו{overview.totalDone ? " ›" : ""}
+              </div>
+            </button>
             <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-2.5">
               <div className="text-2xl font-bold font-display" style={{ fontVariantNumeric: "tabular-nums" }}>
                 {fmt(overview.totalQuestions - overview.totalDone)}
