@@ -45,6 +45,7 @@ interface AnswerRec {
   status: AnswerStatus;
   answer?: string;
   at: number;
+  note?: string;
 }
 
 const fmt = (n: number) => n.toLocaleString("he-IL");
@@ -89,6 +90,10 @@ export default function BrainReview({ token }: { token: string }) {
   /** שאלה שכבר נענתה ונפתחה שוב לשינוי ההחלטה */
   const [revisitId, setRevisitId] = useState<string | null>(null);
   const [showDone, setShowDone] = useState(false);
+  /** הערה חופשית על השאלה הנוכחית - נשמרת יחד עם ההחלטה, ולא מגיעה לבוט */
+  const [note, setNote] = useState("");
+  const [showNote, setShowNote] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -184,9 +189,15 @@ export default function BrainReview({ token }: { token: string }) {
 
   useEffect(() => {
     setMode("buttons");
-    setShowText(false);
+    // סעיף שכבר נערך או הוסר נפתח עם הנוסח גלוי: אחרת מה שרואים הוא השאלה
+    // שנוסחה מהטקסט הישן, וזה נראה כאילו העריכה לא נשמרה (דווח 22.9).
+    setShowText(!!(current?.currentText || current?.removed));
     setDraft(current?.kind === "enrich" ? "" : (current?.currentText ?? current?.text ?? ""));
-  }, [current]);
+    const saved = current ? state[current.id]?.note ?? "" : "";
+    setNote(saved);
+    setShowNote(!!saved);
+    setNoteSaved(false);
+  }, [current, state]);
 
   async function answer(status: AnswerStatus, text?: string) {
     if (!current || busy) return;
@@ -196,12 +207,12 @@ export default function BrainReview({ token }: { token: string }) {
     try {
       await api(token, "/brain-review", {
         method: "POST",
-        body: JSON.stringify({ questionId: id, status, answer: text }),
+        body: JSON.stringify({ questionId: id, status, answer: text, note }),
       });
       setLastAnswered(status === "skipped" ? null : id);
       setRevisitId(null);
       if (status === "skipped") {
-        setState((s) => ({ ...s, [id]: { status, at: Date.now() } }));
+        setState((s) => ({ ...s, [id]: { status, at: Date.now(), note: note.trim() || undefined } }));
         setIdx((i) => i + 1);
       } else if (topicKey) {
         // שינוי או מחיקה משנים את הפרומפט עצמו, ולכן גם את רשימת הסעיפים -
@@ -211,6 +222,52 @@ export default function BrainReview({ token }: { token: string }) {
       loadOverview();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "השמירה נכשלה");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * מוריד את הסיכום כקובץ. לא דרך api() כי זו תשובת טקסט ולא JSON, והטוקן
+   * חייב לעבור בכותרת - ולכן מורידים דרך blob ולא בקישור ישיר.
+   */
+  async function exportSummary() {
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/admin/brain-review?export=1", {
+        cache: "no-store",
+        headers: { "x-admin-token": token },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `בירור-המוח-${new Date().toISOString().slice(0, 10)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "הייצוא נכשל");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** שמירת ההערה לבדה, בלי לשנות את ההחלטה ובלי לעבור לשאלה הבאה */
+  async function saveNoteOnly() {
+    if (!current || busy) return;
+    setBusy(true);
+    setErr("");
+    const id = current.id;
+    try {
+      await api(token, "/brain-review", { method: "POST", body: JSON.stringify({ questionId: id, action: "note", note }) });
+      setState((s) => ({ ...s, [id]: { ...(s[id] ?? { status: "skipped" as AnswerStatus, at: Date.now() }), note: note.trim() || undefined } }));
+      setNoteSaved(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "שמירת ההערה נכשלה");
     } finally {
       setBusy(false);
     }
@@ -240,8 +297,21 @@ export default function BrainReview({ token }: { token: string }) {
       <div className="space-y-4 max-w-[860px]">
         <div className="text-sm text-[var(--muted)] leading-relaxed">
           כאן עוברים על <b className="text-[var(--text)]">כל מה שהבוט יודע</b>, נושא אחרי נושא. כל תשובה נכנסת לבוט
-          באותו רגע, והכל הפיך. בוחרים נושא, ועונים על שאלה אחת בכל פעם.
+          באותו רגע, והכל הפיך. בוחרים נושא, ועונים על שאלה אחת בכל פעם. אפשר להוסיף הערה על כל שאלה.
         </div>
+
+        {!!overview?.totalDone && (
+          <button
+            onClick={exportSummary}
+            disabled={busy}
+            className="w-full sm:w-auto text-sm rounded-xl px-4 py-2.5 border border-[var(--border)] hover:border-[var(--accent)] text-right"
+          >
+            📤 הורד סיכום להרכבת המוח החדש
+            <span className="block text-[11px] text-[var(--muted)] mt-0.5">
+              כל מה שהכרעת, עם הנוסחים המעודכנים וההערות, בקובץ אחד
+            </span>
+          </button>
+        )}
 
         {err && <div className="text-sm text-red-400">⚠ {err}</div>}
 
@@ -412,19 +482,35 @@ export default function BrainReview({ token }: { token: string }) {
             {current.tokens ? <span>💾 {fmt(current.tokens)} טוקנים</span> : null}
           </div>
 
-          {current.summary && <div className="text-sm text-[var(--muted)]">{current.summary}</div>}
+          {current.summary && (
+            <div className={`text-sm text-[var(--muted)] ${current.currentText || current.removed ? "opacity-60" : ""}`}>
+              {current.summary}
+              {/* הסיכום והשאלה נוסחו מהטקסט המקורי ולא מתעדכנים אחרי עריכה -
+                  בלי הסימון הזה הם נקראים כאילו הם מתארים את המצב הנוכחי */}
+              {(current.currentText || current.removed) && (
+                <span className="text-[11px]"> (מתאר את הנוסח המקורי, לפני השינוי שלך)</span>
+              )}
+            </div>
+          )}
           <div className="text-[17px] font-semibold leading-snug">{current.question}</div>
 
           {current.text && (
             <div>
               <button onClick={() => setShowText((s) => !s)} className="text-xs text-[var(--accent)] underline">
-                {showText ? "הסתר את הנוסח המדויק" : current.removed ? "הצג את מה שהוסר" : "הצג את הנוסח המדויק"}
+                {showText ? "הסתר את הנוסח" : current.removed ? "הצג את מה שהוסר" : "הצג את הנוסח המדויק"}
               </button>
               {showText && (
                 <>
+                  {current.currentText && (
+                    <div className="mt-2 text-[11px] text-emerald-600 font-semibold">✏️ הנוסח שבתוקף עכשיו (אחרי העריכה שלך):</div>
+                  )}
                   <pre
-                    className={`mt-2 whitespace-pre-wrap text-[12px] leading-relaxed bg-[var(--panel2)] rounded-xl p-3 max-h-56 overflow-y-auto ${
-                      current.removed ? "line-through opacity-60" : ""
+                    className={`mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed rounded-xl p-3 max-h-56 overflow-y-auto ${
+                      current.removed
+                        ? "line-through opacity-60 bg-[var(--panel2)]"
+                        : current.currentText
+                          ? "bg-emerald-500/10 border border-emerald-500/30"
+                          : "bg-[var(--panel2)]"
                     }`}
                   >
                     {current.removed ? current.text : liveText}
@@ -432,7 +518,7 @@ export default function BrainReview({ token }: { token: string }) {
                   {current.currentText && (
                     <details className="mt-1.5">
                       <summary className="text-[11px] text-[var(--muted)] cursor-pointer">
-                        זה נוסח ערוך. להצגת הנוסח המקורי
+                        להצגת הנוסח המקורי שהוחלף
                       </summary>
                       <pre className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed bg-[var(--panel2)] rounded-xl p-3 max-h-56 overflow-y-auto opacity-70">
                         {current.text}
@@ -443,6 +529,42 @@ export default function BrainReview({ token }: { token: string }) {
               )}
             </div>
           )}
+
+          {/* הערה חופשית - נאספת לסיכום שממנו נבנה המוח החדש, לא נשלחת לבוט */}
+          <div className="border-t border-[var(--border)] pt-2.5">
+            {!showNote && !note ? (
+              <button onClick={() => setShowNote(true)} className="text-xs text-[var(--accent)] underline">
+                🗒️ הוסף הערה
+              </button>
+            ) : (
+              <div className="space-y-1.5">
+                <div className="text-[11px] text-[var(--muted)]">
+                  הערה (לא נשלחת לבוט - נאספת לסיכום שממנו נרכיב את המוח החדש)
+                </div>
+                <textarea
+                  value={note}
+                  onChange={(e) => {
+                    setNote(e.target.value);
+                    setNoteSaved(false);
+                  }}
+                  rows={2}
+                  placeholder="למשל: נכון, אבל תוסיף שבחורף זה אחרת / לא רלוונטי, עניתי על זה בשאלת הפיקדון"
+                  className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={saveNoteOnly}
+                    disabled={busy}
+                    className="text-xs rounded-lg px-2.5 py-1 border border-[var(--border)] hover:border-[var(--accent)]"
+                  >
+                    שמור הערה בלבד
+                  </button>
+                  {noteSaved && <span className="text-[11px] text-emerald-600">נשמרה ✓</span>}
+                  <span className="text-[11px] text-[var(--muted)]">ההערה נשמרת גם עם כל כפתור החלטה למטה</span>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* העשרה: תיבת תשובה חופשית */}
           {current.kind === "enrich" && (
@@ -565,7 +687,12 @@ export default function BrainReview({ token }: { token: string }) {
                   <span className="text-[10px] shrink-0 mt-0.5 px-1.5 py-0.5 rounded-full bg-[var(--panel2)] text-[var(--muted)] whitespace-nowrap">
                     {STATUS_LABEL[state[q.id].status]}
                   </span>
-                  <span className="text-[13px] leading-snug min-w-0">{q.question}</span>
+                  <span className="text-[13px] leading-snug min-w-0">
+                    {q.question}
+                    {state[q.id].note && (
+                      <span className="block text-[11px] text-[var(--muted)] mt-0.5">🗒️ {state[q.id].note}</span>
+                    )}
+                  </span>
                 </button>
               ))}
             </div>

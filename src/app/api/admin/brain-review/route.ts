@@ -7,6 +7,8 @@ import {
   applyAnswer,
   undoAnswer,
   prewarmQuestions,
+  saveNote,
+  exportReview,
   type AnswerStatus,
 } from "@/lib/brain-review";
 
@@ -32,6 +34,21 @@ export async function GET(req: NextRequest) {
     after(() => prewarmQuestions().catch(() => undefined));
     return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
   }
+  // הסיכום להרכבת מוח חדש - קובץ טקסט להורדה
+  if (req.nextUrl.searchParams.get("export")) {
+    try {
+      const md = await exportReview();
+      return new NextResponse(md, {
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Content-Disposition": `attachment; filename="brain-review-${new Date().toISOString().slice(0, 10)}.md"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
+    }
+  }
   try {
     const data = topic ? await getTopicQuestions(topic) : await getOverview();
     return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
@@ -42,7 +59,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   if (!isMasterAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  let body: { questionId?: string; status?: string; answer?: string; action?: string } = {};
+  let body: { questionId?: string; status?: string; answer?: string; action?: string; note?: string } = {};
   try {
     body = await req.json();
   } catch {
@@ -56,9 +73,13 @@ export async function POST(req: NextRequest) {
       await undoAnswer(questionId);
       return NextResponse.json({ ok: true });
     }
+    if (body.action === "note") {
+      await saveNote(questionId, String(body.note ?? ""));
+      return NextResponse.json({ ok: true });
+    }
     const status = body.status as AnswerStatus;
     if (!STATUSES.includes(status)) return NextResponse.json({ error: "bad status" }, { status: 400 });
-    await applyAnswer({ questionId, status, answer: body.answer });
+    await applyAnswer({ questionId, status, answer: body.answer, note: body.note });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });

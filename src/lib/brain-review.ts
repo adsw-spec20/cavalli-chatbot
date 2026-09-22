@@ -271,6 +271,12 @@ export interface ReviewAnswer {
   status: AnswerStatus;
   answer?: string;
   at: number;
+  /**
+   * הערה חופשית של בעל העסק על הסעיף. **לא מגיעה לבוט** - היא חומר גלם
+   * לבנייה מחדש של המוח: "נכון אבל תוסיף ש...", "לא רלוונטי, עניתי על זה
+   * בשאלה X", הסתייגות, הקשר. נאספת עם כל החלטה ויוצאת בייצוא.
+   */
+  note?: string;
 }
 
 type QuestionStore = Record<string, ReviewQuestion>;
@@ -589,6 +595,8 @@ export interface AnswerInput {
   status: AnswerStatus;
   /** טקסט חדש (changed) או התשובה (answered) */
   answer?: string;
+  /** הערה חופשית שנשמרת יחד עם ההחלטה */
+  note?: string;
 }
 
 /**
@@ -600,7 +608,7 @@ export interface AnswerInput {
  * הכל הפיך: לכל שינוי נשמרת גרסה בהיסטוריית המוח.
  */
 export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
-  const { questionId, status, answer } = input;
+  const { questionId, status, answer, note } = input;
   const repo = getRepo();
 
   if (questionId.startsWith("gap-")) {
@@ -631,9 +639,117 @@ export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
   }
 
   const state = await loadState();
-  state[questionId] = { status, answer: answer?.trim() || undefined, at: Date.now() };
+  // הערה קיימת נשמרת גם כששולחים החלטה בלי הערה - כדי שעדכון החלטה לא ימחק
+  // בשקט מה שנכתב קודם.
+  const keptNote = note !== undefined ? note.trim() || undefined : state[questionId]?.note;
+  state[questionId] = { status, answer: answer?.trim() || undefined, at: Date.now(), note: keptNote };
   await saveState(state);
   return { ok: true };
+}
+
+/**
+ * כל מה שהוכרע, כמסמך אחד לקריאה - זה מה שנמסר לבנייה מחדש של המוח.
+ * לכל סעיף: מה הוחלט, הנוסח המקורי, הנוסח המעודכן (אם נערך), וההערה.
+ */
+export async function exportReview(): Promise<string> {
+  const [base, stored, state, ov] = await Promise.all([
+    basePrompt(),
+    loadQuestions(),
+    loadState(),
+    loadOverrides(),
+  ]);
+  const atoms = atomizeprompt(base);
+  const live = applyPromptOverrides(base, ov).prompt;
+
+  const LABEL: Record<AnswerStatus, string> = {
+    kept: "נכון, להשאיר",
+    changed: "נוסח מחדש",
+    deleted: "להסיר מהמוח",
+    answered: "נענה",
+    irrelevant: "לא רלוונטי",
+    unsure: "לבירור מול הצוות",
+    skipped: "נדלג",
+  };
+
+  const byTopic = new Map<string, string[]>();
+  let decided = 0;
+  for (const a of atoms) {
+    const q = stored[a.id];
+    if (!q || q.hidden) continue;
+    const ans = state[a.id];
+    const edit = ov.items[a.id];
+    if (!ans && !edit) continue; // לא הוכרע ואין הערה - אין מה למסור
+    decided++;
+
+    const lines: string[] = [];
+    lines.push(`### ${q.question}`);
+    if (q.summary) lines.push(`*${q.summary}*`);
+    lines.push(`**החלטה:** ${ans ? LABEL[ans.status] : "לא הוכרע"}`);
+    lines.push(`**מקור:** ${a.parentTitle}`);
+    lines.push("");
+    lines.push("**הנוסח המקורי:**");
+    lines.push("```");
+    lines.push(a.text.trim());
+    lines.push("```");
+    if (edit && edit.text.trim()) {
+      lines.push("**הנוסח המעודכן:**");
+      lines.push("```");
+      lines.push(edit.text.trim());
+      lines.push("```");
+    } else if (edit) {
+      lines.push("**הוסר מהמוח.**");
+    }
+    if (ans?.note) lines.push(`**הערה:** ${ans.note}`);
+    lines.push("");
+
+    const key = q.topic;
+    if (!byTopic.has(key)) byTopic.set(key, []);
+    byTopic.get(key)!.push(lines.join("\n"));
+  }
+
+  // שאלות העשרה שנענו (פערי ידע) - גם הן חלק מהחומר
+  const gaps: string[] = [];
+  for (const [id, ans] of Object.entries(state)) {
+    if (!id.startsWith("gap-") || !ans.answer) continue;
+    gaps.push(`### ${id.slice(4)}\n**התשובה שנמסרה:** ${ans.answer}${ans.note ? `\n**הערה:** ${ans.note}` : ""}\n`);
+  }
+
+  const head = [
+    "# בירור המוח - סיכום להרכבת מוח חדש",
+    "",
+    `נוצר: ${new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" })}`,
+    `סעיפים שהוכרעו: ${decided} מתוך ${atoms.filter((a) => stored[a.id] && !stored[a.id].hidden).length}`,
+    `טוקנים: ${tok(base)} במקור, ${tok(live)} עכשיו`,
+    "",
+    "> ההערות כאן נכתבו על ידי בעל העסק ואינן חלק מהמוח - הן הנחיות להרכבה מחדש.",
+    "",
+  ].join("\n");
+
+  const body = [...byTopic.entries()]
+    .sort((a, b) => {
+      const ia = TOPICS.findIndex((t) => t.key === a[0]);
+      const ib = TOPICS.findIndex((t) => t.key === b[0]);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    })
+    .map(([key, items]) => {
+      const { title, icon } = topicTitle(key);
+      return `\n## ${icon} ${title}\n\n${items.join("\n")}`;
+    })
+    .join("\n");
+
+  return head + body + (gaps.length ? `\n## ❓ מידע שהיה חסר\n\n${gaps.join("\n")}` : "");
+}
+
+/** שמירת הערה בלבד, בלי לגעת בהחלטה (גם על שאלה שעוד לא נענתה) */
+export async function saveNote(questionId: string, note: string): Promise<void> {
+  const state = await loadState();
+  const prev = state[questionId];
+  const text = note.trim();
+  if (!prev && !text) return;
+  state[questionId] = prev
+    ? { ...prev, note: text || undefined }
+    : { status: "skipped", at: Date.now(), note: text };
+  await saveState(state);
 }
 
 /** ביטול תשובה אחת: הדריסה מוסרת, הנוסח המקורי חוזר, והשאלה חוזרת לתור */
