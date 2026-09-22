@@ -261,6 +261,8 @@ export interface ReviewQuestion {
   parentId?: string;
   /** הנחיה טכנית שאין לבעל העסק מה להחליט עליה - לא מוצגת ולא נספרת */
   hidden?: boolean;
+  /** המספר הרציף של השאלה בכל הבירור (מחושב בקריאה, לא נשמר) */
+  num?: number;
   /** מחושב בקריאה (לא נשמר): הנוסח שבתוקף עכשיו, אם הסעיף נערך */
   currentText?: string;
   /** מחושב בקריאה: הסעיף הוסר מהמוח */
@@ -328,6 +330,61 @@ export interface TopicSummary {
   total: number;
   done: number;
   tokens: number;
+  /** טווח המספור הרציף של הנושא ("שאלות 30-41") */
+  from: number;
+  to: number;
+}
+
+/**
+ * מספור רציף אחד לכל השאלות, לפי סדר הנושאים במסך: הנושא הראשון מתחיל ב-1,
+ * והבא אחריו ממשיך מהמספר שאחרי. נחוץ כדי שאפשר יהיה להפנות בין שאלות
+ * בהערות ("עניתי על זה בשאלה 14").
+ *
+ * מחושב במקום אחד ומשמש את המסך הראשי, את מסך הנושא ואת הייצוא - אחרת
+ * שלושתם היו יכולים להציג מספרים שונים לאותה שאלה.
+ */
+function topicOrder(key: string): number {
+  const i = TOPICS.findIndex((t) => t.key === key);
+  return i < 0 ? 99 : i;
+}
+
+interface Numbering {
+  /** מזהה שאלה -> מספר רציף */
+  num: Map<string, number>;
+  /** נושא -> {from, to} */
+  range: Map<string, { from: number; to: number }>;
+}
+
+function buildNumbering(
+  atoms: ReviewAtom[],
+  questions: QuestionStore,
+  gaps: { id: string; question: string }[]
+): Numbering {
+  // שאלות הנושא מוצגות אטומים-קודם ואז פערי ידע, ולכן המספור הולך באותו סדר
+  const perTopic = new Map<string, string[]>();
+  const push = (topic: string, id: string) => {
+    if (!perTopic.has(topic)) perTopic.set(topic, []);
+    perTopic.get(topic)!.push(id);
+  };
+  for (const a of atoms) {
+    if (questions[a.id]?.hidden) continue;
+    push(a.topic, a.id);
+  }
+  // מיון יציב לפי מזהה, כדי שפער ידע חדש לא יערבב מספרים קיימים בתוך הנושא
+  for (const g of [...gaps].sort((x, y) => String(x.id).localeCompare(String(y.id)))) {
+    push(assignTopic(g.question), `gap-${g.id}`);
+  }
+
+  const num = new Map<string, number>();
+  const range = new Map<string, { from: number; to: number }>();
+  let n = 0;
+  for (const key of [...perTopic.keys()].sort((a, b) => topicOrder(a) - topicOrder(b))) {
+    const ids = perTopic.get(key)!;
+    const from = n + 1;
+    for (const id of ids) num.set(id, ++n);
+    range.set(key, { from, to: n });
+  }
+  return { num, range };
 }
 
 export interface ReviewOverview {
@@ -383,13 +440,10 @@ export async function getOverview(): Promise<ReviewOverview> {
   // סכימה של אטומים שנמחקו הייתה מפספסת עריכות שקיצרו (או האריכו) סעיף.
   const tokensSaved = Math.max(0, tok(base) - tok(live));
 
+  const { range } = buildNumbering(atoms, questions, openQa);
   const topics: TopicSummary[] = [...byTopic.entries()]
-    .map(([key, v]) => ({ key, ...topicTitle(key), ...v }))
-    .sort((a, b) => {
-      const ia = TOPICS.findIndex((t) => t.key === a.key);
-      const ib = TOPICS.findIndex((t) => t.key === b.key);
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-    });
+    .map(([key, v]) => ({ key, ...topicTitle(key), ...v, ...(range.get(key) ?? { from: 0, to: 0 }) }))
+    .sort((a, b) => topicOrder(a.key) - topicOrder(b.key));
 
   return {
     topics,
@@ -543,7 +597,9 @@ export async function getTopicQuestions(topicKey: string): Promise<{ questions: 
     getRepo().listLearnedQA("open").catch(() => []),
     loadOverrides(),
   ]);
-  const atoms = atomizeprompt(base).filter((a) => a.topic === topicKey);
+  // חותכים הכל כדי שהמספור הרציף יהיה זהה לזה שבמסך הראשי, ורק אז מסננים
+  const allAtoms = atomizeprompt(base);
+  const atoms = allAtoms.filter((a) => a.topic === topicKey);
 
   // ניסוח למי שעוד אין לו (או שהטקסט השתנה מאז)
   const missing = atoms.filter((a) => !stored[a.id] || stored[a.id].text !== a.text.trim());
@@ -585,7 +641,8 @@ export async function getTopicQuestions(topicKey: string): Promise<{ questions: 
     });
   }
 
-  return { questions, state };
+  const { num } = buildNumbering(allAtoms, stored, openQa);
+  return { questions: questions.map((q) => ({ ...q, num: num.get(q.id) })), state };
 }
 
 // ===== כתיבה חזרה =====
@@ -660,6 +717,8 @@ export async function exportReview(): Promise<string> {
   ]);
   const atoms = atomizeprompt(base);
   const live = applyPromptOverrides(base, ov).prompt;
+  const openQa = await getRepo().listLearnedQA("open").catch(() => []);
+  const { num } = buildNumbering(atoms, stored, openQa);
 
   const LABEL: Record<AnswerStatus, string> = {
     kept: "נכון, להשאיר",
@@ -682,7 +741,7 @@ export async function exportReview(): Promise<string> {
     decided++;
 
     const lines: string[] = [];
-    lines.push(`### ${q.question}`);
+    lines.push(`### שאלה ${num.get(a.id) ?? "?"} - ${q.question}`);
     if (q.summary) lines.push(`*${q.summary}*`);
     lines.push(`**החלטה:** ${ans ? LABEL[ans.status] : "לא הוכרע"}`);
     lines.push(`**מקור:** ${a.parentTitle}`);
@@ -711,7 +770,9 @@ export async function exportReview(): Promise<string> {
   const gaps: string[] = [];
   for (const [id, ans] of Object.entries(state)) {
     if (!id.startsWith("gap-") || !ans.answer) continue;
-    gaps.push(`### ${id.slice(4)}\n**התשובה שנמסרה:** ${ans.answer}${ans.note ? `\n**הערה:** ${ans.note}` : ""}\n`);
+    gaps.push(
+      `### שאלה ${num.get(id) ?? "?"}\n**התשובה שנמסרה:** ${ans.answer}${ans.note ? `\n**הערה:** ${ans.note}` : ""}\n`
+    );
   }
 
   const head = [
@@ -738,6 +799,29 @@ export async function exportReview(): Promise<string> {
     .join("\n");
 
   return head + body + (gaps.length ? `\n## ❓ מידע שהיה חסר\n\n${gaps.join("\n")}` : "");
+}
+
+/**
+ * איפוס הבירור: כל התשובות, ההערות והעריכות שנעשו כאן נמחקות, והמוח חוזר
+ * לנוסח המקורי. **פעולה הרסנית** - מיועדת להתחלה מחדש של המעבר.
+ *
+ * מוחק רק דריסות שנוצרו בבירור (כאלה שיש להן רשומת תשובה): עריכות שנעשו
+ * במסך "מוח הבוט" הן פיצ'ר אחר ואסור לגעת בהן. כל הסרה עוברת דרך
+ * clearOverride, כך שנשמרת גרסה בהיסטוריית המוח וניתן לשחזר.
+ */
+export async function resetReview(): Promise<{ answersCleared: number; editsReverted: number }> {
+  const state = await loadState();
+  const ids = Object.keys(state);
+  let editsReverted = 0;
+  for (const id of ids) {
+    const st = state[id];
+    if (st.status === "changed" || st.status === "deleted") {
+      await clearOverride(id);
+      editsReverted++;
+    }
+  }
+  await saveState({});
+  return { answersCleared: ids.length, editsReverted };
 }
 
 /** שמירת הערה בלבד, בלי לגעת בהחלטה (גם על שאלה שעוד לא נענתה) */

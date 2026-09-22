@@ -16,6 +16,8 @@ interface TopicSummary {
   total: number;
   done: number;
   tokens: number;
+  from: number;
+  to: number;
 }
 interface Overview {
   topics: TopicSummary[];
@@ -32,6 +34,8 @@ interface Question {
   topic: string;
   question: string;
   summary: string;
+  /** המספר הרציף של השאלה בכל הבירור */
+  num?: number;
   text?: string;
   tokens?: number;
   evidence?: string;
@@ -227,6 +231,28 @@ export default function BrainReview({ token }: { token: string }) {
     }
   }
 
+  /** איפוס כל הבירור - מוחק תשובות והערות ומחזיר את המוח לנוסח המקורי */
+  async function resetAll() {
+    if (busy) return;
+    const done = overview?.totalDone ?? 0;
+    if (!window.confirm(`לאפס את כל הבירור?\n\n${done} תשובות והערות יימחקו, וכל עריכה שעשית תוחזר לנוסח המקורי.\nכדאי להוריד קודם את הסיכום.`)) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await api(token, "/brain-review", { method: "POST", body: JSON.stringify({ action: "reset", confirm: "reset" }) });
+      setLastAnswered(null);
+      setRevisitId(null);
+      setTopicKey(null);
+      setQuestions([]);
+      setState({});
+      await loadOverview();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "האיפוס נכשל");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /**
    * מוריד את הסיכום כקובץ. לא דרך api() כי זו תשובת טקסט ולא JSON, והטוקן
    * חייב לעבור בכותרת - ולכן מורידים דרך blob ולא בקישור ישיר.
@@ -301,16 +327,26 @@ export default function BrainReview({ token }: { token: string }) {
         </div>
 
         {!!overview?.totalDone && (
-          <button
-            onClick={exportSummary}
-            disabled={busy}
-            className="w-full sm:w-auto text-sm rounded-xl px-4 py-2.5 border border-[var(--border)] hover:border-[var(--accent)] text-right"
-          >
-            📤 הורד סיכום להרכבת המוח החדש
-            <span className="block text-[11px] text-[var(--muted)] mt-0.5">
-              כל מה שהכרעת, עם הנוסחים המעודכנים וההערות, בקובץ אחד
-            </span>
-          </button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button
+              onClick={exportSummary}
+              disabled={busy}
+              className="flex-1 text-sm rounded-xl px-4 py-2.5 border border-[var(--border)] hover:border-[var(--accent)] text-right"
+            >
+              📤 הורד סיכום להרכבת המוח החדש
+              <span className="block text-[11px] text-[var(--muted)] mt-0.5">
+                כל מה שהכרעת, עם הנוסחים המעודכנים וההערות, בקובץ אחד
+              </span>
+            </button>
+            <button
+              onClick={resetAll}
+              disabled={busy}
+              className="sm:w-[210px] text-sm rounded-xl px-4 py-2.5 border border-red-500/30 text-red-500 hover:bg-red-500/10 text-right"
+            >
+              ♻️ אפס את הבירור
+              <span className="block text-[11px] opacity-70 mt-0.5">מוחק תשובות והערות ומחזיר נוסחים</span>
+            </button>
+          </div>
         )}
 
         {err && <div className="text-sm text-red-400">⚠ {err}</div>}
@@ -376,10 +412,18 @@ export default function BrainReview({ token }: { token: string }) {
                   {t.icon}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2 flex-wrap">
                     <b className="text-sm">{t.title}</b>
+                    {t.to > 0 && (
+                      <span
+                        className="text-[10px] text-[var(--muted)] bg-[var(--panel2)] rounded-full px-1.5 py-0.5"
+                        style={{ fontVariantNumeric: "tabular-nums" }}
+                      >
+                        שאלות {fmt(t.from)}-{fmt(t.to)}
+                      </span>
+                    )}
                     <span className="text-[11px] text-[var(--muted)]" style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {left > 0 ? `${fmt(left)} שאלות` : "הושלם ✓"}
+                      {left > 0 ? `נשארו ${fmt(left)}` : "הושלם ✓"}
                     </span>
                   </span>
                   <span className="block mt-1.5">
@@ -475,6 +519,14 @@ export default function BrainReview({ token }: { token: string }) {
           )}
 
           <div className="flex items-center gap-2 text-[11px] text-[var(--muted)]">
+            {current.num ? (
+              <span
+                className="px-2 py-0.5 rounded-full bg-[var(--accent)] text-[var(--accent-fg)] font-bold"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                שאלה {fmt(current.num)}
+              </span>
+            ) : null}
             <span className={`px-2 py-0.5 rounded-full ${current.kind === "enrich" ? "bg-emerald-500/15 text-emerald-500" : "bg-[var(--panel2)]"}`}>
               {current.kind === "enrich" ? "מידע חסר" : "סקירה"}
             </span>
@@ -688,6 +740,11 @@ export default function BrainReview({ token }: { token: string }) {
                     {STATUS_LABEL[state[q.id].status]}
                   </span>
                   <span className="text-[13px] leading-snug min-w-0">
+                    {q.num ? (
+                      <b className="text-[var(--muted)]" style={{ fontVariantNumeric: "tabular-nums" }}>
+                        {fmt(q.num)}.{" "}
+                      </b>
+                    ) : null}
                     {q.question}
                     {state[q.id].note && (
                       <span className="block text-[11px] text-[var(--muted)] mt-0.5">🗒️ {state[q.id].note}</span>

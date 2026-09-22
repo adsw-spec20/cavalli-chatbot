@@ -9,6 +9,7 @@ import {
   prewarmQuestions,
   saveNote,
   exportReview,
+  resetReview,
   type AnswerStatus,
 } from "@/lib/brain-review";
 
@@ -59,12 +60,22 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   if (!isMasterAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  let body: { questionId?: string; status?: string; answer?: string; action?: string; note?: string } = {};
+  let body: { questionId?: string; status?: string; answer?: string; action?: string; note?: string; confirm?: string } = {};
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
+  // איפוס הכל - הפעולה היחידה שאינה על שאלה מסוימת, ודורשת אישור מפורש
+  if (body.action === "reset") {
+    if (body.confirm !== "reset") return NextResponse.json({ error: "missing confirm" }, { status: 400 });
+    try {
+      return NextResponse.json({ ok: true, ...(await resetReview()) });
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
+    }
+  }
+
   const questionId = String(body.questionId || "");
   if (!questionId) return NextResponse.json({ error: "missing questionId" }, { status: 400 });
 
