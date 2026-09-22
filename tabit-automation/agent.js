@@ -188,7 +188,7 @@ async function pushSnapshot(page, cfg) {
     dashboard: computeDashboard(list, tables, todayIL(), Date.now(), "live"),
     floor: computeFloor(tables, list, Date.now(), await ensureMapConfig(page)),
   };
-  const res = await fetch(cfg.url, { method: "POST", headers: { "content-type": "application/json", "x-tabit-sync-secret": cfg.secret }, body: JSON.stringify(snapshot) });
+  const res = await fetch(cfg.url, { method: "POST", headers: { "content-type": "application/json", "x-tabit-sync-secret": cfg.secret }, body: JSON.stringify(snapshot), signal: withTimeout(30000) });
   console.log(`[snapshot] ${snapshot.reservations.length} reservations, dashboard+floor -> ${res.status}`);
 }
 
@@ -1015,19 +1015,57 @@ function pidAlive(pid) {
   if (!pid || pid === process.pid) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
 }
+// כמה זמן בלי תקתוק נחשב "תקוע". הלולאה מתקתקת כל סיבוב (שניות בודדות).
+const STALL_MS = 10 * 60 * 1000;
+
 function anotherAgentAlive() {
   let l;
   try { l = JSON.parse(fs.readFileSync(LOCK, "utf8")); } catch (_) { return false; }
-  if (l && typeof l === "object") return pidAlive(l.pid);
-  return false;
+  if (!l || typeof l !== "object") return false;
+  if (!pidAlive(l.pid)) return false;
+  // תהליך חי שהפסיק לתקתק הוא סוכן תקוע, ואסור לו לחסום את מי שבא להחליף אותו.
+  // ב-21.9 סוכן נתקע ונשאר חי יומיים: הפאנל הראה "הסוכן לא מדווח", וכל ניסיון
+  // להפעיל סוכן חדש נדחה ב"סוכן אחר כבר רץ" - מצב שאי אפשר לצאת ממנו בלי
+  // להרוג תהליך ידנית. מכאן: נעילה ישנה אינה חוסמת.
+  if (typeof l.ts === "number" && Date.now() - l.ts > STALL_MS) {
+    console.error(`⚠ סוכן קודם (pid ${l.pid}) חי אבל תקוע ${Math.round((Date.now() - l.ts) / 60000)} דקות - ממשיך בלעדיו. כדאי לסגור אותו.`);
+    return false;
+  }
+  return true;
 }
-function touchLock() { try { fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch (_) {} }
+
+let lastTick = Date.now();
+function touchLock() {
+  lastTick = Date.now();
+  try { fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch (_) {}
+}
+
+/**
+ * שומר-סף. בלולאה יש הרבה המתנות שיכולות להיתקע לנצח (הרמת דפדפן, פעולת
+ * Playwright על דפדפן שמת, בקשת רשת שלא חוזרת), וסוכן תקוע גרוע מסוכן מת:
+ * הוא לא מושך נתונים, והוא תופס את הנעילה. אם הלולאה לא תקתקה - יוצאים.
+ */
+function startWatchdog() {
+  const timer = setInterval(() => {
+    const stuck = Date.now() - lastTick;
+    if (stuck > STALL_MS) {
+      console.error(`[watchdog] הלולאה תקועה ${Math.round(stuck / 60000)} דקות - יוצא כדי שאפשר יהיה להפעיל מחדש.`);
+      process.exit(1);
+    }
+  }, 30000);
+  timer.unref();
+}
+
+/** כל בקשת רשת מקבלת תקרת זמן - בלעדיה בקשה תלויה עוצרת את הסוכן לנצח */
+function withTimeout(ms) {
+  try { return AbortSignal.timeout(ms); } catch (_) { return undefined; }
+}
 
 const isCrash = (m) => /crash|target closed|target crashed|has been closed|session closed|disconnected|execution context/i.test(m || "");
 
 async function launchBrowser() {
   cleanLocks();
-  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, { headless: true, viewport: { width: 1280, height: 800 } });
+  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, { headless: true, viewport: { width: 1280, height: 800 }, timeout: 90000 });
   const page = ctx.pages()[0] || (await ctx.newPage());
   await page.goto(APP_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
   await page.waitForTimeout(3000);
@@ -1055,6 +1093,7 @@ async function launchBrowser() {
   if (!cfg.agentUrl || !cfg.secret) { console.error("חסר TABIT_SYNC_URL / TABIT_SYNC_SECRET (או sync-config.json)"); process.exit(1); }
   if (anotherAgentAlive()) { console.error("סוכן אחר כבר רץ (agent.lock טרי). סגור אותו קודם. יוצא."); process.exit(1); }
   console.log("agent polling:", cfg.agentUrl);
+  startWatchdog();
 
   loadCreds();
   if (CREDS && CREDS.userId && CREDS.passcode) console.log("[reauth] פרטי התחברות-אוטומטית נטענו - הסוכן יתחבר מחדש לבד במקרה של ניתוק");
@@ -1065,7 +1104,10 @@ async function launchBrowser() {
     console.error("  browser crashed - relaunching:", e && e.message);
     try { await b.ctx.close(); } catch (_) {}
     await new Promise((s) => setTimeout(s, 1500));
-    b = await launchBrowser();
+    // כישלון בהרמה מחדש לא מפיל את הסוכן: הלולאה ממשיכה לתקתק, הפעולה הבאה
+    // תיכשל שוב ותנסה להרים שוב. בלי זה, דפדפן שלא עולה היה מפיל את התהליך.
+    try { b = await launchBrowser(); }
+    catch (err) { console.error("  relaunch failed:", err && err.message, "- ינסה שוב בסיבוב הבא"); }
   }
 
   const SNAPSHOT_MS = 5 * 60 * 1000;
@@ -1081,7 +1123,7 @@ async function launchBrowser() {
 
     let cmd = null;
     try {
-      const res = await fetch(cfg.agentUrl, { headers: { "x-tabit-sync-secret": cfg.secret } });
+      const res = await fetch(cfg.agentUrl, { headers: { "x-tabit-sync-secret": cfg.secret }, signal: withTimeout(20000) });
       if (res.ok) cmd = (await res.json()).command;
     } catch (_) {}
     if (!cmd) {
@@ -1104,6 +1146,7 @@ async function launchBrowser() {
         method: "POST",
         headers: { "content-type": "application/json", "x-tabit-sync-secret": cfg.secret },
         body: JSON.stringify({ id: cmd.id, status, result, error }),
+        signal: withTimeout(20000),
       });
       console.log(`  -> ${status}`);
     } catch (e) { console.error("  failed to post result:", e.message); }
