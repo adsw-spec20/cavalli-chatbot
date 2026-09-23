@@ -20,7 +20,7 @@ import {
   mdToWhatsApp,
   type TabitResRow,
 } from "../src/lib/tabit-format";
-import { enrichDayResult } from "../src/lib/tabit-lab";
+import { composeDayView } from "../src/lib/tabit-lab-data";
 
 let pass = 0;
 const fails: string[] = [];
@@ -150,38 +150,36 @@ t(
 t("מקף ארוך נוקה", mdToWhatsApp("היום — 12 הזמנות"), "היום - 12 הזמנות");
 
 // ===== החיבור למעבדה: מה שהכלי באמת מחזיר למודל =====
-// כאן נבדק שהסינון והרינדור אכן קורים בשרשרת של הכלי, ולא רק בפונקציה הטהורה.
-const toolOut = enrichDayResult(
-  "tabit_read_day",
-  { day: DAY, from: "17:00" },
-  { day: DAY, source: "snapshot", count: 4, covers: 25, reservations: ROWS }
-) as Record<string, unknown>;
-t("הכלי מפענח את היום", toolOut.resolved_day, DAY);
-t("הכלי מסנן בקוד", (toolOut.reservations as TabitResRow[]).map((r) => r.id), ["b", "c", "d"]);
+// כאן נבדק שהסינון, הספירה והרינדור קורים בשרשרת של הכלי, ולא רק בפונקציה
+// הטהורה שמתחתיה. composeDayView היא הליבה שכל כלי-יום עובר דרכה.
+const META = { source: "snapshot" as const, ageMinutes: 3, todayISO: TODAY };
+
+const toolOut = composeDayView(ROWS, { dayISO: DAY, from: "17:00", title: "כל ההזמנות" }, META);
+t("הכלי מסנן בקוד", toolOut.reservations.map((r) => r.id), ["b", "c", "d"]);
 t("הכלי סופר מחדש אחרי הסינון", [toolOut.count, toolOut.covers], [3, 21]);
 t("הכלי מציין את הטווח", toolOut.filtered_range, "מ-17:00 ואילך");
-t("הכלי מחזיר רשימה מוכנה להדבקה", String(toolOut.rendered).startsWith("*כל ההזמנות"), true);
-t("הרשימה המוכנה לא מכילה את מה שמחוץ לטווח", String(toolOut.rendered).includes("דנה לוי"), false);
+t("הכלי מחזיר רשימה מוכנה להדבקה", toolOut.rendered.startsWith("*כל ההזמנות"), true);
+t("הרשימה המוכנה לא מכילה את מה שמחוץ לטווח", toolOut.rendered.includes("דנה לוי"), false);
+// day_totals נולד מתקלה: "3 הזמנות" בלי "מתוך 4" נקרא כאילו זה כל היום.
+t("הכלי שומר את סך היום לצד הסינון", [toolOut.day_totals.count, toolOut.day_totals.covers], [4, 25]);
+t("הכלי מדווח מאיפה הנתון ובן כמה הוא", [toolOut.source, toolOut.data_age_minutes], ["snapshot", 3]);
 
-const noFilter = enrichDayResult(
-  "tabit_read_day",
-  { day: DAY },
-  { day: DAY, source: "snapshot", count: 4, covers: 25, reservations: ROWS }
-) as Record<string, unknown>;
-t("בלי טווח - שומר על הספירה של הסוכן", [noFilter.count, noFilter.covers], [4, 25]);
+const noFilter = composeDayView(ROWS, { dayISO: DAY, title: "כל ההזמנות" }, META);
+t("בלי טווח - סופר את כל היום", [noFilter.count, noFilter.covers], [4, 25]);
 t("בלי טווח - אין תיאור טווח", noFilter.filtered_range, undefined);
-t("בלי טווח - עדיין מרנדר", String(noFilter.rendered).includes("דנה לוי"), true);
+t("בלי טווח - עדיין מרנדר", noFilter.rendered.includes("דנה לוי"), true);
 
-const deposits = enrichDayResult(
-  "tabit_deposit_summary",
-  { day: DAY },
-  { day: DAY, secured: 2, missing: [ROWS[2]] }
-) as Record<string, unknown>;
-t("סיכום פיקדונות מקבל רשימה מוכנה", String(deposits.rendered).startsWith("*חסרי פיקדון"), true);
-t("סיכום פיקדונות כולל את ההזמנה החסרה", String(deposits.rendered).includes("יונתן"), true);
+const bigView = composeDayView(ROWS, { dayISO: DAY, minSeats: 8, title: "שולחנות גדולים", summaryNoun: "שולחנות גדולים" }, META);
+t("שולחנות גדולים - רק 8+", bigView.reservations.map((r) => r.id), ["c"]);
+t("שולחנות גדולים - סך היום נשמר", bigView.day_totals.count, 4);
 
-const summary = enrichDayResult("tabit_covers_summary", { day: DAY }, { day: DAY, count: 4, covers: 25 }) as Record<string, unknown>;
-t("כלי סיכום לא מקבל רשימה מרונדרת", summary.rendered, undefined);
+const deposits = composeDayView(ROWS, { dayISO: DAY, missingDepositOnly: true, title: "חסרי פיקדון" }, META);
+t("סיכום פיקדונות מקבל רשימה מוכנה", deposits.rendered.startsWith("*חסרי פיקדון"), true);
+t("סיכום פיקדונות כולל את ההזמנה החסרה", deposits.rendered.includes("יונתן"), true);
+// שלושה מצבים ולא שניים: "ללא פיקדון" הוא לא "חסר פיקדון".
+t("שלושת מצבי הפיקדון נספרים בנפרד",
+  [deposits.day_totals.secured, deposits.day_totals.missing_deposit, deposits.day_totals.no_deposit_required],
+  [1, 1, 2]);
 
 if (fails.length) {
   console.log(`\n${fails.length} נכשלו:\n`);

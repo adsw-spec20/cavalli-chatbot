@@ -111,6 +111,10 @@ interface ToolEntry {
   ok: boolean;
   result?: unknown;
   error?: string;
+  /** תיאור בעברית של מה נבדק, נבנה בשרת */
+  summary?: string;
+  /** כמה זמן לקחה הבדיקה */
+  ms?: number;
 }
 interface Msg {
   role: "user" | "assistant";
@@ -132,38 +136,63 @@ interface SessionFull extends SessionMeta {
 const LS_KEY = "tabit_lab_last_session";
 
 const SUGGESTIONS = [
-  "כמה מוזמנים יש היום בערב?",
+  "מה ההזמנות של מחר?",
+  "מי לא שילם פיקדון להיום?",
+  "כמה אי-הגעות וביטולים היו אתמול?",
+  "כמה עשינו אתמול?",
   "כמה שולחנות גדולים יש היום?",
-  "איזה הזמנות לא שילמו פיקדון להיום?",
   "תמצא לי את ההזמנה של ",
-  "תבדוק אם יש מקום ל",
-  "כמה אי הגעות וביטולים היו החודש?",
-  "מה מצב השולחנות עכשיו במסעדה?",
+  "יש מקום ל-6 היום ב-20:00 בחוץ?",
+  "מה מצב השולחנות עכשיו?",
 ];
 
+/**
+ * "איך זה נבדק" - הדרך של הצוות לאמת מספר בלי לשאול אותי.
+ *
+ * עד 24.9 זה היה JSON גולמי, כלומר בפועל לא נקרא על ידי אף אחד. עכשיו כל שורה
+ * אומרת בעברית מה נבדק, על איזה טווח וכמה זמן זה לקח, וה-JSON נשאר מתחת למי
+ * שבאמת רוצה אותו.
+ */
 function ToolLog({ tools }: { tools: ToolEntry[] }) {
   const [open, setOpen] = useState(false);
+  const [rawOf, setRawOf] = useState<number | null>(null);
   if (!tools.length) return null;
+  const failed = tools.filter((t) => !t.ok).length;
   return (
     <div className="mt-1.5">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-lg px-2 py-0.5"
+        className={`text-[11px] rounded-lg px-2 py-0.5 border ${
+          failed
+            ? "text-red-400 border-red-500/40"
+            : "text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]"
+        }`}
       >
-        🔧 {tools.length} פעולות טאביט {open ? "▲" : "▼"}
+        🔍 איך זה נבדק ({tools.length}{failed ? `, ${failed} נכשלו` : ""}) {open ? "▲" : "▼"}
       </button>
       {open && (
-        <div className="mt-1.5 space-y-1.5">
+        <div className="mt-1.5 space-y-1">
           {tools.map((t, i) => (
             <div key={i} className={`rounded-lg border px-2.5 py-1.5 text-[11px] ${t.ok ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/30 bg-red-500/5"}`}>
-              <div className="flex items-center gap-1.5 font-mono">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span>{t.ok ? "✓" : "✗"}</span>
-                <b>{t.tool}</b>
-                <span className="text-[var(--muted)] truncate" dir="ltr">{JSON.stringify(t.params)}</span>
+                <b>{t.summary || t.tool}</b>
+                {t.ms != null && <span className="text-[var(--muted)]">{(t.ms / 1000).toFixed(1)} שנ׳</span>}
+                <button
+                  onClick={() => setRawOf(rawOf === i ? null : i)}
+                  className="mr-auto text-[10px] text-[var(--muted)] hover:text-[var(--text)] underline underline-offset-2"
+                >
+                  {rawOf === i ? "הסתר נתונים" : "נתונים גולמיים"}
+                </button>
               </div>
-              <pre dir="ltr" className="mt-1 whitespace-pre-wrap break-words text-[10px] text-[var(--muted)] max-h-40 overflow-auto">
-                {t.ok ? JSON.stringify(t.result, null, 2) : t.error}
-              </pre>
+              {!t.ok && <div className="mt-0.5 text-red-300">{t.error}</div>}
+              {rawOf === i && (
+                <pre dir="ltr" className="mt-1 whitespace-pre-wrap break-words text-[10px] text-[var(--muted)] max-h-56 overflow-auto">
+                  {t.tool} {JSON.stringify(t.params)}
+                  {"\n\n"}
+                  {t.ok ? JSON.stringify(t.result, null, 2) : t.error}
+                </pre>
+              )}
             </div>
           ))}
         </div>
@@ -187,9 +216,26 @@ export default function TabitTestChat({ token, isMaster }: { token: string; isMa
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const [elapsed, setElapsed] = useState(0);
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [msgs]);
+
+  // חימום הסוכן ברגע שהלשונית נפתחת. הוא סורק כל 15 שניות כשהוא שקט, ולכן בלי
+  // זה השאלה הראשונה בכל שיחה חיכתה עוד לפני שטאביט נגע בה.
+  useEffect(() => {
+    api(token, "/tabit/wake", { method: "POST" }).catch(() => { /* חימום נחמד, לא קריטי */ });
+  }, [token]);
+
+  // מד זמן חי במקום נקודות מהבהבות: כשיודעים כמה זמן עבר, ההמתנה פחות מלחיצה
+  // ואפשר לדווח "זה לקח 12 שניות" במקום "זה איטי".
+  useEffect(() => {
+    if (!busy) { setElapsed(0); return; }
+    const started = Date.now();
+    const id = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 250);
+    return () => clearInterval(id);
+  }, [busy]);
 
   // שחזור השיחה האחרונה - המעבדה לא מתאפסת כשיוצאים וחוזרים
   useEffect(() => {
@@ -339,7 +385,14 @@ export default function TabitTestChat({ token, isMaster }: { token: string; isMa
               </div>
             );
           })}
-          {busy && <div className="text-xs text-[var(--muted)]">מריץ מול טאביט…</div>}
+          {busy && (
+            <div className="text-xs text-[var(--muted)] flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
+              מריץ מול טאביט…
+              {elapsed > 1 && <span className="tabular-nums">{elapsed} שנ׳</span>}
+              {elapsed > 20 && <span>(שאלות על ימי עבר נשלפות מהארכיון ולוקחות יותר)</span>}
+            </div>
+          )}
         </div>
         <div className="border-t border-[var(--border)] p-2.5 flex gap-2">
           <input

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { safeTokenEqual } from "@/lib/admin-auth";
-import { claimNext, submitResult } from "@/lib/tabit-queue";
+import { claimNext, submitResult, isLabHot } from "@/lib/tabit-queue";
 
 /**
  * נקודת הקצה של הסוכן המקומי (tabit-automation/agent.js).
@@ -21,8 +21,10 @@ function authed(req: NextRequest): boolean {
 
 export async function GET(req: NextRequest) {
   if (!authed(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const command = await claimNext();
-  return NextResponse.json({ command });
+  // hot = מישהו פתח את המעבדה עכשיו. הסוכן עובר לסריקה מהירה עוד לפני שנשלחה
+  // הפקודה הראשונה, וכך השאלה הראשונה לא משלמת את מחיר הסריקה האיטית.
+  const [command, hot] = await Promise.all([claimNext(), isLabHot()]);
+  return NextResponse.json({ command, hot });
 }
 
 export async function POST(req: NextRequest) {

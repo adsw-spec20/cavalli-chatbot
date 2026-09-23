@@ -10,7 +10,9 @@
     "test": "tsx scripts/test-admin.mts",
     "unit": "node scripts/unit-tests.mjs",
     "lab-format": "tsx scripts/lab-format-live-test.mts",
-    "eval": "node scripts/eval.mjs"
+    "eval": "node scripts/eval.mjs",
+    "lab-eval": "tsx scripts/lab-eval.mts",
+    "lab-e2e": "node scripts/tabit-lab-e2e.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

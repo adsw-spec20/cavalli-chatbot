@@ -308,6 +308,84 @@ export function dayHintForMessage(
  *   "היום"/"הערב"/"הלילה" אחרת        -> היום הקלנדרי החדש
  *   "מחר"/"מחרתיים"/"אתמול"/"שלשום"   -> שואל (סטייה של יום, ואין לה סימן מזהה)
  */
+/**
+ * יום-בשבוע בהודעה של הצוות, כתאריך - עם מודעות ללשון.
+ *
+ * ⚠️ weekdayDateIn פותר תמיד **קדימה**, כי הוא נולד בשביל לקוח שמזמין מקום.
+ * במעבדה חצי מהשאלות רטרוספקטיביות: "כמה אי-הגעות היו ביום שלישי" נשאל ביום
+ * חמישי מתכוון לשלישי שעבר, ולא לשלישי שבעוד חמישה ימים. בלשון עבר פותרים
+ * אחורה, למופע האחרון שכבר היה.
+ */
+export function labWeekdayDateIn(text: string, refISO: string): { raw: string; iso: string } | null {
+  const forward = weekdayDateIn(text, refISO, dowOfISO(refISO));
+  if (!forward) return null;
+  if (tenseOf(text) !== "past") return forward;
+  const mention = weekdayMentionIn(text);
+  if (!mention || mention.next) return forward; // "שלישי הבא" הוא עתיד גם בלשון עבר
+  const refDow = dowOfISO(refISO);
+  // המופע האחרון. כשזה היום עצמו נשארים על היום - "כמה ביטולים היו ביום חמישי"
+  // שנשאל ביום חמישי מתכוון למשמרת הנוכחית, לא לשבוע שעבר.
+  const back = (refDow - mention.dow + 7) % 7;
+  return { raw: mention.raw, iso: addDaysISO(refISO, -back) };
+}
+
+export interface LabDayContext {
+  /** שורת הפענוח שמוזרקת למודל. ריק כשאין בהודעה שום הפניה ליום. */
+  line: string;
+  /**
+   * שאלת ההבהרה המוכנה, כשחלון החצות הפך מילת זמן לעמומה. כשהיא קיימת, השרת
+   * עונה אותה **כמו שהיא** ולא מריץ את המודל בכלל.
+   *
+   * למה: כשהמודל התבקש לנסח את השאלה הזו בעצמו (24.9, 00:58) הוא הזיז את שני
+   * התאריכים ביום והציע "יום שלישי 23.9 או יום רביעי 24.9" - שני צמדים שגויים.
+   * שאלה שנבנית בקוד לא יכולה לעשות את זה.
+   */
+  question?: string;
+}
+
+/**
+ * פענוח כל הפניה ליום בהודעה של הצוות, בקוד, לכל הודעה (ולא רק אחרי חצות).
+ * זו הכניסה היחידה של המעבדה לנושא תאריכים.
+ */
+export function labDayContext(text: string, nowMs: number, alreadyAsked = false): LabDayContext {
+  const now = israelPartsAt(nowMs);
+
+  // חלון החצות קודם: כשהמילה באמת עמומה אין מה לפענח, שואלים.
+  const hint = labDayHint(text, nowMs, alreadyAsked);
+  if (hint?.needsConfirm) {
+    const w = relativeWordsIn(text).find((x) => x.offsetDays !== 0)!;
+    // לפי הלוח: המשמרת שזה עתה הסתיימה. לפי איך שמדברים בשתיים בלילה: היום
+    // שלפניה, כי הדובר עדיין חי ביום שנגמר.
+    const shiftJustEnded = addDaysISO(now.dateISO, w.offsetDays);
+    const dayBefore = addDaysISO(now.dateISO, w.offsetDays - 1);
+    return {
+      line: hint.line,
+      question:
+        `השעה ${now.hhmm}, ואחרי חצות "${w.word}" יכול להיות שני ימים שונים. למה התכוונת?\n\n` +
+        `• *${formatDayHe(shiftJustEnded)}* - המשמרת שהרגע נגמרה\n` +
+        `• *${formatDayHe(dayBefore)}* - היום שלפניה`,
+    };
+  }
+
+  const parts: string[] = [];
+  const dates = explicitDatesIn(text, now.dateISO);
+  for (const d of dates) parts.push(`"${d.raw}" = ${formatDayHe(d.iso)}`);
+  if (!dates.length) {
+    const wd = labWeekdayDateIn(text, now.dateISO);
+    if (wd) parts.push(`"${wd.raw}" = ${formatDayHe(wd.iso)}`);
+  }
+  // כשיש רמז חצות (לא עמום) הוא כבר מנוסח כמשפט שלם עם הנחיה - לא ממזגים.
+  if (!hint) {
+    for (const w of relativeWordsIn(text)) {
+      parts.push(`"${w.word}" = ${formatDayHe(addDaysISO(now.dateISO, w.offsetDays))}`);
+    }
+  }
+  const lines: string[] = [];
+  if (parts.length) lines.push(`פענוח היום שבשאלה, מחושב בקוד: ${parts.join("; ")}. השתמש בזה כמו שהוא, אל תחשב בעצמך.`);
+  if (hint) lines.push(hint.line);
+  return { line: lines.join("\n") };
+}
+
 export function labDayHint(text: string, nowMs: number, alreadyAsked = false): DayHint | null {
   if (!inMidnightWindow(nowMs)) return null;
   const words = relativeWordsIn(text);

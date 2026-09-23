@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthorized } from "@/lib/admin-auth";
 import { runTabitChat, type TabitChatMessage } from "@/lib/tabit-lab";
+import { markLabActive } from "@/lib/tabit-queue";
 import { appendLabExchange, getLabSession, type LabToolEntry } from "@/lib/tabit-lab-store";
 
 /**
@@ -40,6 +41,9 @@ export async function POST(req: NextRequest) {
 
   const message = (body.message || "").trim();
   if (!message) return NextResponse.json({ error: "no message" }, { status: 400 });
+
+  // שאלה נשאלה = המעבדה פעילה. שומר את הסוכן בסריקה מהירה לשאלות ההמשך.
+  void markLabActive();
 
   try {
     const session = body.sessionId ? await getLabSession(body.sessionId) : null;

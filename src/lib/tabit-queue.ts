@@ -24,6 +24,7 @@ export type TabitAction =
   | "customer_lookup"
   | "tables_status"
   | "no_show_summary"
+  | "day_outcome"
   | "booking_sources"
   | "modify_reservation"
   | "cancel_reservation"
@@ -48,6 +49,33 @@ export interface TabitCommand {
 
 const PENDING_KEY = "tabit_q_pending";
 const cmdKey = (id: string) => `tabit_q_cmd:${id}`;
+
+/**
+ * חימום הסוכן.
+ *
+ * הסוכן סורק כל 2 שניות כשהוא "חם" וכל 15 כשהוא שקט, והמצב החם נדלק רק **אחרי**
+ * הפקודה הראשונה. התוצאה: השאלה הראשונה בכל שיחה שילמה עד 15 שניות המתנה עוד
+ * לפני שטאביט בכלל נגע בה, וזה חלק גדול מהתחושה שהמעבדה איטית.
+ *
+ * הפתרון: כשנפתחת לשונית המעבדה (או נשלחת הודעה) מסומן כאן חותם זמן, והסוכן
+ * קורא אותו באותה בקשה שבה הוא ממילא מושך פקודות. אפס בקשות נוספות, אפס פולינג
+ * נוסף - עד שהמשתמש מקליד את השאלה הסוכן כבר ער.
+ */
+const LAB_ACTIVE_KEY = "tabit_lab_active_at";
+/** כמה זמן אחרי סימון פעילות הסוכן נשאר בסריקה מהירה */
+export const LAB_HOT_MS = 3 * 60_000;
+
+export async function markLabActive(): Promise<void> {
+  try { await getRepo().setSetting(LAB_ACTIVE_KEY, String(Date.now())); } catch { /* חימום זה נחמד, לא קריטי */ }
+}
+
+export async function isLabHot(): Promise<boolean> {
+  try {
+    const raw = await getRepo().getSetting(LAB_ACTIVE_KEY);
+    const ts = raw ? Number(raw) : 0;
+    return Number.isFinite(ts) && ts > 0 && Date.now() - ts < LAB_HOT_MS;
+  } catch { return false; }
+}
 
 async function readPending(): Promise<string[]> {
   const raw = await getRepo().getSetting(PENDING_KEY);
