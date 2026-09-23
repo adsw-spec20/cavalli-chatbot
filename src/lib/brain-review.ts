@@ -276,6 +276,8 @@ export interface ReviewQuestion {
   parentId?: string;
   /** הנחיה טכנית שאין לבעל העסק מה להחליט עליה - לא מוצגת ולא נספרת */
   hidden?: boolean;
+  /** נוסחה בתבנית נפילה (הקריאה למודל נכשלה) - ינוסח שוב בהזדמנות הבאה */
+  fallback?: boolean;
   /** המספר הרציף של השאלה בכל הבירור (מחושב בקריאה, לא נשמר) */
   num?: number;
   /** מחושב בקריאה (לא נשמר): הנוסח שבתוקף עכשיו, אם הסעיף נערך */
@@ -484,12 +486,18 @@ function isPhrased(questions: QuestionStore, a: ReviewAtom): boolean {
   return !!q && q.text === a.text.trim();
 }
 
-/** תבנית נפילה כשאין ניסוח מהמודל - תמיד יש שאלה, גם בלי AI */
+/**
+ * תבנית נפילה כשאין ניסוח מהמודל - תמיד יש שאלה, גם בלי AI.
+ * מסומנת ב-fallback כדי שתנוסח שוב בהזדמנות הבאה: בלי הסימון, קריאה אחת
+ * שנכשלה הייתה נועלת את הסעיף לנצח על השאלה הגנרית, ובעל העסק מקבל סעיף
+ * ארוך בלי שום הסבר מה נשאל עליו (דווח 23.9 על שלושה סעיפים רצופים).
+ */
 function fallbackQuestion(a: ReviewAtom): ReviewQuestion {
   return {
     id: a.id,
     kind: "review",
     topic: a.topic,
+    fallback: true,
     question: "ההנחיה הזאת עדיין נכונה ורלוונטית?",
     summary: `מתוך ${a.parentTitle}`,
     text: a.text.trim(),
@@ -509,7 +517,12 @@ async function phraseQuestions(
   const out = new Map<string, { question: string; summary: string; hidden?: boolean }>();
   if (!process.env.ANTHROPIC_API_KEY || !atoms.length) return out;
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 45_000 });
+  // כשל בקריאה אחת מפיל אצווה שלמה של 8 סעיפים לתבנית הגנרית, ובעל העסק
+  // מקבל סעיף ארוך בלי שאלה. מדידה על המוח האמיתי: 52 מתוך 217 סעיפים (24%)
+  // נפלו ככה, בזמן שאותה קריאה בדיוק מצליחה כשהיא רצה לבדה - כלומר זה עומס,
+  // לא תוכן. לכן פחות מקביליות ויותר ניסיונות חוזרים (ה-SDK עושה השהיה
+  // מדורגת על 429/529), והכנה איטית יותר עדיפה על שאלות ריקות.
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 4, timeout: 60_000 });
   // אותו מודל שמריץ את הבוט. ניסוח השאלות נעשה פעם אחת לכל סעיף ועולה
   // סנטים בודדים, אבל בעל העסק קורא כל שאלה - ומודל קטן ייצר עברית שבורה
   // ("ויהיה חייב לכווץ ללקוח") שהקשתה עליו להחליט. איכות הניסוח כאן חשובה
@@ -522,7 +535,7 @@ async function phraseQuestions(
   const batches: ReviewAtom[][] = [];
   for (let i = 0; i < atoms.length; i += BATCH) batches.push(atoms.slice(i, i + BATCH));
 
-  await pool(batches, 6, async (batch) => {
+  await pool(batches, 3, async (batch) => {
     const list = batch
       .map((a, i) => `[${i + 1}] (מתוך "${a.parentTitle}")\n${a.text.trim().slice(0, 900)}`)
       .join("\n\n");
@@ -546,6 +559,7 @@ async function phraseQuestions(
           "סימן מובהק: ההנחיה מזכירה רשימה/שורה/שדה/כלי/מנגנון שהלקוח לעולם לא רואה.\n" +
           "**מתי true:** עובדה על העסק (שעות, מחירים, מדיניות, מי מטפל במה), ניסוח שהלקוח יקרא, " +
           "או החלטה עסקית (ממתי קבוצה גדולה, האם מסלימים, מה מותר להבטיח).\n\n" +
+          "החזר פריט לכל הנחיה, **עם כל שלושת השדות תמיד** - גם כשההנחיה טכנית ו-owner_decision הוא false.\n" +
           'החזר JSON בלבד: {"items":[{"n":1,"summary":"...","question":"...","owner_decision":true}]}',
         messages: [{ role: "user", content: list }],
       });
@@ -556,15 +570,20 @@ async function phraseQuestions(
       };
       for (const it of parsed.items ?? []) {
         const atom = batch[it.n - 1];
-        if (atom && it.question)
-          out.set(atom.id, {
-            question: it.question,
-            summary: it.summary ?? "",
-            hidden: it.owner_decision === false,
-          });
+        if (!atom) continue;
+        // אסור לדרוש question כדי לקבל את הפריט: המודל משמיט אותו כשאין מה
+        // להחליט, וכך נזרק גם הסיווג owner_decision=false - ובדיוק הסעיפים
+        // שהיו אמורים לרדת מהתור הופיעו בו עם השאלה הגנרית. 46 מתוך 217.
+        out.set(atom.id, {
+          question: it.question ?? "",
+          summary: it.summary ?? "",
+          hidden: it.owner_decision === false,
+        });
       }
-    } catch {
-      /* נופלים לתבנית */
+    } catch (e) {
+      // נופלים לתבנית, אבל לא בשקט: בלי הלוג הזה 24% מהשאלות הגיעו ריקות
+      // ואי אפשר היה לדעת שמשהו נכשל בכלל.
+      console.error("[brain-review] phrasing failed for", batch.length, "atoms:", e instanceof Error ? e.message : e);
     }
   });
   return out;
@@ -583,7 +602,10 @@ let prewarming = false;
 export async function prewarmQuestions(): Promise<{ phrased: number; total: number }> {
   const [prompt, stored] = await Promise.all([basePrompt(), loadQuestions()]);
   const atoms = atomizeprompt(prompt);
-  const missing = atoms.filter((a) => !isPhrased(stored, a));
+  // כולל ניסיון חוזר למי שנפל לתבנית. הסרגל סופר אותו כמוכן (isPhrased), כדי
+  // שהמסך לא ייתקע על "מכין" ויבקש הכנה שוב ושוב בלולאה - הניסיון החוזר קורה
+  // פעם אחת לכל פתיחת מסך, וזה מספיק כדי להיחלץ מכשל רגעי.
+  const missing = atoms.filter((a) => !isPhrased(stored, a) || stored[a.id]?.fallback);
   if (!missing.length || prewarming) return { phrased: atoms.length - missing.length, total: atoms.length };
 
   prewarming = true;
@@ -600,7 +622,16 @@ export async function prewarmQuestions(): Promise<{ phrased: number; total: numb
       for (const a of group) {
         const p = phrased.get(a.id);
         const base = fallbackQuestion(a);
-        fresh[a.id] = p ? { ...base, question: p.question, summary: p.summary || base.summary, hidden: p.hidden } : base;
+        // ניסוח שהצליח מנקה את סימון הנפילה, אחרת הסעיף היה מנוסח מחדש לנצח
+        fresh[a.id] = p
+          ? {
+              ...base,
+              fallback: undefined,
+              question: p.question || base.question,
+              summary: p.summary || base.summary,
+              hidden: p.hidden,
+            }
+          : base;
       }
       await saveQuestions(fresh);
     }
@@ -635,14 +666,18 @@ export async function getTopicQuestions(topicKey: string): Promise<{ questions: 
   const allAtoms = atomizeprompt(base);
   const atoms = allAtoms.filter((a) => a.topic === topicKey);
 
-  // ניסוח למי שעוד אין לו (או שהטקסט השתנה מאז)
-  const missing = atoms.filter((a) => !stored[a.id] || stored[a.id].text !== a.text.trim());
+  // ניסוח למי שעוד אין לו, שהטקסט השתנה מאז, או שקריאה קודמת נכשלה
+  const missing = atoms.filter(
+    (a) => !stored[a.id] || stored[a.id].text !== a.text.trim() || stored[a.id].fallback
+  );
   if (missing.length) {
     const phrased = await phraseQuestions(missing);
     for (const a of missing) {
       const p = phrased.get(a.id);
       const fb = fallbackQuestion(a);
-      stored[a.id] = p ? { ...fb, question: p.question, summary: p.summary || fb.summary, hidden: p.hidden } : fb;
+      stored[a.id] = p
+        ? { ...fb, fallback: undefined, question: p.question || fb.question, summary: p.summary || fb.summary, hidden: p.hidden }
+        : fb;
     }
     await saveQuestions(stored);
   }
