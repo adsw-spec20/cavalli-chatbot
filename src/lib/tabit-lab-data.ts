@@ -56,7 +56,7 @@ export function dayLabelHe(dayISO: string, todayISO = todayIL()): string {
 
 // ===== ייחוס =====
 
-export type DataSource = "snapshot" | "live" | "archive" | "none";
+export type DataSource = "snapshot" | "live" | "archive" | "ledger" | "none";
 
 export interface Provenance {
   /** שם הכלי בעברית, כפי שיופיע לצוות */
@@ -72,6 +72,9 @@ const SOURCE_HE: Record<DataSource, string> = {
   snapshot: "תצלום טאביט",
   live: "טאביט חי",
   archive: "ארכיון טאביט",
+  // הפנקס היומי שלנו. קיים כי טאביט שומר 24 שעות בלבד, ולכן לימים ישנים זה
+  // המקור היחיד - והצוות צריך לדעת שזה מה שנקרא.
+  ledger: "תיעוד יומי שלנו",
   none: "ללא נתונים",
 };
 

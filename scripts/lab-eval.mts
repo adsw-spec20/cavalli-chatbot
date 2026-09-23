@@ -83,6 +83,9 @@ const YESTERDAY_OUTCOME = {
   day: YESTERDAY, weekday_he: weekdayHe(YESTERDAY), day_label: dayLabelHe(YESTERDAY),
   scope_kind: "day", source: "archive",
   booked_total: 44, no_show: 4, cancelled: 9, arrived: 31, walk_ins: 52,
+  // ⚠️ מהנתונים האמיתיים של 23.9: רוב רשומות ה-no_show בטאביט הן מזדמנים ולא
+  // הזמנות. "כמה אי-הגעות היו" חייב לענות על ההזמנות, לא על הסכום.
+  walk_in_no_show: 12,
   no_show_rate_pct: 9.1,
   covers: { no_show: 14, cancelled: 27, arrived: 96, walk_ins: 110 },
   no_show_list: [
@@ -154,8 +157,21 @@ async function mockTool(name: string, input: Record<string, unknown>) {
         return { result: { day, scope_kind: "day", source: "none", error: `אין כיסוי ארכיון ל-${day}` }, provenance: prov };
       }
       return { result: YESTERDAY_OUTCOME, provenance: prov };
-    case "tabit_no_show_summary":
+    case "tabit_no_show_summary": {
+      // כמו בייצור: הארכיון של טאביט לא נותן יותר מ-24 שעות, ולכן כל תקופה
+      // ארוכה חוזרת בלי מספרים בכלל.
+      const days = Number(input.days) || 30;
+      if (days > 1) {
+        return {
+          result: {
+            scope_kind: "period", is_period_aggregate: true, requested_days: days, unavailable: true,
+            message: `טאביט מאפשר לקרוא מהארכיון רק את 24 השעות האחרונות, ולכן אי אפשר לענות על ${days} ימים. אל תיתן מספר.`,
+          },
+          provenance: prov,
+        };
+      }
       return { result: PERIOD_SUMMARY, provenance: prov };
+    }
     case "tabit_revenue":
       return input.day
         ? { result: { scope_kind: "day", day, source: "archive", orders: 137, covers: 289, revenue_ils: 18432.5, tips_ils: 1922, avg_check_ils: 134.5, per_person_ils: 63.8, tip_pct: 10.4 }, provenance: prov }
@@ -234,11 +250,26 @@ const SCENARIOS: Scenario[] = [
     must: ["אורי גל", "נועה שמש"],
   },
   {
-    // צבירה מותרת, אבל חייבת להיות מסומנת כצבירה.
-    name: "תקופה: חייב לומר על איזה טווח",
+    // ⭐ המגבלה האמיתית של טאביט: 24 שעות ארכיון. אין מספר, ולכן אסור שיהיה
+    // מספר בתשובה. זה התרחיש שבו המצאה הכי מפתה.
+    name: "תקופה ארוכה: אומרים שלא זמין, בלי מספר",
     turns: ["כמה אי-הגעות היו בחודש האחרון?"],
-    expectTools: ["tabit_no_show_summary"],
-    must: [/14/, /30 (ה)?ימים|חודש|מ-\d{1,2}\.\d{1,2}/],
+    must: [/לא זמין|לא ניתן|אי אפשר|24 השעות|מוגבל/],
+    mustNot: [/\b14\b/, /\b46\b/, /\b296\b/, /4\.7/],
+  },
+  {
+    name: "יום ישן: לא ממציאים ולא מדווחים אפס",
+    turns: ["כמה אי-הגעות היו ב-10.9?"],
+    must: [/לא זמין|לא ניתן|אי אפשר|24 השעות|כיסוי/],
+    mustNot: [/^אפס/, /\b0 אי-הגעות/],
+  },
+  {
+    // מתוך 16 רשומות no_show ב-23.9 האמיתי, רק 2 היו הזמנות. במוק: 4 מתוך 16.
+    name: "אי-הגעות של מזדמנים אינן אי-הגעות של הזמנות",
+    turns: [`כמה אי-הגעות היו ב-${short(YESTERDAY)}?`],
+    expectTools: ["tabit_day_outcome"],
+    must: [/\b4\b/],
+    mustNot: [/\b16\b/],
   },
   {
     name: "רשימת יום: הבלוק המוכן מודבק כמו שהוא",
