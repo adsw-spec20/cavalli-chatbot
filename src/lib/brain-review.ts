@@ -243,7 +243,22 @@ export function atomizeprompt(prompt: string): ReviewAtom[] {
 // ===== שאלות =====
 
 export type QuestionKind = "review" | "enrich";
-export type AnswerStatus = "kept" | "changed" | "deleted" | "answered" | "irrelevant" | "unsure" | "skipped";
+/**
+ * technical = בעל העסק אומר "זו לא החלטה שלי". הסיווג האוטומטי מזהה רוב
+ * ההנחיות הפנימיות, אבל לא את כולן, ובלי הכפתור הזה הוא נתקע מול סעיף שהוא
+ * לא אמור להבין (מתי לקרוא לכלי, איך לפרש שדה) בלי שום כפתור שמתאים לו:
+ * ✅ טוען שהכלל נכון, ו-❓ שולח לצוות שגם הוא לא יידע. זה לא משנה את המוח,
+ * מוריד את השאלה מהתור, ומסמן לי לטפל בה בבנייה מחדש.
+ */
+export type AnswerStatus =
+  | "kept"
+  | "changed"
+  | "deleted"
+  | "answered"
+  | "irrelevant"
+  | "unsure"
+  | "technical"
+  | "skipped";
 
 export interface ReviewQuestion {
   id: string;
@@ -779,10 +794,12 @@ export async function exportReview(): Promise<string> {
     answered: "נענה",
     irrelevant: "לא רלוונטי",
     unsure: "לבירור מול הצוות",
+    technical: "הנחיה טכנית - לא החלטה של בעל העסק",
     skipped: "נדלג",
   };
 
   const byTopic = new Map<string, string[]>();
+  const technical: string[] = [];
   let decided = 0;
   for (const a of atoms) {
     const q = stored[a.id];
@@ -791,6 +808,16 @@ export async function exportReview(): Promise<string> {
     const edit = ov.items[a.id];
     if (!ans && !edit) continue; // לא הוכרע ואין הערה - אין מה למסור
     decided++;
+
+    // מה שבעל העסק סימן כטכני יוצא לרשימה נפרדת: זו עבודה שלי, והיא רק
+    // הייתה מרעישה את החומר העסקי שממנו בונים.
+    if (ans?.status === "technical") {
+      technical.push(
+        `- **${num.get(a.id) ?? "?"}** (${a.parentTitle}): ${a.text.trim().replace(/\s+/g, " ").slice(0, 160)}` +
+          (ans.note ? `\n  - הערה: ${ans.note}` : "")
+      );
+      continue;
+    }
 
     const lines: string[] = [];
     lines.push(`### שאלה ${num.get(a.id) ?? "?"} - ${q.question}`);
@@ -850,7 +877,13 @@ export async function exportReview(): Promise<string> {
     })
     .join("\n");
 
-  return head + body + (gaps.length ? `\n## ❓ מידע שהיה חסר\n\n${gaps.join("\n")}` : "");
+  const techSection = technical.length
+    ? `\n## 🔧 סעיפים שסומנו "לא בשבילי"\n\n` +
+      `בעל העסק סימן שאלה הנחיות פנימיות של הבוט ואין לו עליהן החלטה. לעבור עליהן לבד בבנייה מחדש.\n\n` +
+      technical.join("\n")
+    : "";
+
+  return head + body + techSection + (gaps.length ? `\n## ❓ מידע שהיה חסר\n\n${gaps.join("\n")}` : "");
 }
 
 /**

@@ -27,7 +27,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const STATUSES: AnswerStatus[] = ["kept", "changed", "deleted", "answered", "irrelevant", "unsure", "skipped"];
+const STATUSES: AnswerStatus[] = [
+  "kept",
+  "changed",
+  "deleted",
+  "answered",
+  "irrelevant",
+  "unsure",
+  "technical",
+  "skipped",
+];
 
 export async function GET(req: NextRequest) {
   if (!isMasterAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });

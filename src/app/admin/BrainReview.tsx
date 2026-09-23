@@ -44,7 +44,15 @@ interface Question {
   /** הסעיף הוסר מהמוח */
   removed?: boolean;
 }
-type AnswerStatus = "kept" | "changed" | "deleted" | "answered" | "irrelevant" | "unsure" | "skipped";
+type AnswerStatus =
+  | "kept"
+  | "changed"
+  | "deleted"
+  | "answered"
+  | "irrelevant"
+  | "unsure"
+  | "technical"
+  | "skipped";
 interface AnswerRec {
   status: AnswerStatus;
   answer?: string;
@@ -61,6 +69,7 @@ const STATUS_LABEL: Record<AnswerStatus, string> = {
   answered: "נענה",
   irrelevant: "לא רלוונטי",
   unsure: "לבירור מול הצוות",
+  technical: "טכני, לא בשבילי",
   skipped: "נדלג",
 };
 
@@ -833,6 +842,14 @@ export default function BrainReview({ token }: { token: string }) {
               </button>
               <button onClick={() => answer("unsure")} disabled={busy} className="text-sm rounded-xl px-3 py-2 border border-[var(--border)] text-[var(--muted)]">
                 ❓ לא בטוח
+              </button>
+              <button
+                onClick={() => answer("technical")}
+                disabled={busy}
+                title="הנחיה פנימית של הבוט. לא משנה כלום, יורדת מהתור, ואני אטפל בה"
+                className="text-sm rounded-xl px-3 py-2 border border-[var(--border)] text-[var(--muted)]"
+              >
+                🔧 לא בשבילי
               </button>
               <button onClick={() => answer("skipped")} disabled={busy} className="text-sm rounded-xl px-3 py-2 text-[var(--muted)]">
                 דלג
