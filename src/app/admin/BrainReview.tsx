@@ -250,6 +250,30 @@ export default function BrainReview({ token }: { token: string }) {
     }
   }
 
+  /** ניסוח מחדש של כל השאלות - התשובות וההערות נשמרות */
+  async function rephraseAll() {
+    if (busy) return;
+    if (
+      !window.confirm(
+        "לנסח מחדש את כל השאלות?\n\nהתשובות, ההערות והעריכות שלך נשמרות ולא ייפגעו.\nההכנה תיקח כמה דקות ברקע, ובסופה המספור עשוי לזוז מעט (שאלות שיסווגו כטכניות יורדות מהרשימה)."
+      )
+    )
+      return;
+    setBusy(true);
+    setErr("");
+    try {
+      await api(token, "/brain-review", { method: "POST", body: JSON.stringify({ action: "rephrase" }) });
+      setTopicKey(null);
+      setAllDone(null);
+      setQuestions([]);
+      await loadOverview();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "הניסוח מחדש נכשל");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /** איפוס כל הבירור - מוחק תשובות והערות ומחזיר את המוח לנוסח המקורי */
   async function resetAll() {
     if (busy) return;
@@ -500,6 +524,17 @@ export default function BrainReview({ token }: { token: string }) {
 
         <div className="space-y-1.5">
           {!overview && <div className="text-sm text-[var(--muted)] p-4">טוען…</div>}
+          {overview && (
+            <div className="text-left pb-1">
+              <button
+                onClick={rephraseAll}
+                disabled={busy}
+                className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] underline"
+              >
+                🔄 נסח מחדש את כל השאלות
+              </button>
+            </div>
+          )}
           {overview?.topics.map((t) => {
             const left = t.total - t.done;
             return (

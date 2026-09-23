@@ -11,6 +11,7 @@ import {
   exportReview,
   resetReview,
   getAnsweredQuestions,
+  rephraseQuestions,
   type AnswerStatus,
 } from "@/lib/brain-review";
 
@@ -71,6 +72,17 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
+  // ניסוח מחדש של כל השאלות (התשובות נשמרות) - ההכנה ממשיכה ברקע
+  if (body.action === "rephrase") {
+    try {
+      const r = await rephraseQuestions();
+      after(() => prewarmQuestions().catch(() => undefined));
+      return NextResponse.json({ ok: true, ...r });
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
+    }
+  }
+
   // איפוס הכל - הפעולה היחידה שאינה על שאלה מסוימת, ודורשת אישור מפורש
   if (body.action === "reset") {
     if (body.confirm !== "reset") return NextResponse.json({ error: "missing confirm" }, { status: 400 });
