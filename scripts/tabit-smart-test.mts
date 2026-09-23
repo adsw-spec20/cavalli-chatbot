@@ -5,7 +5,7 @@
  */
 import {
   weekdayHe, resolveDayISO, calendarBlock, checkOpenAt, addDaysISO,
-  nameMatches, phoneMatches, filterRows, type LabResRow,
+  nameMatches, phoneMatches, filterRows, todayIL, type LabResRow,
 } from "../src/lib/tabit-lab-smart";
 import { businessConfig } from "../src/lib/business-config";
 
@@ -18,7 +18,13 @@ function t(name: string, cond: boolean, extra?: unknown) {
 // ===== הכשל שדווח: 21.9.2026 הוא יום שני, לא ראשון =====
 t("21.9.2026 = יום שני (הבאג המקורי)", weekdayHe("2026-09-21") === "שני", weekdayHe("2026-09-21"));
 t("20.9.2026 = יום ראשון", weekdayHe("2026-09-20") === "ראשון");
-t("לוח השנה כולל את 21.9 כיום שני", calendarBlock().includes("2026-09-21 = יום שני"));
+// ⚠️ היה כאן תאריך קבוע (21.9), ולוח השנה מציג 14 ימים **קדימה מהיום** - אז
+// הבדיקה פגה מעצמה ברגע שהתאריך עבר. עכשיו היא נגזרת מהיום ולכן תמיד תקפה.
+{
+  const inThree = addDaysISO(todayIL(), 3);
+  t(`לוח השנה כולל את ${inThree} עם היום הנכון`, calendarBlock().includes(`${inThree} = יום ${weekdayHe(inThree)}`));
+  t("לוח השנה מתחיל בהיום", calendarBlock().includes(`${todayIL()} = יום ${weekdayHe(todayIL())} (היום)`));
+}
 
 // ===== resolveDayISO =====
 t("resolveDay ISO עובר כמו שהוא", resolveDayISO("2026-09-21") === "2026-09-21");

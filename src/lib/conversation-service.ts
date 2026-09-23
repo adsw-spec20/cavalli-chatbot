@@ -162,6 +162,7 @@ const QUICK_ANSWER_META: { key: string; title: string; patterns: string; dynamic
   { key: "openNow", title: "פתוחים עכשיו?", patterns: "אתם פתוחים / פתוח עכשיו", dynamic: true },
   { key: "openTomorrow", title: "פתוחים מחר?", patterns: "פתוחים מחר / ומחר", dynamic: true },
   { key: "menu", title: "בקשת תפריט", patterns: "אפשר תפריט / מה יש לכם / שלחו תפריט", dynamic: true },
+  { key: "menuFull", title: "בקשת התפריט המלא", patterns: "התפריט המלא / כל התפריט / הכל אני רוצה", dynamic: true },
   { key: "reservePolicy", title: "מדיניות הזמנות", patterns: "צריך להזמין מראש / חובה להזמין", dynamic: true },
   { key: "instagram", title: "עמוד אינסטגרם", patterns: "יש לכם אינסטגרם / עמוד", dynamic: true },
   { key: "greet", title: "ברכה בלבד", patterns: "היי / שלום / בוקר טוב / שבת שלום", dynamic: true },
@@ -262,6 +263,16 @@ const QUICK_MATCHERS: { key: string; patterns: RegExp[]; exclude: RegExp }[] = [
     exclude: /^$/,
   },
   {
+    // ⚠️ חייב להופיע לפני "menu": matchQuickAnswers דורש התאמה **יחידה**, ואם
+    // שתי התבניות תופסות את אותה הודעה שתיהן מבוטלות והשאלה חוזרת למודל -
+    // כלומר בדיוק חזרה לתקלה. לכן ל-menu יש exclude על "מלא/הכל/שלם".
+    key: "menuFull",
+    patterns: [
+      /תפריט (ה)?מלא|התפריט המלא|כל התפריט|תפריט שלם|תפריט במלואו|full menu|entire menu|whole menu/,
+    ],
+    exclude: /^$/,
+  },
+  {
     key: "menu",
     patterns: [
       /^תפריט\??$|^כן,? ?תפריט\??$|אפשר (לקבל |לראות )?(את ה)?תפריט|יש (לכם )?תפריט|שלחו? (לי )?(את ה)?תפריט|מה יש (לכם )?בתפריט/,
@@ -269,7 +280,7 @@ const QUICK_MATCHERS: { key: string; patterns: RegExp[]; exclude: RegExp }[] = [
       /מה התפריט|תפריט ו?מחירים|מחירים ותפריט|אפשר מחירים|מה המחירים\??$|מחירון/,
     ],
     // כל בקשה ספציפית (קטגוריה, תזונה) - למודל שידייק. מחירי מנה בודדת -> מנוע המחירים
-    exclude: /בוקר|צהריים|ערב|קינוח|פיצ|פסט|סלט|שתי|ילדים|גלוטן|טבעוני|צמחוני|כשר|כמה עולה|איפה|שעות|חני|הזמנ|אלרג/,
+    exclude: /בוקר|צהריים|ערב|קינוח|פיצ|פסט|סלט|שתי|ילדים|גלוטן|טבעוני|צמחוני|כשר|כמה עולה|איפה|שעות|חני|הזמנ|אלרג|מלא|שלם|כל התפריט|במלואו/,
   },
   {
     key: "reserveHowto",
@@ -551,6 +562,39 @@ function menuCategoryAnswer(raw: string, cfg: BusinessConfig): string | null {
 }
 
 /**
+ * התפריט המלא, בנוי בקוד.
+ *
+ * ⚠️ זו הייתה תקלה אמיתית (23.9): לקוחות שביקשו "את התפריט המלא" קיבלו
+ * "סליחה, יש לי תקלה טכנית". הסיבה לא הייתה תקלה בכלל - המודל התבקש להקליד
+ * מחדש את כל התפריט, זה חרג מ-MAX_TOKENS ומ-timeout הלקוח, והבקשה נקטעה
+ * (APIConnectionTimeoutError). כלומר ביקשנו ממנו לעבוד קשה כדי לשחזר מידע
+ * שכבר יושב אצלנו מדויק.
+ *
+ * כל התפריט הוא 3,400 תווים בערך - נכנס בהודעה אחת בוואטסאפ (מגבלה 4,096),
+ * מגיע בלי עלות, בלי המתנה, בלי מחיר שהומצא ובלי פריט שנשמט. בלי תיאורי
+ * המנות, שמכפילים את האורך; מי שרוצה פירוט שואל על קטגוריה.
+ */
+/** "הכל אני רוצה" על כל צורותיו - רק כהמשך, אחרי שהוצגו הקטגוריות. */
+const ALL_OF_IT_RX =
+  /^(את )?(ה)?כ(ו)?ל( ה?קטגוריות| המנות| התפריט)?( אני)?( רוצה| בבקשה)?[\s!.,?🙂😊]*$|^(אני )?רוצה (את )?(ה)?כ(ו)?ל[\s!.,?🙂😊]*$/;
+
+/** מיוצא לצורך בדיקה (scripts/menu-test.mts) - לא בשימוש מחוץ לקובץ. */
+export function fullMenuAnswer(cfg: BusinessConfig): string | null {
+  const cats = (cfg.menu ?? [])
+    .map((cat) => {
+      const items = cat.items.filter((i) => i.available !== false);
+      if (!items.length) return null;
+      const lines = items
+        .map((i) => `- ${i.name} - ${/^\d/.test(i.price.trim()) ? "₪" + i.price.trim() : i.price}`)
+        .join("\n");
+      return `*${cat.name}*\n${lines}${cat.note ? `\n(${cat.note})` : ""}`;
+    })
+    .filter(Boolean);
+  if (!cats.length) return null;
+  return `הנה התפריט המלא שלנו 🙂\n\n${cats.join("\n\n")}\n\nמשהו קורץ לך? 😋`;
+}
+
+/**
  * "תודה" וסגירות חמות - תשובת נימוס קצרה בחינם. רק ביטויי תודה מובהקים,
  * ורק כשההודעה האחרונה של הבוט לא הסתיימה בשאלה (שלא נבלע אישור באמצע זרימה).
  */
@@ -637,9 +681,16 @@ export function matchQuickAnswers(raw: string): string[] {
     // נרמול לפני ההשוואה (22.8): "האם יש אצלכם חניה" נכשל בעבר רק כי התבניות
     // בדקו "יש חניה". normalizeQ מסיר ברכת פתיחה, "האם", ו"יש לכם/אצלכם".
     const cands = [s, normalizeQ(s)];
-    const hits = QUICK_MATCHERS.filter((q) => q.patterns.some((p) => cands.some((c) => p.test(c))));
+    // ⚠️ ההחרגה נבדקת **לפני** מבחן הייחודיות (23.9). קודם היא נבדקה אחריו,
+    // ולכן תבנית שהוחרגה עדיין נספרה כהתאמה: "שלח לי את התפריט המלא" תפס גם
+    // menu וגם menuFull, שתיהן בוטלו זו את זו, והשאלה נפלה למודל - שניסה
+    // להקליד את כל התפריט ונקטע בטיימאאוט. מטריצה שהוחרגה היא **לא** התאמה.
+    const hits = QUICK_MATCHERS.filter(
+      (q) =>
+        q.patterns.some((p) => cands.some((c) => p.test(c))) &&
+        !cands.some((c) => q.exclude.test(c))
+    );
     if (hits.length !== 1) return null;
-    if (cands.some((c) => hits[0].exclude.test(c))) return null;
     return hits[0].key;
   };
   const single = matchOne(t);
@@ -753,6 +804,9 @@ function buildQuickAnswer(
       const base = variants[Math.floor(Math.random() * variants.length)];
       const gate = isGateConfigured() ? `\n${gateOfferLine()}` : "";
       return `${base}${gate}`;
+    }
+    case "menuFull": {
+      return fullMenuAnswer(cfg);
     }
     case "menu": {
       if (!cfg.menu?.length) return null;
@@ -1823,6 +1877,17 @@ export async function handleIncomingMessage(
     if (!built && cannedLang === "he") {
       built = menuCategoryAnswer(lastUserTurn, cfg);
       if (built) cannedKey = "category";
+    }
+    // המשך ישיר ל"אלו הקטגוריות בתפריט שלנו": "הכל אני רוצה" / "את הכל".
+    // המילים האלה כלליות מכדי לתת להן תבנית גלובלית (הן מופיעות גם בבחירת
+    // תוספות ובעוד הקשרים), ולכן הן נשענות על מה שהבוט אמר בהודעה הקודמת.
+    // זה בדיוק התור שנפל אצל לקוחה אמיתית ב-23.9.
+    if (!built && cannedLang === "he" && ALL_OF_IT_RX.test(lastUserTurn.trim())) {
+      const prevCanned = [...stored].reverse().find((m) => m.role === "assistant")?.meta?.canned;
+      if (prevCanned === "menu" || prevCanned === "category") {
+        built = fullMenuAnswer(cfg);
+        if (built) cannedKey = "menuFull";
+      }
     }
     // מנוע זמינות ההזמנות (24.8): בקשה ליום/שעה שאין בהם הזמנות נענית מתבנית
     // מחושבת במקום מהמודל - זול יותר, ובעיקר לא טועה בכללי ההזמנות.

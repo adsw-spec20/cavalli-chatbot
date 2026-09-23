@@ -20,6 +20,7 @@ const SUITES = [
   ["לחיצה כפולה וגבול הפרק", "scripts/episode-guard-test.mts"],
   ["שער ההזמנה לביקורת", "scripts/review-invite-test.mts"],
   ["ניקוי תשובת המודל", "scripts/sanitize-test.mts"],
+  ["בקשת תפריט ותפריט מלא", "scripts/menu-test.mts"],
 ];
 
 let failed = 0;
