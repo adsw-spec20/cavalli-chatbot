@@ -27,6 +27,7 @@ import {
   loadSnapshot, snapshotAgeMinutes, weekdayHe, todayIL, addDaysISO,
   type LabResRow, type SnapshotData,
 } from "./tabit-lab-smart";
+import { readLedgerDay, ledgerIsComplete, ledgerDayRows } from "./tabit-ledger";
 
 // ===== טריות =====
 
@@ -179,6 +180,12 @@ function snapshotUsable(snap: SnapshotData | null): { ok: boolean; age: number |
 export async function dayRows(dayISO: string): Promise<DayRowsResult> {
   const today = todayIL();
   if (dayISO < today) {
+    // הפנקס שלנו קודם: הארכיון של טאביט נגיש ליממה בלבד, ולכן לרוב ימי העבר
+    // הוא המקור היחיד שיש. נופלים לטאביט רק כשאין פנקס אמין ליום הזה.
+    const entry = await readLedgerDay(dayISO);
+    if (entry?.records.length && ledgerIsComplete(entry)) {
+      return { rows: ledgerDayRows(entry.records, dayISO) as LabResRow[], source: "ledger", ageMinutes: null };
+    }
     const res = (await cachedAgentCall("read_day", { day: dayISO }, dayISO)) as { reservations?: LabResRow[] };
     return { rows: res.reservations ?? [], source: "archive", ageMinutes: null };
   }

@@ -10,7 +10,7 @@ import {
 } from "./tabit-lab-smart";
 import {
   buildDayView, cachedAgentCall, allUpcomingRows, dayLabelHe, buildSourceFooter,
-  TOOL_LABEL_HE, nowHHMM, type Provenance,
+  TOOL_LABEL_HE, type Provenance,
 } from "./tabit-lab-data";
 import { LAB_SYSTEM, LAB_WRITE_RULES, LAB_READ_ONLY_NOTE } from "./tabit-lab-prompt";
 import {
@@ -521,4 +521,3 @@ function hasShiftedWord(text: string): boolean {
   return /(^|[^֐-׿])[לבהוכשמ]?(מחרתיים|מחר|אתמול|שלשום)(?![֐-׿])/.test(text);
 }
 
-export { nowHHMM };

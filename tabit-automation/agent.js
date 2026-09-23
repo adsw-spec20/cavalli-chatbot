@@ -223,6 +223,7 @@ async function collectLedger(page, tableNum, opts) {
         tables: (d.reserved_tables_ids || []).map((id) => tableNum.get(id)).filter((n) => n != null),
         reason: r.archived_reason || "",
         walkin: isWalkin(r),
+        deposit: depositStatus(r),
         source: sourceLabel(r),
         ...(paid ? { paid_agorot: ps.paidAmount || totals.totalAmount || 0, tips_agorot: totals.totalTips || 0 } : {}),
       });

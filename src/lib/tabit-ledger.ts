@@ -34,6 +34,8 @@ export interface LedgerRecord {
   walkin: boolean;
   /** מקור ההזמנה בעברית, לפילוח */
   source: string;
+  /** מצב הפיקדון: שלושה מצבים, ראה missingDepositFooter ב-tabit-format.ts */
+  deposit?: "secured" | "missing" | "none";
   /** פדיון ששולם באגורות, כשיש חשבון סגור */
   paid_agorot?: number;
   tips_agorot?: number;
@@ -149,6 +151,21 @@ export function computeRevenue(records: LedgerRecord[], day: string): RevenueOut
     per_person_ils: covers ? ils(revenue / covers) : 0,
     tip_pct: revenue ? Math.round((tips / revenue) * 1000) / 10 : 0,
   };
+}
+
+/**
+ * שורות ההזמנות של יום מהפנקס, בפורמט שרשימת היום מצפה לו.
+ *
+ * מסננת כמו הקריאה החיה: בלי מזדמנים ובלי ביטולים. אי-הגעה **כן** נשארת, כי
+ * היא הייתה על הספרים באותו יום וזה מה שהצוות רוצה לראות בדיעבד.
+ */
+export function ledgerDayRows(records: LedgerRecord[], day: string) {
+  return records
+    .filter((r) => r.day === day && !r.walkin && r.reason !== "idle-temp-reservation" && !REAL_CANCEL.has(r.reason))
+    .map((r) => ({
+      id: r.id, name: r.name, phone: r.phone, seats: r.seats,
+      day: r.day, time: r.time, tables: r.tables, deposit: r.deposit ?? "none",
+    }));
 }
 
 export function computeSources(records: LedgerRecord[], day: string) {

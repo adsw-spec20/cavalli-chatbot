@@ -56,8 +56,8 @@ const TOMORROW_ROWS: TabitResRow[] = [
   { id: "r5", name: "רון סלע", phone: "0555556666", seats: 2, day: TOMORROW, time: "21:00", tables: [7], deposit: "none" },
 ];
 
-/** הזמנות מחר מ-19:00: r2,r3,r4,r5 = 4 הזמנות, 28 סועדים */
-const EVENING = TOMORROW_ROWS.filter((r) => (r.time ?? "") >= "19:00");
+// הזמנות מחר מ-19:00 הן r2,r3,r4,r5: 4 הזמנות ו-28 סועדים. זה המספר שתרחיש
+// טווח השעות בודק, ולכן הוא לא אמור להשתנות בלי כוונה.
 
 const dayView = (rows: TabitResRow[], day: string, title: string, all: TabitResRow[], noun?: string) => ({
   day, weekday_he: weekdayHe(day), day_label: dayLabelHe(day), scope_kind: "day",
