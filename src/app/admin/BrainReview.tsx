@@ -301,16 +301,22 @@ export default function BrainReview({ token }: { token: string }) {
     }
   }
 
-  /** שמירת ההערה לבדה, בלי לשנות את ההחלטה ובלי לעבור לשאלה הבאה */
+  /**
+   * שמירת ההערה בלי להכריע. בתור ממשיכים לשאלה הבאה (השאלה נשארת בתור
+   * ותחזור בהמשך) - להישאר על אותה שאלה אחרי שמירה הרגיש כמו תקיעה. בחזרה
+   * לשאלה שכבר נסגרה נשארים במקום, כי אין לאן להתקדם.
+   */
   async function saveNoteOnly() {
     if (!current || busy) return;
     setBusy(true);
     setErr("");
     const id = current.id;
+    const inQueue = !revisiting;
     try {
       await api(token, "/brain-review", { method: "POST", body: JSON.stringify({ questionId: id, action: "note", note }) });
       setState((s) => ({ ...s, [id]: { ...(s[id] ?? { status: "skipped" as AnswerStatus, at: Date.now() }), note: note.trim() || undefined } }));
-      setNoteSaved(true);
+      if (inQueue) setIdx((i) => i + 1);
+      else setNoteSaved(true);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "שמירת ההערה נכשלה");
     } finally {
@@ -570,20 +576,38 @@ export default function BrainReview({ token }: { token: string }) {
 
       {!loading && !current && (
         <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-8 text-center space-y-2">
-          <div className="text-3xl">🎉</div>
-          <div className="font-semibold">סיימת את הנושא הזה</div>
-          <div className="text-sm text-[var(--muted)]">
-            כל התשובות כבר בתוקף אצל הבוט. תמיד אפשר לפתוח שאלה שכבר ענית ולשנות את ההחלטה.
+          <div className="text-3xl">{pending.length ? "↩️" : "🎉"}</div>
+          <div className="font-semibold">
+            {pending.length ? `עברת על הכל, אבל ${fmt(pending.length)} עוד מחכות להכרעה` : "סיימת את הנושא הזה"}
           </div>
-          <button
-            onClick={() => {
-              setTopicKey(null);
-              loadOverview();
-            }}
-            className="mt-2 rounded-xl px-4 py-2 text-sm bg-[var(--accent)] text-[var(--accent-fg)] font-semibold"
-          >
-            לנושא הבא
-          </button>
+          <div className="text-sm text-[var(--muted)]">
+            {pending.length
+              ? "אלה שדילגת עליהן או שרשמת עליהן רק הערה. אפשר לחזור אליהן עכשיו או להמשיך לנושא הבא ולחזור אחר כך."
+              : "כל התשובות כבר בתוקף אצל הבוט. תמיד אפשר לפתוח שאלה שכבר ענית ולשנות את ההחלטה."}
+          </div>
+          <div className="flex gap-2 justify-center flex-wrap pt-1">
+            {!!pending.length && (
+              <button
+                onClick={() => setIdx(0)}
+                className="rounded-xl px-4 py-2 text-sm bg-[var(--accent)] text-[var(--accent-fg)] font-semibold"
+              >
+                חזור אליהן ({fmt(pending.length)})
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setTopicKey(null);
+                loadOverview();
+              }}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold ${
+                pending.length
+                  ? "border border-[var(--border)] text-[var(--muted)]"
+                  : "bg-[var(--accent)] text-[var(--accent-fg)]"
+              }`}
+            >
+              לנושא הבא
+            </button>
+          </div>
         </div>
       )}
 
@@ -697,16 +721,20 @@ export default function BrainReview({ token }: { token: string }) {
                   placeholder="למשל: נכון, אבל תוסיף שבחורף זה אחרת / לא רלוונטי, עניתי על זה בשאלת הפיקדון"
                   className="w-full bg-[var(--panel2)] border border-[var(--border)] rounded-xl px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]"
                 />
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
                     onClick={saveNoteOnly}
-                    disabled={busy}
-                    className="text-xs rounded-lg px-2.5 py-1 border border-[var(--border)] hover:border-[var(--accent)]"
+                    disabled={busy || !note.trim()}
+                    className="text-xs rounded-lg px-2.5 py-1 border border-[var(--border)] hover:border-[var(--accent)] disabled:opacity-40"
                   >
-                    שמור הערה בלבד
+                    {revisiting ? "שמור הערה" : "שמור הערה והמשך (בלי להכריע)"}
                   </button>
                   {noteSaved && <span className="text-[11px] text-emerald-600">נשמרה ✓</span>}
-                  <span className="text-[11px] text-[var(--muted)]">ההערה נשמרת גם עם כל כפתור החלטה למטה</span>
+                  <span className="text-[11px] text-[var(--muted)]">
+                    {revisiting
+                      ? "ההערה נשמרת גם עם כל כפתור החלטה למטה"
+                      : "השאלה תישאר בתור ותחזור אליך. אם אתה כן מכריע - פשוט לחץ על כפתור למטה וההערה תישמר איתו."}
+                  </span>
                 </div>
               </div>
             )}
