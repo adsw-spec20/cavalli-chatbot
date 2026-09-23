@@ -200,6 +200,9 @@ function ledgerDigest(records) {
   return `${records.length}:${h}`;
 }
 const lastLedgerDigest = new Map();
+/** כל כמה זמן נשלח הפנקס במלואו, גם בלי שינוי (ריפוי עצמי) */
+const LEDGER_FULL_MS = 60 * 60 * 1000;
+let lastFullLedger = 0;
 
 async function collectLedger(page, tableNum, opts) {
   try {
@@ -228,19 +231,16 @@ async function collectLedger(page, tableNum, opts) {
         ...(paid ? { paid_agorot: ps.paidAmount || totals.totalAmount || 0, tips_agorot: totals.totalTips || 0 } : {}),
       });
     }
-    if (opts && opts.changedOnly) {
-      // רק ימים שבאמת זזו. בלילה שקט אף יום לא משתנה, והשליחה יורדת לאפס
-      // במקום 70KB כל חמש דקות.
-      const changed = {};
-      for (const [day, recs] of Object.entries(byDay)) {
-        const d = ledgerDigest(recs);
-        if (lastLedgerDigest.get(day) === d) continue;
-        lastLedgerDigest.set(day, d);
-        changed[day] = recs;
-      }
-      return changed;
+    // החתימות נרשמות תמיד, גם בשליחה מלאה, אחרת הסבב שאחריה היה שולח שוב הכל.
+    const changed = {};
+    for (const [day, recs] of Object.entries(byDay)) {
+      const d = ledgerDigest(recs);
+      const same = lastLedgerDigest.get(day) === d;
+      lastLedgerDigest.set(day, d);
+      if (!same) changed[day] = recs;
     }
-    return byDay;
+    // בלילה שקט אף יום לא משתנה, והשליחה יורדת לאפס במקום 70KB כל חמש דקות.
+    return opts && opts.changedOnly ? changed : byDay;
   } catch (e) {
     console.error("[ledger] failed:", e && e.message);
     return null;
@@ -252,7 +252,12 @@ async function pushSnapshot(page, cfg) {
   // מעשירים את ה-snapshot בדשבורד המשמרת ובמפת הרצפה של היום - מחושבים מאותם
   // נתונים שכבר נמשכו (אפס קריאות API נוספות), כדי שהפאנל יציג אותם מיידית בלי
   // סבב מול הסוכן ובלי לשרוף CPU בפולינג.
-  const ledger = await collectLedger(page, new Map(tables.map((t) => [t._id, t.number])), { changedOnly: true });
+  // שליחה מלאה פעם בשעה: זיהוי השינויים יושב בזיכרון התהליך, ולכן שליחה
+  // שהשרת לא קלט (פריסה באמצע, רשת שנפלה) הייתה נעלמת עד שמשהו באותו יום
+  // ישתנה - כלומר אולי לעולם. השליחה המלאה היא הריפוי העצמי.
+  const fullPush = Date.now() - lastFullLedger > LEDGER_FULL_MS;
+  if (fullPush) lastFullLedger = Date.now();
+  const ledger = await collectLedger(page, new Map(tables.map((t) => [t._id, t.number])), { changedOnly: !fullPush });
   const ledgerN = ledger ? Object.values(ledger).reduce((s, a) => s + a.length, 0) : 0;
   const snapshot = {
     generatedAt: Date.now(),
