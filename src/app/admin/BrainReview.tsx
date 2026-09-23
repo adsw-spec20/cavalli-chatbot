@@ -62,6 +62,34 @@ interface AnswerRec {
 
 const fmt = (n: number) => n.toLocaleString("he-IL");
 
+/**
+ * מציג את נוסח הסעיף כמו שקוראים אותו, לא כמו שהוא כתוב בקוד.
+ *
+ * עד עכשיו הוצג <pre> עם גופן קוד, וסימני ההדגשה של markdown (**) הופיעו
+ * כתווים. התוצאה הייתה קיר טקסט שקשה למצוא בו את מה שצריך להחליט עליו -
+ * ובעל העסק אמר בדיוק את זה. כאן ההדגשות מודגשות, וכל ציטוט מסומן, כי
+ * הניסוחים הם בדרך כלל מה שנשאל עליו. שים לב שהסימון הוא על *ציטוט*, לא על
+ * "מה שהלקוח יראה": חלק מהציטוטים הם דווקא דוגמאות למה אסור לומר, והטקסט
+ * סביבם הוא שקובע.
+ */
+function RichText({ text, className = "" }: { text: string; className?: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*|"[^"\n]{3,}")/g);
+  return (
+    <div className={`whitespace-pre-wrap text-[13px] leading-[1.75] ${className}`}>
+      {parts.map((p, i) => {
+        if (/^\*\*[^*]+\*\*$/.test(p)) return <b key={i}>{p.slice(2, -2)}</b>;
+        if (/^"[^"\n]{3,}"$/.test(p))
+          return (
+            <span key={i} className="bg-[var(--accent)]/15 rounded px-1 py-0.5 font-medium">
+              {p}
+            </span>
+          );
+        return <span key={i}>{p}</span>;
+      })}
+    </div>
+  );
+}
+
 const STATUS_LABEL: Record<AnswerStatus, string> = {
   kept: "נכון, השאר",
   changed: "נוסח מחדש",
@@ -725,25 +753,25 @@ export default function BrainReview({ token }: { token: string }) {
                   {current.currentText && (
                     <div className="mt-2 text-[11px] text-emerald-600 font-semibold">✏️ הנוסח שבתוקף עכשיו (אחרי העריכה שלך):</div>
                   )}
-                  <pre
-                    className={`mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed rounded-xl p-3 max-h-56 overflow-y-auto ${
+                  <RichText
+                    text={current.removed ? current.text : liveText}
+                    className={`mt-1.5 rounded-xl p-3 max-h-72 overflow-y-auto ${
                       current.removed
                         ? "line-through opacity-60 bg-[var(--panel2)]"
                         : current.currentText
                           ? "bg-emerald-500/10 border border-emerald-500/30"
                           : "bg-[var(--panel2)]"
                     }`}
-                  >
-                    {current.removed ? current.text : liveText}
-                  </pre>
+                  />
                   {current.currentText && (
                     <details className="mt-1.5">
                       <summary className="text-[11px] text-[var(--muted)] cursor-pointer">
                         להצגת הנוסח המקורי שהוחלף
                       </summary>
-                      <pre className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed bg-[var(--panel2)] rounded-xl p-3 max-h-56 overflow-y-auto opacity-70">
-                        {current.text}
-                      </pre>
+                      <RichText
+                        text={current.text}
+                        className="mt-1.5 bg-[var(--panel2)] rounded-xl p-3 max-h-56 overflow-y-auto opacity-70"
+                      />
                     </details>
                   )}
                 </>
