@@ -48,12 +48,13 @@ export async function GET(req: NextRequest) {
   }
   // הסיכום להרכבת מוח חדש - קובץ טקסט להורדה
   if (req.nextUrl.searchParams.get("export")) {
+    const all = !!req.nextUrl.searchParams.get("all");
     try {
-      const md = await exportReview();
+      const md = await exportReview(all);
       return new NextResponse(md, {
         headers: {
           "Content-Type": "text/markdown; charset=utf-8",
-          "Content-Disposition": `attachment; filename="brain-review-${new Date().toISOString().slice(0, 10)}.md"`,
+          "Content-Disposition": `attachment; filename="brain-review-${all ? "all-" : ""}${new Date().toISOString().slice(0, 10)}.md"`,
           "Cache-Control": "no-store",
         },
       });

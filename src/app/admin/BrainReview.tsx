@@ -309,11 +309,11 @@ export default function BrainReview({ token }: { token: string }) {
    * מוריד את הסיכום כקובץ. לא דרך api() כי זו תשובת טקסט ולא JSON, והטוקן
    * חייב לעבור בכותרת - ולכן מורידים דרך blob ולא בקישור ישיר.
    */
-  async function exportSummary() {
+  async function exportSummary(all = false) {
     setBusy(true);
     setErr("");
     try {
-      const res = await fetch("/api/admin/brain-review?export=1", {
+      const res = await fetch(`/api/admin/brain-review?export=1${all ? "&all=1" : ""}`, {
         cache: "no-store",
         headers: { "x-admin-token": token },
       });
@@ -322,7 +322,7 @@ export default function BrainReview({ token }: { token: string }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `בירור-המוח-${new Date().toISOString().slice(0, 10)}.md`;
+      a.download = `בירור-המוח-${all ? "כל-השאלות-" : ""}${new Date().toISOString().slice(0, 10)}.md`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -456,7 +456,7 @@ export default function BrainReview({ token }: { token: string }) {
         {!!overview?.totalDone && (
           <div className="flex flex-col sm:flex-row gap-2">
             <button
-              onClick={exportSummary}
+              onClick={() => exportSummary(false)}
               disabled={busy}
               className="flex-1 text-sm rounded-xl px-4 py-2.5 border border-[var(--border)] hover:border-[var(--accent)] text-right"
             >
@@ -534,13 +534,20 @@ export default function BrainReview({ token }: { token: string }) {
         <div className="space-y-1.5">
           {!overview && <div className="text-sm text-[var(--muted)] p-4">טוען…</div>}
           {overview && (
-            <div className="text-left pb-1">
+            <div className="flex items-center gap-3 flex-wrap pb-1">
               <button
                 onClick={rephraseAll}
                 disabled={busy}
                 className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] underline"
               >
                 🔄 נסח מחדש את כל השאלות
+              </button>
+              <button
+                onClick={() => exportSummary(true)}
+                disabled={busy}
+                className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] underline"
+              >
+                📋 הורד את כל השאלות (גם מה שעוד לא הוכרע)
               </button>
             </div>
           )}

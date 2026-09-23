@@ -775,7 +775,7 @@ export async function applyAnswer(input: AnswerInput): Promise<{ ok: true }> {
  * כל מה שהוכרע, כמסמך אחד לקריאה - זה מה שנמסר לבנייה מחדש של המוח.
  * לכל סעיף: מה הוחלט, הנוסח המקורי, הנוסח המעודכן (אם נערך), וההערה.
  */
-export async function exportReview(): Promise<string> {
+export async function exportReview(includeUndecided = false): Promise<string> {
   const [base, stored, state, ov] = await Promise.all([
     basePrompt(),
     loadQuestions(),
@@ -806,8 +806,11 @@ export async function exportReview(): Promise<string> {
     if (!q || q.hidden) continue;
     const ans = state[a.id];
     const edit = ov.items[a.id];
-    if (!ans && !edit) continue; // לא הוכרע ואין הערה - אין מה למסור
-    decided++;
+    // ברירת המחדל: רק מה שהוכרע - זה החומר לבנייה מחדש. עם includeUndecided
+    // יוצא גם מה שעוד בתור, כדי שאפשר יהיה לעבור על השאלות מראש ולהבין אילו
+    // מהן בכלל שאלות לבעל העסק.
+    if (!ans && !edit && !includeUndecided) continue;
+    if (ans || edit) decided++;
 
     // מה שבעל העסק סימן כטכני יוצא לרשימה נפרדת: זו עבודה שלי, והיא רק
     // הייתה מרעישה את החומר העסקי שממנו בונים.
@@ -855,7 +858,7 @@ export async function exportReview(): Promise<string> {
   }
 
   const head = [
-    "# בירור המוח - סיכום להרכבת מוח חדש",
+    includeUndecided ? "# בירור המוח - כל השאלות" : "# בירור המוח - סיכום להרכבת מוח חדש",
     "",
     `נוצר: ${new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" })}`,
     `סעיפים שהוכרעו: ${decided} מתוך ${atoms.filter((a) => stored[a.id] && !stored[a.id].hidden).length}`,
