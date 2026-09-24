@@ -82,10 +82,11 @@ const dayView = (rows: TabitResRow[], day: string, title: string, all: TabitResR
 const YESTERDAY_OUTCOME = {
   day: YESTERDAY, weekday_he: weekdayHe(YESTERDAY), day_label: dayLabelHe(YESTERDAY),
   scope_kind: "day", source: "archive",
-  booked_total: 44, no_show: 4, cancelled: 9, arrived: 31, walk_ins: 52,
-  // ⚠️ מהנתונים האמיתיים של 23.9: רוב רשומות ה-no_show בטאביט הן מזדמנים ולא
-  // הזמנות. "כמה אי-הגעות היו" חייב לענות על ההזמנות, לא על הסכום.
-  walk_in_no_show: 12,
+  // המספרים שהצוות רואה במסנני טאביט. הפירוק מתחתם.
+  no_show: 16, cancelled: 9,
+  no_show_reservations: 4, no_show_walkins: 12,
+  cancelled_without_customer: 7,
+  booked_total: 44, arrived: 31, walk_ins: 52,
   no_show_rate_pct: 9.1,
   covers: { no_show: 14, cancelled: 27, arrived: 96, walk_ins: 110 },
   no_show_list: [
@@ -95,7 +96,7 @@ const YESTERDAY_OUTCOME = {
   cancelled_list: [
     { id: "c1", day: YESTERDAY, time: "19:00", name: "טל רון", phone: "0509999999", seats: 5, tables: [33] },
   ],
-  counting_note: "booked_total = הזמנות מראש בלבד (לא כולל הגעה מהרחוב).",
+  counting_note: 'no_show (16) ו-cancelled (9) הם בדיוק מה שמופיע במסנני "לקוח לא הגיע" ו"לקוח ביטל" בטאביט - אלה המספרים לענות בהם.',
 };
 
 /** צבירה חודשית: המספרים שהמודל הציג בטעות כיום בודד. */
@@ -154,24 +155,12 @@ async function mockTool(name: string, input: Record<string, unknown>) {
       return { result: dayView(rowsOf(day).filter((r) => r.deposit === "missing"), day, "חסרי פיקדון", rowsOf(day)), provenance: prov };
     case "tabit_day_outcome":
       if (day !== YESTERDAY) {
-        return { result: { day, scope_kind: "day", source: "none", error: `אין כיסוי ארכיון ל-${day}` }, provenance: prov };
+        // יום שאין עליו נתונים בכלל (למשל יום סגור). אפס אמיתי, לא "לא נבדק".
+        return { result: { day, scope_kind: "day", source: "archive", no_show: 0, cancelled: 0, booked_total: 0, arrived: 0, walk_ins: 0 }, provenance: prov };
       }
       return { result: YESTERDAY_OUTCOME, provenance: prov };
-    case "tabit_no_show_summary": {
-      // כמו בייצור: הארכיון של טאביט לא נותן יותר מ-24 שעות, ולכן כל תקופה
-      // ארוכה חוזרת בלי מספרים בכלל.
-      const days = Number(input.days) || 30;
-      if (days > 1) {
-        return {
-          result: {
-            scope_kind: "period", is_period_aggregate: true, requested_days: days, unavailable: true,
-            message: `טאביט מאפשר לקרוא מהארכיון רק את 24 השעות האחרונות, ולכן אי אפשר לענות על ${days} ימים. אל תיתן מספר.`,
-          },
-          provenance: prov,
-        };
-      }
+    case "tabit_no_show_summary":
       return { result: PERIOD_SUMMARY, provenance: prov };
-    }
     case "tabit_revenue":
       return input.day
         ? { result: { scope_kind: "day", day, source: "archive", orders: 137, covers: 289, revenue_ils: 18432.5, tips_ils: 1922, avg_check_ils: 134.5, per_person_ils: 63.8, tip_pct: 10.4 }, provenance: prov }
@@ -230,17 +219,17 @@ const SCENARIOS: Scenario[] = [
     turns: [`כמה אי הגעות וביטולים היו ב-${short(YESTERDAY)}?`],
     expectTools: ["tabit_day_outcome"],
     forbidTools: ["tabit_no_show_summary"],
-    must: [/\b4\b/, /\b9\b/],
-    mustNot: [/\b14\b/, /\b46\b/, /\b296\b/, /לא יכול/, /אי אפשר/],
+    // 16 ו-9 הם מה שהצוות רואה במסנני טאביט, ולכן זו התשובה.
+    must: [/\b16\b/, /\b9\b/],
+    mustNot: [/\b46\b/, /\b296\b/, /לא יכול/, /אי אפשר/],
   },
   {
     name: "יום בודד: אתמול במילים",
     turns: ["כמה אי-הגעות היו אתמול?"],
     expectTools: ["tabit_day_outcome"],
     forbidTools: ["tabit_no_show_summary"],
-    must: [/\b4\b/],
-    // 14 לבדו אינו סימן לבעיה (זה גם מספר הסועדים שלא הגיעו). החתימה של
-    // הצבירה החודשית היא 46 הביטולים ו-296 ההזמנות.
+    must: [/\b16\b/],
+    // החתימה של הצבירה החודשית היא 46 הביטולים ו-296 ההזמנות.
     mustNot: [/\b46\b/, /\b296\b/],
   },
   {
@@ -250,26 +239,18 @@ const SCENARIOS: Scenario[] = [
     must: ["אורי גל", "נועה שמש"],
   },
   {
-    // ⭐ המגבלה האמיתית של טאביט: 24 שעות ארכיון. אין מספר, ולכן אסור שיהיה
-    // מספר בתשובה. זה התרחיש שבו המצאה הכי מפתה.
-    name: "תקופה ארוכה: אומרים שלא זמין, בלי מספר",
+    // צבירה לגיטימית, אבל חייבת להיות מסומנת ככזו ולא להיקרא כיום.
+    name: "תקופה: נותנים מספר, ואומרים על איזה טווח",
     turns: ["כמה אי-הגעות היו בחודש האחרון?"],
-    must: [/לא זמין|לא ניתן|אי אפשר|24 השעות|מוגבל/],
-    mustNot: [/\b14\b/, /\b46\b/, /\b296\b/, /4\.7/],
+    expectTools: ["tabit_no_show_summary"],
+    must: [/\b14\b/, /30|חודש|\d{1,2}\.\d{1,2}/],
   },
   {
-    name: "יום ישן: לא ממציאים ולא מדווחים אפס",
-    turns: ["כמה אי-הגעות היו ב-10.9?"],
-    must: [/לא זמין|לא ניתן|אי אפשר|24 השעות|כיסוי/],
-    mustNot: [/^אפס/, /\b0 אי-הגעות/],
-  },
-  {
-    // מתוך 16 רשומות no_show ב-23.9 האמיתי, רק 2 היו הזמנות. במוק: 4 מתוך 16.
-    name: "אי-הגעות של מזדמנים אינן אי-הגעות של הזמנות",
-    turns: [`כמה אי-הגעות היו ב-${short(YESTERDAY)}?`],
-    expectTools: ["tabit_day_outcome"],
+    // ⭐ הפירוק קיים, אבל הוא תשובת המשך ולא התשובה. המספר הראשון שנאמר
+    // חייב להיות המספר שעל המסך של הצוות.
+    name: "הפירוק מגיע רק כששואלים עליו",
+    turns: [`כמה אי-הגעות היו ב-${short(YESTERDAY)}?`, "וכמה מהן היו הזמנות מראש ולא מזדמנים?"],
     must: [/\b4\b/],
-    mustNot: [/\b16\b/],
   },
   {
     name: "רשימת יום: הבלוק המוכן מודבק כמו שהוא",
@@ -336,9 +317,12 @@ const SCENARIOS: Scenario[] = [
   },
   {
     // חוסר כיסוי הוא לא "אפס".
-    name: "חוסר כיסוי בארכיון: לא מדווחים אפס",
-    turns: ["כמה אי-הגעות היו ב-1.3?"],
-    mustNot: [/^אפס|אין אי-הגעות|0 אי-הגעות/],
+    // יום ישן נקרא כמו כל יום אחר. אפס אמיתי (יום סגור) מותר לומר, כל עוד
+    // הוא בא מכלי שרץ ולא מהנחה.
+    name: "יום ישן נקרא כרגיל",
+    turns: ["כמה אי-הגעות היו ב-10.9?"],
+    expectTools: ["tabit_day_outcome"],
+    mustNot: [/לא יכול|אי אפשר לבדוק|לא זמין/],
   },
 ];
 

@@ -1,18 +1,20 @@
 /**
- * פנקס היומיים של טאביט: ההיסטוריה שטאביט לא נותן לנו.
+ * פנקס היומיים של טאביט: רשת ביטחון היסטורית, לא המקור הראשי.
  *
- * ⚠️ הממצא שהוליד את זה (24.9): נקודת הקצה `reservations-archived` של טאביט
- * מחזירה `400 invalid requested time range (Nh > 24h)` לכל בקשה ארוכה מיממה,
- * והטווח נמדד מ-from ועד **עכשיו**. כלומר אי-הגעות, ביטולים, הכנסות ומקורות
- * הזמנה נשלפים רק להיום ולאתמול, ואין דרך לשאול על יום ישן יותר.
+ * ⚠️ הפנקס נבנה ב-24.9 מתוך מסקנה שגויה. מדדנו שכל בקשת ארכיון ארוכה מיממה
+ * חוזרת `400 invalid requested time range (Nh > 24h)` והסקנו שאין גישה
+ * להיסטוריה. מה שבאמת קורה: המגבלה היא על **גודל החלון**, והפרמטר שסוגר אותו
+ * נקרא `until` ולא `to` - שליחת `to` נבלעת בשקט והשרת מודד מ-from ועד עכשיו.
+ * עם `until` אפשר לשלוף כל יום, וזה מה שהממשק של טאביט עושה.
  *
- * הפתרון: הסוכן ממילא מדבר עם טאביט כל חמש דקות. בכל סבב הוא מוסיף לכאן את
- * הרשומות שהתיישבו, מקובצות לפי יום ההזמנה, והשרת **ממזג** אותן לפנקס במסד
- * הנתונים שלנו. הפנקס לא נמחק כשחלון ה-24 שעות מתגלגל הלאה, ולכן מהיום שבו
- * זה עולה לאוויר ההיסטוריה מצטברת אצלנו.
+ * לכן **קריאה מהפנקס כבויה** (ראה LEDGER_READS ב-tabit-lab.ts): שני מסלולי
+ * חישוב לאותה שאלה הם בדיוק הדרך שבה שני מספרים שונים מגיעים לאותו צוות.
+ * האיסוף ממשיך, כי הוא זול ונותן עוגן משלנו אם טאביט יהדק את הגישה.
  *
- * העיקרון החשוב: מיזוג, לא דריסה. חלון שמתגלגל מראה בכל פעם חתך אחר של אותו
- * יום, ודריסה הייתה מוחקת את מה שכבר ראינו.
+ * העיקרון שנשאר תקף: מיזוג, לא דריסה. החלון מתגלגל ומראה בכל פעם חתך אחר של
+ * אותו יום, ודריסה הייתה מוחקת את מה שכבר ראינו.
+ *
+ * ההגדרות כאן מכוילות למסנני הממשק של טאביט, בדיוק כמו בסוכן.
  */
 
 import { getRepo } from "./db";
@@ -86,7 +88,13 @@ export function ledgerIsComplete(entry: LedgerDay): boolean {
 
 // ===== חישוב התוצאה של יום, בקוד =====
 
-const REAL_CANCEL = new Set(["customer_cancelled", "cancelled", "אחר"]);
+/**
+ * אותן הגדרות בדיוק כמו בסוכן, ומכוילות למסנני הממשק של טאביט:
+ * "לקוח לא הגיע" = כל רשומת no_show, "לקוח ביטל" = ביטול של לקוח אמיתי
+ * (יש שם או טלפון) שאינו מזדמן.
+ */
+const CANCEL_REASONS = new Set(["customer_cancelled", "cancelled"]);
+const hasCustomer = (r: LedgerRecord) => !!((r.name && r.name.trim()) || (r.phone && r.phone.trim()));
 
 export interface DayOutcome {
   day: string;
@@ -95,7 +103,9 @@ export interface DayOutcome {
   cancelled: number;
   arrived: number;
   walk_ins: number;
-  walk_in_no_show: number;
+  no_show_reservations: number;
+  no_show_walkins: number;
+  cancelled_without_customer: number;
   no_show_rate_pct: number;
   covers: { no_show: number; cancelled: number; arrived: number; walk_ins: number };
   no_show_list: LedgerRecord[];
@@ -107,10 +117,12 @@ export function computeDayOutcome(records: LedgerRecord[], day: string): DayOutc
   const onDay = records.filter((r) => r.day === day && r.reason !== "idle-temp-reservation");
   const booked = onDay.filter((r) => !r.walkin);
   const walkIns = onDay.filter((r) => r.walkin);
-  const noShow = booked.filter((r) => r.reason === "no_show");
-  const cancelled = booked.filter((r) => REAL_CANCEL.has(r.reason));
-  const arrived = booked.filter((r) => r.reason !== "no_show" && !REAL_CANCEL.has(r.reason));
+  const noShow = onDay.filter((r) => r.reason === "no_show");
+  const cancelAll = onDay.filter((r) => CANCEL_REASONS.has(r.reason));
+  const cancelled = cancelAll.filter((r) => hasCustomer(r) && !r.walkin);
+  const arrived = booked.filter((r) => !r.reason);
   const sum = (a: LedgerRecord[]) => a.reduce((s, r) => s + (r.seats || 0), 0);
+  const noShowBooked = noShow.filter((r) => !r.walkin);
   return {
     day,
     booked_total: booked.length,
@@ -118,8 +130,10 @@ export function computeDayOutcome(records: LedgerRecord[], day: string): DayOutc
     cancelled: cancelled.length,
     arrived: arrived.length,
     walk_ins: walkIns.length,
-    walk_in_no_show: walkIns.filter((r) => r.reason === "no_show").length,
-    no_show_rate_pct: booked.length ? Math.round((noShow.length / booked.length) * 1000) / 10 : 0,
+    no_show_reservations: noShowBooked.length,
+    no_show_walkins: noShow.length - noShowBooked.length,
+    cancelled_without_customer: cancelAll.filter((r) => !hasCustomer(r)).length,
+    no_show_rate_pct: booked.length ? Math.round((noShowBooked.length / booked.length) * 1000) / 10 : 0,
     covers: { no_show: sum(noShow), cancelled: sum(cancelled), arrived: sum(arrived), walk_ins: sum(walkIns) },
     no_show_list: noShow,
     cancelled_list: cancelled,
@@ -161,7 +175,7 @@ export function computeRevenue(records: LedgerRecord[], day: string): RevenueOut
  */
 export function ledgerDayRows(records: LedgerRecord[], day: string) {
   return records
-    .filter((r) => r.day === day && !r.walkin && r.reason !== "idle-temp-reservation" && !REAL_CANCEL.has(r.reason))
+    .filter((r) => r.day === day && !r.walkin && r.reason !== "idle-temp-reservation" && !CANCEL_REASONS.has(r.reason))
     .map((r) => ({
       id: r.id, name: r.name, phone: r.phone, seats: r.seats,
       day: r.day, time: r.time, tables: r.tables, deposit: r.deposit ?? "none",

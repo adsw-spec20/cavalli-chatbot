@@ -49,12 +49,11 @@ function israelNow(): string {
 const DAY_ARG = 'day = "today" | "tomorrow" | "yesterday" | "YYYY-MM-DD".';
 
 /**
- * מגבלה אמיתית של טאביט, נמדדה מול השרת שלהם ב-24.9: הארכיון מחזיר
- * `400 invalid requested time range (Nh > 24h)` לכל טווח ארוך יותר, והטווח
- * נמדד מ-from ועד **עכשיו**. כל מה שנשען על הארכיון (אי-הגעות, ביטולים,
- * הכנסות, מקורות, היסטוריית לקוח, ימי עבר) כפוף לזה.
+ * הארכיון של טאביט מוגבל ב**גודל החלון** (24 שעות), לא בכמה אחורה אפשר ללכת.
+ * הפרמטר שסוגר את החלון נקרא `until`; שליחת `to` נבלעת בשקט והבקשה נדחית.
+ * לכן יום בודד, גם ישן, נקרא בבקשה אחת, ותקופה נקראת יום-יום.
  */
-const ARCHIVE_LIMIT = "⚠️ הארכיון של טאביט נגיש רק ל-24 השעות האחרונות, ולכן יום ישן יותר יחזיר שגיאת כיסוי במקום מספר.";
+const PERIOD_NOTE = "תקופה נקראת יום-יום מהארכיון, ולכן חודש לוקח כמה עשרות שניות. התקרה היא 31 ימים בבקשה אחת.";
 
 export const TOOLS: Anthropic.Tool[] = [
   { name: "tabit_health", description: "בדוק את החיבור לטאביט: טוען נתונים ומחזיר כמה הזמנות נטענו וגרסת שרת. השתמש כשמבקשים לוודא שהחיבור עובד.", input_schema: { type: "object", properties: {} } },
@@ -77,15 +76,15 @@ export const TOOLS: Anthropic.Tool[] = [
 
   { name: "tabit_tables_status", description: "מצב השולחנות החי כרגע (נקרא תמיד חי מטאביט): כמה פנויים, תפוסים, מלוכלכים, סה\"כ מקומות. occupied_detail נותן לכל שולחן תפוס כמה זמן יושבים, כמה נשאר ודגל - זה מה שעונה על \"מתי יתפנה שולחן\".", input_schema: { type: "object", properties: {} } },
 
-  { name: "tabit_customer_lookup", description: `פרופיל לקוח: ההזמנות הקרובות שלו (מדויק), ואם אפשר גם ביקורים ואי-הגעות. ${ARCHIVE_LIMIT} לכן history_note יגיד לרוב שאין היסטוריה - ואז אסור לומר כמה פעמים הלקוח ביקר או לא הגיע. כדי *למצוא הזמנה* השתמש ב-tabit_find_reservation.`, input_schema: { type: "object", properties: { phone: { type: "string" }, name: { type: "string" } } } },
+  { name: "tabit_customer_lookup", description: `פרופיל לקוח: ההזמנות הקרובות שלו, וביקורים/אי-הגעות מהארכיון. ⚠️ ההיסטוריה נספרת על 14 הימים האחרונים בלבד (history_note אומר את הטווח המדויק) - אל תציג אותה כ"מאז ומתמיד". כדי *למצוא הזמנה* השתמש ב-tabit_find_reservation.`, input_schema: { type: "object", properties: { phone: { type: "string" }, name: { type: "string" } } } },
 
-  { name: "tabit_day_outcome", description: `**אי-הגעות, ביטולים והגעות של יום קלנדרי מסוים.** הכלי לכל שאלה מהצורה "כמה אי-הגעות/ביטולים היו ב-23.9 / אתמול / ביום שלישי", וגם "מי לא הגיע" / "מי ביטל" (מחזיר רשימות שמיות). מחזיר booked_total, no_show, cancelled, arrived, walk_ins, walk_in_no_show ו-no_show_rate_pct - כולם של אותו יום בלבד. ${ARCHIVE_LIMIT} ${DAY_ARG}`, input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
+  { name: "tabit_day_outcome", description: `**אי-הגעות, ביטולים והגעות של יום מסוים** (כל יום בהיסטוריה, לא רק אתמול). הכלי לכל שאלה מהצורה "כמה אי-הגעות/ביטולים היו ב-23.9 / אתמול / ביום שלישי", וגם "מי לא הגיע" / "מי ביטל" (מחזיר רשימות שמיות). **no_show ו-cancelled הם בדיוק המספרים שהצוות רואה במסנני "לקוח לא הגיע" ו"לקוח ביטל" בטאביט** - ענה בהם. הפירוק (הזמנות מול מזדמנים, ביטולים בלי לקוח) נמצא בשדות הנפרדים, לשאלות המשך. ${DAY_ARG}`, input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
 
-  { name: "tabit_no_show_summary", description: `אי-הגעות וביטולים **לאורך תקופה**, כולל לקוחות שלא הגיעו יותר מפעם אחת. ⚠️ ${ARCHIVE_LIMIT} בפועל זה אומר שכמעט כל בקשת תקופה תחזיר unavailable, ואז אין מספר לתת. לשאלה על יום השתמש ב-tabit_day_outcome.`, input_schema: { type: "object", properties: { days: { type: "number" } } } },
+  { name: "tabit_no_show_summary", description: `אי-הגעות וביטולים **לאורך תקופה** (ברירת מחדל 30 ימים), כולל לקוחות שלא הגיעו יותר מפעם אחת. ${PERIOD_NOTE} לשאלה על יום בודד השתמש ב-tabit_day_outcome.`, input_schema: { type: "object", properties: { days: { type: "number" } } } },
 
-  { name: "tabit_booking_sources", description: `פילוח מקורות ההזמנות: אונליין, גוגל, טלפון/צוות, הגעה מהרחוב. העבר day לפילוח של יום מסוים. days (תקופה) כמעט תמיד יחזיר unavailable: ${ARCHIVE_LIMIT} ${DAY_ARG}`, input_schema: { type: "object", properties: { day: { type: "string" }, days: { type: "number" } } } },
+  { name: "tabit_booking_sources", description: `פילוח מקורות ההזמנות: אונליין, גוגל, טלפון/צוות, הגעה מהרחוב. העבר day ליום מסוים או days לתקופה. ${PERIOD_NOTE} ${DAY_ARG}`, input_schema: { type: "object", properties: { day: { type: "string" }, days: { type: "number" } } } },
 
-  { name: "tabit_revenue", description: `הכנסות מהארכיון: פדיון, טיפים, ממוצע לחשבון וממוצע לסועד. העבר day ליום מסוים. days (תקופה) כמעט תמיד יחזיר unavailable: ${ARCHIVE_LIMIT} ${DAY_ARG}`, input_schema: { type: "object", properties: { day: { type: "string" }, days: { type: "number" } } } },
+  { name: "tabit_revenue", description: `הכנסות מהארכיון: פדיון, טיפים, ממוצע לחשבון וממוצע לסועד. העבר day ליום מסוים או days לתקופה. ${PERIOD_NOTE} ${DAY_ARG}`, input_schema: { type: "object", properties: { day: { type: "string" }, days: { type: "number" } } } },
 
   { name: "tabit_shift_dashboard", description: `תמונת מצב של משמרת/יום: כמה הזמנות וסועדים, כמה כבר הגיעו וכמה צפויים, מזדמנים, ביטולים, פיקדונות חסרים, תפוסה באחוזים. הכלי ל"מה המצב היום?". ${DAY_ARG}`, input_schema: { type: "object", properties: { day: { type: "string" } }, required: ["day"] } },
 
@@ -254,6 +253,17 @@ async function fromLedger(name: string, dayISO: string): Promise<Record<string, 
 
 const LEDGER_TOOLS = new Set(["tabit_day_outcome", "tabit_revenue", "tabit_booking_sources"]);
 
+/**
+ * קריאה מהפנקס **כבויה כברירת מחדל**.
+ *
+ * הפנקס נבנה כשחשבנו שטאביט נותן 24 שעות היסטוריה בלבד. מסתבר שהוא נותן הכל
+ * (המגבלה היא על גודל החלון, והפרמטר הוא `until`), ולכן הפנקס הפך מ"המקור
+ * היחיד" ל"מטמון מהיר יותר". שני מסלולי חישוב לאותה שאלה הם בדיוק הדרך שבה
+ * שני מספרים שונים מגיעים לאותו צוות, וזו התקלה שאנחנו מתקנים. האיסוף ממשיך
+ * לרוץ כרשת ביטחון למקרה שטאביט יהדק את הגישה, והקריאה תידלק רק אז.
+ */
+const LEDGER_READS = process.env.TABIT_LEDGER_READS === "true";
+
 async function dispatch(name: string, input: Record<string, unknown>): Promise<DispatchOutcome> {
   const toolLabel = TOOL_LABEL_HE[name] ?? name;
 
@@ -293,7 +303,7 @@ async function dispatch(name: string, input: Record<string, unknown>): Promise<D
   }
 
   // --- הפנקס שלנו קודם: הוא מגיע אחורה הרבה מעבר ל-24 השעות של טאביט ---
-  if (LEDGER_TOOLS.has(name) && (input.day || name === "tabit_day_outcome")) {
+  if (LEDGER_READS && LEDGER_TOOLS.has(name) && (input.day || name === "tabit_day_outcome")) {
     const dayISO = resolveDayISO(input.day);
     if (dayISO <= todayIL()) {
       const hit = await fromLedger(name, dayISO);

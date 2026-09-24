@@ -225,7 +225,7 @@ async function collectLedger(page, tableNum, opts) {
         seats: d.seats_count || 0,
         tables: (d.reserved_tables_ids || []).map((id) => tableNum.get(id)).filter((n) => n != null),
         reason: r.archived_reason || "",
-        walkin: isWalkin(r),
+        walkin: isWalkinType(r),
         deposit: depositStatus(r),
         source: sourceLabel(r),
         ...(paid ? { paid_agorot: ps.paidAmount || totals.totalAmount || 0, tips_agorot: totals.totalTips || 0 } : {}),
@@ -283,10 +283,9 @@ async function actReadDay(page, params) {
   // ימי עבר: ההזמנות עברו מהפיד החי לארכיון. יום היום/עתיד: הפיד החי.
   let list, source;
   if (day < todayIL()) {
-    const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
-    assertArchiveCovers(arch, day);
+    const arch = await getArchivedDay(page, day);
     // רק הזמנות אמיתיות של אותו יום: לא זמניות שפגו ולא ביטולים (אי-הגעה כן - היו על הספרים)
-    list = arch.items.filter((r) => r.archived_reason !== "idle-temp-reservation" && !REAL_CANCEL.has(r.archived_reason || ""));
+    list = arch.items.filter((r) => r.archived_reason !== "idle-temp-reservation" && !CANCEL_REASONS.has(r.archived_reason || ""));
     source = "archive";
   } else {
     list = await getReservations(page);
@@ -535,76 +534,94 @@ async function actCreateReservation(page, params, me) {
  */
 const ARCHIVE_WINDOW_MS = 24 * 3600 * 1000 - 5 * 60 * 1000; // מרווח ביטחון של 5 דק'
 
-async function getArchived(page, requestedFromISO) {
-  const earliestMs = Date.now() - ARCHIVE_WINDOW_MS;
-  const requestedMs = requestedFromISO ? new Date(requestedFromISO).getTime() : earliestMs;
-  const fromMs = Math.max(requestedMs, earliestMs);
-  const fromISO = new Date(fromMs).toISOString();
-  const r = await apiFetch(page, "GET", `/reservations-archived?from=${encodeURIComponent(fromISO)}&tgmv=${Date.now()}`);
+/** חלון היום לארכיון: לפני כל שעת פתיחה, ועד לפני הפתיחה של למחרת. */
+const ARCHIVE_DAY_FROM = "06:00";
+const ARCHIVE_DAY_UNTIL = "05:55"; // למחרת. 23 שעות ו-55 דקות, מתחת לתקרה.
+/** כמה ימים מותר לסרוק בבקשה אחת. כל יום הוא בקשה נפרדת. */
+const MAX_RANGE_DAYS = 31;
+
+function addDaysISO(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + n));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
+}
+
+/** קריאה גולמית של חלון ארכיון. הטווח מוגבל ל-24 שעות. */
+async function fetchArchiveWindow(page, fromISO, untilISO) {
+  const qs = `from=${encodeURIComponent(fromISO)}&until=${encodeURIComponent(untilISO)}&tgmv=${Date.now()}`;
+  const r = await apiFetch(page, "GET", `/reservations-archived?${qs}`);
   if (r.status === 401) throw new Error("ה-session מול טאביט פג - הרץ login.js");
   if (r.status !== 200 || !Array.isArray(r.body)) {
     throw new Error(`קריאת ארכיון נכשלה (status ${r.status}): ${JSON.stringify(r.body).slice(0, 200)}`);
   }
-  // סובלנות של שעה: בקשה ל"24 השעות האחרונות" נופלת בדיוק על הגבול ואין טעם
-  // לפסול אותה בגלל מרווח הביטחון של חמש דקות.
-  const truncated = earliestMs - requestedMs > 3600 * 1000;
-  return { items: r.body, from: fromISO, fromMs, requestedFromMs: requestedMs, truncated };
+  return r.body;
+}
+
+/**
+ * כל הרשומות של יום קלנדרי אחד.
+ *
+ * ⚠️ הממצא ששינה הכל (24.9): נקודת הקצה מוגבלת ל**גודל חלון** של 24 שעות, לא
+ * ל-24 השעות האחרונות. הפרמטר שסוגר את החלון נקרא `until` ולא `to` - שליחת
+ * `to` נבלעת בשקט, השרת מודד מ-from ועד עכשיו, וכל בקשה על יום ישן חוזרת
+ * 400. עם `until` אפשר לשלוף כל יום בהיסטוריה, בדיוק כמו שהממשק של טאביט עושה
+ * כשמנווטים אחורה בתאריך.
+ */
+async function getArchivedDay(page, dayISO) {
+  const from = ilToUtcISO(dayISO, ARCHIVE_DAY_FROM);
+  const until = ilToUtcISO(addDaysISO(dayISO, 1), ARCHIVE_DAY_UNTIL);
+  const items = await fetchArchiveWindow(page, from, until);
+  return { items, from, until, day: dayISO };
+}
+
+/** טווח ימים = חלון ליום. איטי אבל אפשרי, ולכן מוגבל בתקרה. */
+async function getArchivedRange(page, fromDayISO, toDayISO) {
+  const days = [];
+  for (let d = fromDayISO; d <= toDayISO; d = addDaysISO(d, 1)) days.push(d);
+  if (!days.length) throw new Error("טווח ימים ריק");
+  if (days.length > MAX_RANGE_DAYS) {
+    throw new Error(`טווח של ${days.length} ימים גדול מדי. הארכיון נקרא יום-יום, והתקרה היא ${MAX_RANGE_DAYS} ימים בבקשה אחת.`);
+  }
+  const byId = new Map();
+  for (const d of days) {
+    for (const it of (await getArchivedDay(page, d)).items) byId.set(it._id, it);
+  }
+  return { items: [...byId.values()], days, from: days[0], to: days[days.length - 1] };
+}
+
+/** החלון המתגלגל של 24 השעות האחרונות - לצבירת הפנקס, לא לשאלות על יום. */
+async function getArchived(page, requestedFromISO) {
+  const earliestMs = Date.now() - ARCHIVE_WINDOW_MS;
+  const requestedMs = requestedFromISO ? new Date(requestedFromISO).getTime() : earliestMs;
+  const fromMs = Math.max(requestedMs, earliestMs);
+  const items = await fetchArchiveWindow(page, new Date(fromMs).toISOString(), new Date().toISOString());
+  return { items, from: new Date(fromMs).toISOString(), fromMs, requestedFromMs: requestedMs, truncated: earliestMs - requestedMs > 3600 * 1000 };
+}
+
+// ===== סיווג, מיושר למה שהממשק של טאביט מראה =====
+//
+// ⚠️ ההצלבה שקבעה את ההגדרות (23.9): הממשק מראה "לקוח ביטל (4)". בנתונים יש
+// 14 רשומות עם סיבת ביטול, אבל **עשר מהן הן הזמנות אונליין בלי שם ובלי טלפון**
+// (ניסיונות הזמנה שלא הושלמו), ועוד אחת היא מזדמן. ארבע הנותרות - הזמנות של
+// לקוחות אמיתיים - הן בדיוק מה שהממשק סופר. מספר שסותר את המסך שהמנהל פתוח
+// מולו הוא בדיוק מה שהורס את האמון, ולכן ההגדרה כאן מיושרת אליו.
+
+const CANCEL_REASONS = new Set(["customer_cancelled", "cancelled"]);
+const OTHER_REASON = "אחר";
+/** כמה ימים אחורה נבדקת היסטוריית לקוח. כל יום הוא בקשה נפרדת. */
+const CUSTOMER_HISTORY_DAYS = 14;
+
+function hasCustomer(r) {
+  const c = (r.reservation_details || {}).customer || {};
+  return !!((c.name && c.name.trim()) || (c.phone && c.phone.trim()));
+}
+/** סיווג מזדמן לפי הדגל של טאביט בלבד, כדי להתיישר עם הספירה שלו. */
+function isWalkinType(r) {
+  return r.type === "walked_in";
 }
 
 const stampIL = new Intl.DateTimeFormat("he-IL", { timeZone: TZ, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 
-/**
- * מה הארכיון באמת מכסה מהיום המבוקש.
- *
- * full=false פירושו שאסור להחזיר ממנו **מספרים**: הם יהיו חלקיים וייראו בדיוק
- * כמו מספרים מלאים. הכלים הסופרים משמיטים במקרה כזה את הספירה לגמרי, כדי
- * שלמודל לא יהיה מה לצטט.
- *
- * הגבול נמדד מול תחילת **היום העסקי** ולא מול חצות. המסעדה פותחת ב-08:00
- * במקרה המוקדם ביותר, ולכן חלון שמתחיל ב-03:15 מכסה בפועל את כל השירות של
- * אותו יום. מדידה מול חצות הייתה פוסלת תשובה מצוינת בשעתיים לפנות בוקר, וזה
- * בדיוק הזמן שבו שואלים "מה היה היום".
- */
-const BUSINESS_DAY_START = "06:00";
-
-function coverageFor(arch, dayISO) {
-  const serviceStartMs = new Date(ilToUtcISO(dayISO, BUSINESS_DAY_START)).getTime();
-  const dayStartMs = new Date(ilToUtcISO(dayISO, "00:00")).getTime();
-  const full = arch.fromMs <= serviceStartMs;
-  const from = stampIL.format(new Date(arch.fromMs));
-  return {
-    full,
-    covered_from: from,
-    ...(full && arch.fromMs > dayStartMs
-      ? { note: `הכיסוי מתחיל ב-${from}, לפני פתיחת המסעדה, ולכן כל השירות של ${dayISO} כלול.` }
-      : {}),
-    ...(full
-      ? {}
-      : { note: `הארכיון של טאביט נגיש רק ל-24 השעות האחרונות (מ-${from}), ולכן אין כיסוי מלא ל-${dayISO}.` }),
-  };
-}
-function coveredDays(fromISO) { return Math.max(1, Math.round((Date.now() - new Date(fromISO).getTime()) / 86400000)); }
-
-/**
- * שער כיסוי הארכיון לכלים שמחזירים **מספרים**.
- *
- * חוסר כיסוי הוא לא "אפס". יום שמעולם לא נקרא נראה בדיוק כמו יום בלי
- * אי-הגעות, ולכן כאן זורקים במקום להחזיר ספירה חלקית.
- */
-function assertArchiveCovers(arch, dayISO) {
-  const cov = coverageFor(arch, dayISO);
-  if (!cov.full) {
-    throw new Error(
-      `${cov.note} אי אפשר לתת מספר מדויק ל-${dayISO}, ואסור לדווח אפס או ספירה חלקית. ` +
-      `אמור שהנתון לא זמין לתאריך הזה דרך טאביט.`
-    );
-  }
-}
-
 const byTimeAsc = (a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
-
-// ביטול אמיתי (לא ניקוי-מערכת של הזמנה זמנית שפגה)
-const REAL_CANCEL = new Set(["customer_cancelled", "cancelled", "אחר"]);
 
 function sourceLabel(r) {
   if (r.type === "walked_in") return "הגעה מהרחוב";
@@ -642,126 +659,129 @@ async function actDayOutcome(page, params) {
       message: `${day} עדיין לא היה, ולכן אין לו תוצאות (אי-הגעות/ביטולים/הגעות). מה שכן אפשר לראות ליום הזה: ההזמנות שרשומות אליו.`,
     };
   }
-  const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
-  assertArchiveCovers(arch, day);
-  const cov = coverageFor(arch, day);
+  const { items } = await getArchivedDay(page, day);
   const tableNum = new Map((await getTables(page)).map((t) => [t._id, t.number]));
-
-  const onDay = arch.items.filter((r) => {
+  const onDay = items.filter((r) => {
     if (r.archived_reason === "idle-temp-reservation") return false;
     const d = r.reservation_details || {};
     return d.reserved_from && dayFmt.format(new Date(d.reserved_from)) === day;
   });
+  return classifyDay(onDay, day, today, tableNum);
+}
 
+/**
+ * הסיווג עצמו, מופרד מהשליפה כדי שאפשר יהיה לבדוק אותו על נתונים קבועים.
+ *
+ * ההגדרות מיושרות למסננים של הממשק ("לקוח ביטל" / "לקוח לא הגיע"), כי הצוות
+ * משווה את התשובה למסך שפתוח מולו.
+ */
+function classifyDay(onDay, day, today, tableNum) {
   const row = (r) => {
     const m = mapReservation(r, tableNum);
-    return { id: m.id, day, time: m.time, name: m.name, phone: m.phone, seats: m.seats, tables: m.tables };
+    return { id: m.id, day, time: m.time, name: m.name, phone: m.phone, seats: m.seats, tables: m.tables, walkin: isWalkinType(r) };
   };
   const seatsOf = (r) => (r.reservation_details || {}).seats_count || 0;
   const covers = (arr) => arr.reduce((s, r) => s + seatsOf(r), 0);
 
-  // walk-ins נספרים בנפרד: הם לא "הזמנה שלא הגיעה", ולערבב אותם פנימה זה מה
-  // שהפך 16 אירועים ל"296 הזמנות ביום".
-  //
-  // ⚠️ ממצא מ-24.9: מתוך 14 רשומות no_show ב-23.9, **12 היו type=walked_in**.
-  // כלומר ה"14 אי-הגעות" שנראה במערכת אינו 14 הזמנות שלא הגיעו, אלא 2 הזמנות
-  // ועוד 12 רשומות מזדמנים. שתי המשמעויות מדווחות כאן בנפרד ובמפורש, כי
-  // ערבוב ביניהן הוא בדיוק סוג הטעות שהצוות תפס.
-  const booked = onDay.filter((r) => !isWalkin(r));
-  const walkIns = onDay.filter((r) => isWalkin(r));
-  const noShow = booked.filter((r) => r.archived_reason === "no_show");
-  const cancelled = booked.filter((r) => REAL_CANCEL.has(r.archived_reason || ""));
-  const arrived = booked.filter((r) => r.archived_reason !== "no_show" && !REAL_CANCEL.has(r.archived_reason || ""));
-  const walkInNoShow = walkIns.filter((r) => r.archived_reason === "no_show");
+  const noShow = onDay.filter((r) => r.archived_reason === "no_show");
+  const cancelAll = onDay.filter((r) => CANCEL_REASONS.has(r.archived_reason || ""));
+  // ⚠️ זו ההגדרה שמייצרת את אותו מספר שבמסך: ביטול של לקוח אמיתי, לא מזדמן.
+  const cancelled = cancelAll.filter((r) => hasCustomer(r) && !isWalkinType(r));
+  const cancelWithoutCustomer = cancelAll.filter((r) => !hasCustomer(r));
+  const other = onDay.filter((r) => (r.archived_reason || "") === OTHER_REASON);
+  const walkIns = onDay.filter(isWalkinType);
+  const booked = onDay.filter((r) => !isWalkinType(r));
+  const arrived = booked.filter((r) => !r.archived_reason);
 
   return {
     day, scope_kind: "day", source: "archive",
-    coverage: cov,
     ...(day === today
       ? { partial_day: true, partial_note: "היום עוד לא נגמר: הזמנות שטרם הסתיימו עדיין לא בארכיון ולכן לא נספרות כאן. המספר יגדל עד סוף הערב." }
       : {}),
-    booked_total: booked.length,
+
+    // --- המספרים שמופיעים גם במסננים של טאביט ---
     no_show: noShow.length,
     cancelled: cancelled.length,
-    arrived: arrived.length,
+
+    // --- הפירוק, למי ששואל ---
+    no_show_reservations: noShow.filter((r) => !isWalkinType(r)).length,
+    no_show_walkins: noShow.filter(isWalkinType).length,
+    cancelled_without_customer: cancelWithoutCustomer.length,
+    other_reason: other.length,
+    booked_total: booked.length,
     walk_ins: walkIns.length,
-    walk_in_no_show: walkInNoShow.length,
-    no_show_rate_pct: booked.length ? Math.round((noShow.length / booked.length) * 1000) / 10 : 0,
+    arrived: arrived.length,
+    no_show_rate_pct: booked.length ? Math.round((noShow.filter((r) => !isWalkinType(r)).length / booked.length) * 1000) / 10 : 0,
     covers: { no_show: covers(noShow), cancelled: covers(cancelled), arrived: covers(arrived), walk_ins: covers(walkIns) },
+
     no_show_list: noShow.map(row).sort(byTimeAsc),
     cancelled_list: cancelled.map(row).sort(byTimeAsc),
+
     counting_note:
-      "booked_total = הזמנות מראש בלבד (לא כולל מזדמנים). no_show + cancelled + arrived = booked_total, ואחוז אי-ההגעה מחושב מתוכן. " +
-      (walkInNoShow.length
-        ? `בנוסף יש ${walkInNoShow.length} רשומות **מזדמנים** שסומנו no_show בטאביט (walk_in_no_show) - הן אינן הזמנות שלא הגיעו. ` +
-          `אם נשאלת "כמה אי-הגעות", התשובה היא ${noShow.length}; ציין את ${walkInNoShow.length} האחרות בנפרד רק אם רלוונטי.`
-        : ""),
+      `no_show (${noShow.length}) ו-cancelled (${cancelled.length}) הם בדיוק מה שמופיע במסנני "לקוח לא הגיע" ו"לקוח ביטל" בטאביט - ` +
+      `אלה המספרים לענות בהם. ` +
+      (cancelWithoutCustomer.length
+        ? `${cancelWithoutCustomer.length} רשומות ביטול נוספות הן הזמנות אונליין בלי שם ובלי טלפון (ניסיונות שלא הושלמו) וטאביט לא סופר אותן. `
+        : "") +
+      `הפירוק: מתוך אי-ההגעות, ${noShow.filter((r) => !isWalkinType(r)).length} הזמנות מראש ו-${noShow.filter(isWalkinType).length} מזדמנים. ` +
+      `ציין את הפירוק רק אם נשאלת עליו.`,
   };
 }
 
 /**
- * צבירה של תקופה מתגלגלת. הכלי הזה **לא יודע לענות על יום בודד**, ולכן הוא גם
- * מצהיר את זה בפירוש בתוצאה, וגם מנתב לכלי הנכון כשמבקשים ממנו יום.
+ * צבירה על טווח ימים.
+ *
+ * ⚠️ הארכיון נקרא **יום-יום** (חלון מוגבל ל-24 שעות), ולכן תקופה של חודש היא
+ * שלושים בקשות ולוקחת כמה עשרות שניות. זה איטי ואפשרי, וזה עדיף בהרבה על
+ * התשובה הקודמת: יממה אחת שהוצגה כחודש.
  */
 async function actNoShowSummary(page, params) {
-  // שאלה על יום מסוים היא שאלה אחרת לגמרי. מנתבים במקום להחזיר צבירה שתוצג
-  // בטעות כמספר יומי - בדיוק התקלה של 24.9.
+  // שאלה על יום מסוים היא שאלה אחרת. מנתבים במקום להחזיר צבירה שתוצג בטעות
+  // כמספר יומי - בדיוק התקלה של 24.9.
   if (params.day) return actDayOutcome(page, params);
 
-  const days = Number(params.days) || 30;
-  const requested = new Date(Date.now() - days * 86400000).toISOString();
-  const arch = await getArchived(page, requested);
-  const { items: list, from } = arch;
-  const covered = coveredDays(from);
-  // ⚠️ טאביט לא נותן יותר מ-24 שעות. בקשה ל-30 יום מקבלת בפועל יום אחד, וזה
-  // חייב להיאמר - אחרת המספר נראה כמו חודש.
-  if (arch.truncated) {
-    return {
-      scope_kind: "period",
-      is_period_aggregate: true,
-      requested_days: days,
-      unavailable: true,
-      window_from: stampIL.format(new Date(arch.fromMs)),
-      window_to: "עכשיו",
-      message:
-        `טאביט מאפשר לקרוא מהארכיון רק את 24 השעות האחרונות (מ-${stampIL.format(new Date(arch.fromMs))}), ` +
-        `ולכן אי אפשר לענות על ${days} ימים. אל תיתן מספר ואל תציג את היממה האחרונה כאילו היא התקופה שנשאלה. ` +
-        `מה שכן אפשר: אי-הגעות וביטולים של היום או של אתמול (tabit_day_outcome).`,
-    };
-  }
-  let noShow = 0, cancelled = 0, completed = 0, walkIns = 0;
+  const days = Math.max(1, Number(params.days) || 30);
+  const today = todayIL();
+  const fromDay = addDaysISO(today, -(days - 1));
+  const { items, days: covered } = await getArchivedRange(page, fromDay, today);
+
+  let noShow = 0, noShowBooked = 0, cancelled = 0, cancelWithoutCustomer = 0, completed = 0, walkIns = 0;
   const byPhone = new Map();
-  for (const r of list) {
+  for (const r of items) {
     const reason = r.archived_reason || "";
     if (reason === "idle-temp-reservation") continue;
-    if (isWalkin(r)) { walkIns++; continue; }
+    const walkin = isWalkinType(r);
+    if (walkin) walkIns++;
     if (reason === "no_show") {
       noShow++;
+      if (!walkin) noShowBooked++;
       const c = r.reservation_details && r.reservation_details.customer;
       if (c && c.phone) byPhone.set(c.phone, { name: c.name || "", n: (byPhone.get(c.phone) ? byPhone.get(c.phone).n : 0) + 1 });
-    } else if (REAL_CANCEL.has(reason)) cancelled++;
-    else completed++;
+    } else if (CANCEL_REASONS.has(reason)) {
+      if (hasCustomer(r) && !walkin) cancelled++;
+      else if (!hasCustomer(r)) cancelWithoutCustomer++;
+    } else if (!reason && !walkin) completed++;
   }
-  const booked = noShow + cancelled + completed;
+  const booked = items.filter((r) => !isWalkinType(r) && r.archived_reason !== "idle-temp-reservation").length;
   const repeat = [...byPhone.entries()].filter(([, v]) => v.n >= 2).map(([phone, v]) => ({ phone, name: v.name, no_shows: v.n }));
-  const fromDay = dayFmt.format(new Date(from));
   return {
     scope_kind: "period",
     is_period_aggregate: true,
-    window_from: fromDay,
-    window_to: todayIL(),
-    window_days: covered,
-    window_note:
-      `⚠️ המספרים האלה הם צבירה של ${covered} ימים, מ-${fromDay} ועד עכשיו. ` +
-      `אסור להציג אותם כמספרים של יום בודד. לשאלה על יום מסוים יש כלי נפרד (tabit_day_outcome).`,
-    period_days_requested: days,
-    period_days_covered: covered,
-    coverage_note: covered < days ? `טאביט החזיר חלון ארכיון קצר מהמבוקש (${covered} ימים במקום ${days}) - דווח את הטווח שבאמת נבדק` : undefined,
+    window_from: covered[0],
+    window_to: covered[covered.length - 1],
+    window_days: covered.length,
+    window_note: `צבירה של ${covered.length} ימים, מ-${covered[0]} ועד ${covered[covered.length - 1]}. אסור להציג כמספר של יום בודד.`,
+    no_show: noShow,
+    cancelled,
+    no_show_reservations: noShowBooked,
+    no_show_walkins: noShow - noShowBooked,
+    cancelled_without_customer: cancelWithoutCustomer,
     booked_total: booked,
-    no_show: noShow, cancelled, completed,
+    completed,
     walk_ins: walkIns,
-    no_show_rate_pct: booked ? Math.round((noShow / booked) * 1000) / 10 : 0,
+    no_show_rate_pct: booked ? Math.round((noShowBooked / booked) * 1000) / 10 : 0,
     repeat_no_show_customers: repeat,
+    counting_note: 'no_show ו-cancelled מוגדרים כמו המסננים "לקוח לא הגיע" ו"לקוח ביטל" בטאביט.',
   };
 }
 
@@ -770,8 +790,7 @@ async function actBookingSources(page, params) {
   // "מאיפה הגיעו ההזמנות של אתמול" מקבלת צבירה של חודש.
   if (params.day) {
     const day = resolveDay(params.day);
-    const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
-    assertArchiveCovers(arch, day);
+    const arch = await getArchivedDay(page, day);
     const counts = {};
     for (const r of arch.items) {
       if (r.archived_reason === "idle-temp-reservation") continue;
@@ -789,20 +808,9 @@ async function actBookingSources(page, params) {
     };
   }
 
-  const days = Number(params.days) || 30;
-  const requested = new Date(Date.now() - days * 86400000).toISOString();
-  const arch = await getArchived(page, requested);
-  const { items: list, from } = arch;
-  const covered = coveredDays(from);
-  if (arch.truncated) {
-    return {
-      scope_kind: "period", is_period_aggregate: true, requested_days: days, unavailable: true,
-      window_from: stampIL.format(new Date(arch.fromMs)), window_to: "עכשיו",
-      message:
-        `טאביט מאפשר לקרוא מהארכיון רק את 24 השעות האחרונות, ולכן אי אפשר לפלח מקורות על ${days} ימים. ` +
-        `אל תיתן מספר. מה שכן אפשר: פילוח של היום או של אתמול (העבר day).`,
-    };
-  }
+  const days = Math.max(1, Number(params.days) || 30);
+  const today = todayIL();
+  const { items: list, days: covered } = await getArchivedRange(page, addDaysISO(today, -(days - 1)), today);
   const counts = {};
   for (const r of list) {
     if (r.archived_reason === "idle-temp-reservation") continue;
@@ -811,16 +819,13 @@ async function actBookingSources(page, params) {
   }
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const breakdown = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([source, count]) => ({ source, count, pct: total ? Math.round((count / total) * 1000) / 10 : 0 }));
-  const fromDay = dayFmt.format(new Date(from));
   return {
     scope_kind: "period",
     is_period_aggregate: true,
-    window_from: fromDay,
-    window_to: todayIL(),
-    window_note: `⚠️ צבירה של ${covered} ימים, מ-${fromDay} ועד עכשיו. אסור להציג כמספר של יום בודד (לשאלה על יום מסוים העבר day).`,
-    period_days_requested: days,
-    period_days_covered: covered,
-    coverage_note: covered < days ? "טאביט החזיר חלון ארכיון קצר מהמבוקש" : undefined,
+    window_from: covered[0],
+    window_to: covered[covered.length - 1],
+    window_days: covered.length,
+    window_note: `צבירה של ${covered.length} ימים, מ-${covered[0]} ועד ${covered[covered.length - 1]}. אסור להציג כמספר של יום בודד (לשאלה על יום מסוים העבר day).`,
     total, breakdown,
   };
 }
@@ -883,18 +888,15 @@ async function actCustomerLookup(page, params) {
   // לקוח ותיק נראה כמו לקוח חדש, ולהפך. עדיף לא לתת מספר מאשר לתת כזה.
   let past_visits = null, no_shows = null, cancellations = null, history_note;
   try {
-    const arch = await getArchived(page, new Date(Date.now() - 90 * 86400000).toISOString());
-    if (arch.truncated) {
-      history_note =
-        "היסטוריית העבר לא זמינה: הארכיון של טאביט נגיש רק ל-24 השעות האחרונות. " +
-        "אל תאמר כמה פעמים הלקוח ביקר או לא הגיע - אין נתון כזה. ההזמנות הקרובות למטה מדויקות.";
-    } else {
-      const past = arch.items.filter(match);
-      past_visits = past.filter((r) => !r.archived_reason || r.archived_reason === "").length;
-      no_shows = past.filter((r) => r.archived_reason === "no_show").length;
-      cancellations = past.filter((r) => REAL_CANCEL.has(r.archived_reason)).length;
-      history_note = `הביקורים/אי-ההגעות שלמטה נספרו מ-${stampIL.format(new Date(arch.fromMs))} בלבד, לא מכל ההיסטוריה.`;
-    }
+    // הארכיון נקרא יום-יום, ולכן היסטוריה ארוכה יקרה. שבועיים הם פשרה סבירה
+    // לשאלה "הוא מגיע הרבה?", והטווח מוצהר כדי שלא ייקרא כ"מאז ומתמיד".
+    const today = todayIL();
+    const arch = await getArchivedRange(page, addDaysISO(today, -(CUSTOMER_HISTORY_DAYS - 1)), today);
+    const past = arch.items.filter(match);
+    past_visits = past.filter((r) => !r.archived_reason).length;
+    no_shows = past.filter((r) => r.archived_reason === "no_show").length;
+    cancellations = past.filter((r) => CANCEL_REASONS.has(r.archived_reason || "") && hasCustomer(r)).length;
+    history_note = `הביקורים ואי-ההגעות נספרו על ${arch.days.length} הימים מ-${arch.from} עד ${arch.to} בלבד, לא על כל ההיסטוריה.`;
   } catch (_) { history_note = "היסטוריית עבר לא זמינה כרגע (הארכיון לא הגיב) - ההזמנות הקרובות למטה מדויקות"; }
 
   const c = upRes[0] && upRes[0].reservation_details && upRes[0].reservation_details.customer;
@@ -1066,8 +1068,11 @@ function computeDashboard(list, tables, day, now, source) {
     const d = r.reservation_details || {};
     return d.reserved_from && dayFmt.format(new Date(d.reserved_from)) === day;
   });
-  const cancelled = inDay.filter((r) => r.state === "cancelled" || REAL_CANCEL.has(r.archived_reason || ""));
-  const active = inDay.filter((r) => r.state !== "cancelled" && !REAL_CANCEL.has(r.archived_reason || ""));
+  // הספירה מיושרת למסנן "לקוח ביטל" בטאביט: ביטול של לקוח אמיתי. הסינון של
+  // "מה עדיין חי" מוציא כל ביטול, גם כזה בלי לקוח.
+  const isCancelRec = (r) => r.state === "cancelled" || CANCEL_REASONS.has(r.archived_reason || "");
+  const cancelled = inDay.filter((r) => isCancelRec(r) && hasCustomer(r) && !isWalkinType(r));
+  const active = inDay.filter((r) => !isCancelRec(r));
   const booked = active.filter((r) => !isWalkin(r));
   const walkins = active.filter((r) => isWalkin(r));
   const seatsOf = (r) => (r.reservation_details || {}).seats_count || 0;
@@ -1098,8 +1103,7 @@ async function actShiftDashboard(page, params) {
   const day = resolveDay(params.day);
   let list, source;
   if (day < todayIL()) {
-    const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
-    assertArchiveCovers(arch, day);
+    const arch = await getArchivedDay(page, day);
     list = arch.items.filter((r) => r.archived_reason !== "idle-temp-reservation");
     source = "archive";
   } else {
@@ -1116,8 +1120,7 @@ async function actRevenueSummary(page, params) {
   // של שבוע. כל ערך day שהוא לא ריק הוא שאלה על יום.
   if (params.day) {
     const day = resolveDay(params.day);
-    const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
-    assertArchiveCovers(arch, day);
+    const arch = await getArchivedDay(page, day);
     items = arch.items.filter((r) => {
       const d = r.reservation_details || {};
       return d.reserved_from && dayFmt.format(new Date(d.reserved_from)) === day;
@@ -1130,24 +1133,15 @@ async function actRevenueSummary(page, params) {
         : {}),
     };
   } else {
-    const days = Number(params.days) || 7;
-    const arch = await getArchived(page, new Date(Date.now() - days * 86400000).toISOString());
-    if (arch.truncated) {
-      return {
-        scope_kind: "period", is_period_aggregate: true, requested_days: days, unavailable: true,
-        window_from: stampIL.format(new Date(arch.fromMs)), window_to: "עכשיו",
-        message:
-          `טאביט מאפשר לקרוא מהארכיון רק את 24 השעות האחרונות, ולכן אי אפשר לתת הכנסות על ${days} ימים. ` +
-          `אל תיתן מספר ואל תציג את היממה האחרונה כאילו היא התקופה שנשאלה. מה שכן אפשר: הכנסות של היום או של אתמול (העבר day).`,
-      };
-    }
+    const days = Math.max(1, Number(params.days) || 7);
+    const today = todayIL();
+    const arch = await getArchivedRange(page, addDaysISO(today, -(days - 1)), today);
     items = arch.items;
-    const fromDay = dayFmt.format(new Date(arch.from));
-    label = `${days} ימים אחרונים (מכוסה בפועל: ${coveredDays(arch.from)})`;
+    label = `${arch.days.length} ימים, ${arch.from} עד ${arch.to}`;
     scope = {
       scope_kind: "period", is_period_aggregate: true,
-      window_from: fromDay, window_to: todayIL(),
-      window_note: `⚠️ צבירה של ${coveredDays(arch.from)} ימים, מ-${fromDay} ועד עכשיו. אסור להציג כמספר של יום בודד.`,
+      window_from: arch.from, window_to: arch.to, window_days: arch.days.length,
+      window_note: `צבירה של ${arch.days.length} ימים, מ-${arch.from} ועד ${arch.to}. אסור להציג כמספר של יום בודד.`,
     };
   }
   const paid = items.filter((r) => r.order && (r.order.paid || (r.order.lifeCycle && r.order.lifeCycle.name === "billed")));
@@ -1179,9 +1173,7 @@ async function actNotificationStatus(page, params) {
     const day = resolveDay(params.day);
     let list;
     if (day < todayIL()) {
-      const arch = await getArchived(page, ilToUtcISO(day, "00:00"));
-      assertArchiveCovers(arch, day);
-      list = arch.items;
+      list = (await getArchivedDay(page, day)).items;
     } else list = await getReservations(page);
     items = list.filter((r) => {
       const d = r.reservation_details || {};
@@ -1504,6 +1496,7 @@ if (require.main === module) main();
 module.exports = {
   launchBrowser, loadCreds, loadConfig,
   actDayOutcome, actNoShowSummary, actBookingSources, actRevenueSummary, collectLedger, getTables,
+  getArchivedDay, getArchivedRange, classifyDay,
   actReadDay, actDepositSummary, actBigTables, actShiftDashboard, actTablesStatus,
   getArchived, todayIL, resolveDay,
 };

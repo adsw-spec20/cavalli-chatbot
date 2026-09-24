@@ -29,6 +29,9 @@ import {
 } from "./tabit-lab-smart";
 import { readLedgerDay, ledgerIsComplete, ledgerDayRows } from "./tabit-ledger";
 
+/** ראה ההסבר ב-tabit-lab.ts: הפנקס נשאר לאיסוף, לא לקריאה. */
+const LEDGER_READS = process.env.TABIT_LEDGER_READS === "true";
+
 // ===== טריות =====
 
 /**
@@ -180,11 +183,13 @@ function snapshotUsable(snap: SnapshotData | null): { ok: boolean; age: number |
 export async function dayRows(dayISO: string): Promise<DayRowsResult> {
   const today = todayIL();
   if (dayISO < today) {
-    // הפנקס שלנו קודם: הארכיון של טאביט נגיש ליממה בלבד, ולכן לרוב ימי העבר
-    // הוא המקור היחיד שיש. נופלים לטאביט רק כשאין פנקס אמין ליום הזה.
-    const entry = await readLedgerDay(dayISO);
-    if (entry?.records.length && ledgerIsComplete(entry)) {
-      return { rows: ledgerDayRows(entry.records, dayISO) as LabResRow[], source: "ledger", ageMinutes: null };
+    // ימי עבר נקראים מטאביט עצמו: הארכיון נגיש לכל יום (המגבלה היא על גודל
+    // החלון). הפנקס שלנו משמש רק כשהקריאה החיה כבויה - ראה LEDGER_READS.
+    if (LEDGER_READS) {
+      const entry = await readLedgerDay(dayISO);
+      if (entry?.records.length && ledgerIsComplete(entry)) {
+        return { rows: ledgerDayRows(entry.records, dayISO) as LabResRow[], source: "ledger", ageMinutes: null };
+      }
     }
     const res = (await cachedAgentCall("read_day", { day: dayISO }, dayISO)) as { reservations?: LabResRow[] };
     return { rows: res.reservations ?? [], source: "archive", ageMinutes: null };
