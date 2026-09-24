@@ -9,12 +9,26 @@
  * הרצה: NODE_OPTIONS=--use-system-ca ADMIN_TOKEN=<טוקן> node scripts/tabit-lab-e2e.mjs
  *        ...node scripts/tabit-lab-e2e.mjs --only=פיקדון
  */
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, readFileSync } from "fs";
 mkdirSync("scan-data", { recursive: true });
+
+// הטוקן נקרא מ-.env.local, שהוא gitignored. כך הוא לא עובר בשורת הפקודה
+// (שנשמרת בהיסטוריית המעטפת) ולא בצ'אט.
+try {
+  const text = readFileSync(".env.local", "utf8");
+  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  for (const line of body.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+  }
+} catch { /* אולי המשתנים כבר בסביבה */ }
 
 const BASE = process.env.SCAN_BASE || "https://cavalli-chatbot.vercel.app";
 const TOKEN = process.env.ADMIN_TOKEN || process.argv.find((a) => !a.startsWith("--") && a.length > 10 && !a.includes("/"));
-if (!TOKEN) { console.error("חסר ADMIN_TOKEN"); process.exit(1); }
+if (!TOKEN) {
+  console.error("חסר ADMIN_TOKEN. הוסף שורה ADMIN_TOKEN=... לקובץ .env.local (הוא לא נכנס לגיט).");
+  process.exit(1);
+}
 
 const login = await fetch(`${BASE}/api/admin/login`, {
   method: "POST", headers: { "content-type": "application/json" },
@@ -67,15 +81,19 @@ const SCENARIOS = [
     tools: ["tabit_booking_sources"],
   },
   {
-    // ⭐ המגבלה האמיתית של טאביט: 24 שעות ארכיון. אין מספר, ולכן אסור מספר.
-    name: "תקופה ארוכה: אומרים שלא זמין",
+    // תקופה נקראת יום-יום מהארכיון, ולכן היא איטית אבל אמיתית. חייבת לציין
+    // את הטווח, אחרת היא נקראת כמספר של יום.
+    name: "תקופה ארוכה: מספר אמיתי, עם ציון הטווח",
     q: "כמה אי-הגעות היו בחודש האחרון?",
-    must: [/לא זמין|לא ניתן|אי אפשר|24 השעות|מוגבל|רק להיום|רק את היום/],
+    tools: ["tabit_no_show_summary"],
+    must: [/30|חודש|\d{1,2}\.\d{1,2}/],
+    maxSecs: 90,
   },
   {
-    name: "יום ישן: לא ממציאים ולא מדווחים אפס",
+    name: "יום ישן נקרא כרגיל",
     q: `כמה אי-הגעות היו ב-${short(OLD)}?`,
-    mustNot: [/^אפס/, /\b0 אי-הגעות/],
+    tools: ["tabit_day_outcome"],
+    mustNot: [/לא יכול|אי אפשר לבדוק|לא זמין/],
   },
   {
     name: "חיפוש הזמנה בלי לשאול יום קודם",
