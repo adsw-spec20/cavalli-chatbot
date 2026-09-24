@@ -94,7 +94,13 @@ export function ledgerIsComplete(entry: LedgerDay): boolean {
  * (יש שם או טלפון) שאינו מזדמן.
  */
 const CANCEL_REASONS = new Set(["customer_cancelled", "cancelled"]);
+const SYSTEM_REASONS = new Set(["idle-temp-reservation"]);
 const hasCustomer = (r: LedgerRecord) => !!((r.name && r.name.trim()) || (r.phone && r.phone.trim()));
+/**
+ * דלי "לקוח לא הגיע" של הממשק: כל סיבת ארכוב שאינה ביטול ואינה ניקוי מערכת.
+ * אומת מול המסך ב-23.9 - 14 רשומות no_show ועוד אחת עם הסיבה "אחר" = 15.
+ */
+const isNoShowReason = (reason: string) => !!reason && !CANCEL_REASONS.has(reason) && !SYSTEM_REASONS.has(reason);
 
 export interface DayOutcome {
   day: string;
@@ -117,7 +123,7 @@ export function computeDayOutcome(records: LedgerRecord[], day: string): DayOutc
   const onDay = records.filter((r) => r.day === day && r.reason !== "idle-temp-reservation");
   const booked = onDay.filter((r) => !r.walkin);
   const walkIns = onDay.filter((r) => r.walkin);
-  const noShow = onDay.filter((r) => r.reason === "no_show");
+  const noShow = onDay.filter((r) => isNoShowReason(r.reason));
   const cancelAll = onDay.filter((r) => CANCEL_REASONS.has(r.reason));
   const cancelled = cancelAll.filter((r) => hasCustomer(r) && !r.walkin);
   const arrived = booked.filter((r) => !r.reason);

@@ -73,8 +73,11 @@ const RECORDS: LedgerRecord[] = [
   rec({ id: "11", reason: "customer_cancelled", seats: 4, name: "", phone: "" }),
   rec({ id: "5", reason: "", seats: 4, paid_agorot: 48000, tips_agorot: 5000 }),
   rec({ id: "6", reason: "", seats: 3, paid_agorot: 22000, tips_agorot: 2000 }),
-  // מזדמנים: לא הזמנות. 12 מתוך 14 רשומות ה-no_show האמיתיות ב-23.9 היו כאלה.
+  // מזדמנים: לא הזמנות. 12 מתוך 15 רשומות ה"לא הגיע" האמיתיות ב-23.9 היו כאלה.
   rec({ id: "7", walkin: true, reason: "no_show", seats: 2, source: "הגעה מהרחוב" }),
+  // ⚠️ סיבת ארכוב מותאמת. אומת מול המסך: היא נספרת תחת "לקוח לא הגיע".
+  // זה בדיוק ההפרש בין 14 ל-15 ב-23.9, ובלי זה הבוט סותר את המסך.
+  rec({ id: "12", walkin: true, reason: "אחר", seats: 4, source: "הגעה מהרחוב" }),
   rec({ id: "8", walkin: true, reason: "", seats: 5, source: "הגעה מהרחוב", paid_agorot: 30000 }),
   // רשומה זמנית שפגה - לא נספרת בכלל
   rec({ id: "9", reason: "idle-temp-reservation", seats: 4 }),
@@ -85,19 +88,19 @@ const RECORDS: LedgerRecord[] = [
 const out = computeDayOutcome(RECORDS, DAY);
 // ⚠️ ההגדרות מכוילות למסנני הממשק של טאביט, כי הצוות משווה למסך שפתוח מולו.
 // "לקוח לא הגיע" סופר גם מזדמנים; "לקוח ביטל" סופר רק לקוח אמיתי שאינו מזדמן.
-t("אי-הגעות כמו במסנן של טאביט: כולל מזדמנים", out.no_show, 3);
+t("אי-הגעות כמו במסנן של טאביט: כולל מזדמנים וסיבות מותאמות", out.no_show, 4);
 t("ביטולים כמו במסנן של טאביט: רק לקוח אמיתי", out.cancelled, 2);
 t("ביטול בלי שם ובלי טלפון לא נספר", out.cancelled_without_customer, 1);
 t("הפירוק: כמה מהאי-הגעות הן הזמנות", out.no_show_reservations, 2);
-t("הפירוק: כמה מהן מזדמנים", out.no_show_walkins, 1);
+t("הפירוק: כמה מהן מזדמנים", out.no_show_walkins, 2);
 t("הזמנות מראש בלבד", out.booked_total, 7);
 t("הגיעו", out.arrived, 2);
-t("מזדמנים נספרים בנפרד", out.walk_ins, 2);
+t("מזדמנים נספרים בנפרד", out.walk_ins, 3);
 t("אחוז אי-הגעה מחושב מההזמנות בלבד", out.no_show_rate_pct, 28.6);
-t("סועדים שלא הגיעו", out.covers.no_show, 14);
-t("רשימת אי-ההגעות שמית", out.no_show_list.map((r) => r.id), ["1", "2", "7"]);
+t("סועדים שלא הגיעו", out.covers.no_show, 18);
+t("רשימת אי-ההגעות שמית", out.no_show_list.map((r) => r.id), ["1", "2", "7", "12"]);
 t("יום אחר לא נספר", computeDayOutcome(RECORDS, "2026-09-22").no_show, 1);
-t("רשומה זמנית לא נספרת", out.booked_total + out.walk_ins, 9);
+t("רשומה זמנית לא נספרת", out.booked_total + out.walk_ins, 10);
 
 // ===== הכנסות =====
 
@@ -111,9 +114,9 @@ t("אחוז טיפ", rev.tip_pct, 7);
 // ===== מקורות =====
 
 const src = computeSources(RECORDS, DAY);
-t("סך ההזמנות בפילוח מקורות", src.total, 9);
+t("סך ההזמנות בפילוח מקורות", src.total, 10);
 t("המקור הנפוץ ראשון", src.breakdown[0].source, "אונליין (אתר)");
-t("פילוח מסתכם בסך הרשומות", src.breakdown.reduce((s, b) => s + b.count, 0), 9);
+t("פילוח מסתכם בסך הרשומות", src.breakdown.reduce((s, b) => s + b.count, 0), 10);
 
 if (fails.length) {
   console.log(`\n${fails.length} נכשלו:\n`);

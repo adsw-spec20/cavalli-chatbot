@@ -606,9 +606,24 @@ async function getArchived(page, requestedFromISO) {
 // מולו הוא בדיוק מה שהורס את האמון, ולכן ההגדרה כאן מיושרת אליו.
 
 const CANCEL_REASONS = new Set(["customer_cancelled", "cancelled"]);
-const OTHER_REASON = "אחר";
+/** ניקוי מערכת של הזמנה זמנית שפגה - לא אירוע אמיתי, לא נספר בשום דלי. */
+const SYSTEM_REASONS = new Set(["idle-temp-reservation"]);
 /** כמה ימים אחורה נבדקת היסטוריית לקוח. כל יום הוא בקשה נפרדת. */
 const CUSTOMER_HISTORY_DAYS = 14;
+
+/**
+ * מה נכנס לדלי "לקוח לא הגיע" של הממשק.
+ *
+ * ⚠️ אומת מול המסך ב-23.9: יש 14 רשומות `no_show`, והממשק מראה 15. ההפרש הוא
+ * רשומה אחת עם הסיבה "אחר" (סיבת ארכוב מותאמת של המסעדה) - והיא כן מופיעה שם.
+ * כלומר הממשק לא סופר ערך אחד ספציפי, אלא **כל סיבת ארכוב שאינה ביטול ואינה
+ * ניקוי מערכת**. ההגדרה הרחבה הזאת גם תכסה סיבות מותאמות נוספות בעתיד, במקום
+ * להשמיט אותן בשקט.
+ */
+function isNoShowReason(reason) {
+  const r = reason || "";
+  return !!r && !CANCEL_REASONS.has(r) && !SYSTEM_REASONS.has(r);
+}
 
 function hasCustomer(r) {
   const c = (r.reservation_details || {}).customer || {};
@@ -683,12 +698,13 @@ function classifyDay(onDay, day, today, tableNum) {
   const seatsOf = (r) => (r.reservation_details || {}).seats_count || 0;
   const covers = (arr) => arr.reduce((s, r) => s + seatsOf(r), 0);
 
-  const noShow = onDay.filter((r) => r.archived_reason === "no_show");
+  const noShow = onDay.filter((r) => isNoShowReason(r.archived_reason));
   const cancelAll = onDay.filter((r) => CANCEL_REASONS.has(r.archived_reason || ""));
   // ⚠️ זו ההגדרה שמייצרת את אותו מספר שבמסך: ביטול של לקוח אמיתי, לא מזדמן.
   const cancelled = cancelAll.filter((r) => hasCustomer(r) && !isWalkinType(r));
   const cancelWithoutCustomer = cancelAll.filter((r) => !hasCustomer(r));
-  const other = onDay.filter((r) => (r.archived_reason || "") === OTHER_REASON);
+  // סיבות ארכוב מותאמות (למשל "אחר") - נספרות בתוך אי-ההגעות, ומדווחות גם לחוד.
+  const other = noShow.filter((r) => r.archived_reason !== "no_show");
   const walkIns = onDay.filter(isWalkinType);
   const booked = onDay.filter((r) => !isWalkinType(r));
   const arrived = booked.filter((r) => !r.archived_reason);
@@ -752,7 +768,7 @@ async function actNoShowSummary(page, params) {
     if (reason === "idle-temp-reservation") continue;
     const walkin = isWalkinType(r);
     if (walkin) walkIns++;
-    if (reason === "no_show") {
+    if (isNoShowReason(reason)) {
       noShow++;
       if (!walkin) noShowBooked++;
       const c = r.reservation_details && r.reservation_details.customer;
