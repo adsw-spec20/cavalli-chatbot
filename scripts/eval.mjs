@@ -20,6 +20,14 @@ const B = process.argv.slice(2).find((a) => a.startsWith("http")) || "http://loc
 // הסינון לפי שם מקרה מטופל ב-parseArgs (ARGS.filter) למטה. סדר הארגומנטים
 // חופשי: "eval.mjs --areas=reservation" קרס פעם כי הכתובת נלקחה מ-argv[2].
 
+// תאריך "d.M" בעוד N ימים. ⚠️ מקרה עם תאריך קבוע נרקב מעצמו: המקרה של זיהוי
+// ההזמנה נכתב ב-17.9 עם "17.9 הקרוב", וכשהתאריך עבר הבוט ענה בצדק "זה בעבר"
+// והבדיקה נצבעה אדום בלי שום רגרסיה אמיתית.
+const inDays = (n) => {
+  const d = new Date(Date.now() + n * 864e5);
+  return `${d.getDate()}.${d.getMonth() + 1}`;
+};
+
 // ----- חלון אחרי חצות (17.9) -----
 // בין 00:00 ל-05:00 הבוט **אמור** לעצור ולשאול על איזה יום מדובר כשנאמר
 // "מחר"/"הערב" בלי תאריך (ראה day-context.ts). זו התנהגות מכוונת, ולכן מקרים
@@ -398,6 +406,71 @@ const CASES = [
     exclude: ["בוטלה", "ביטלתי", "ההזמנה בוטלה"],
     midnight: { includeAny: ["התכוונת", "שלא נתבלבל", "לוודא"], includeAll: undefined, exclude: undefined },
   },
+  // ===== בסיס לפני קיצוץ כלל 14 (24.9) =====
+  // הכיסוי הקיים בודק *תוכן* ("מקום פנוי") ולא *ניסוח*, ולכן קיצוץ היה יכול
+  // לשנות את המשפטים שבעל העסק כתב מבלי שאף בדיקה תשים לב. המקרים כאן נועלים
+  // את הניסוח עצמו. הם נכתבו אחרי לכידת ההתנהגות בפועל, לא מתוך ניחוש:
+  // המודל משחזר את הנוסח אך מסדר את הרווח לפני האימוג'י, ולכן ננעל גוף המשפט.
+  {
+    name: "נוסח שישי - מילה במילה",
+    areas: ["reservation"],
+    turns: ["אני רוצה להזמין מקום ליום שישי הקרוב בשעה 11:00", "נהיה 4"],
+    includeAll: [
+      ["בימי שישי אנחנו לא לוקחים הזמנות מראש - פשוט מגיעים ויושבים על בסיס מקום פנוי"],
+      ["אנחנו פתוחים עד 15:00"],
+    ],
+  },
+  {
+    name: "נוסח ראשון - מילה במילה",
+    areas: ["reservation"],
+    turns: ["יש אפשרות להזמין שולחן ליום ראשון", "נהיה 4"],
+    includeAll: [["ביום ראשון אנחנו לא לוקחים הזמנות מראש, פשוט מגיעים ויושבים על בסיס מקום פנוי"]],
+  },
+  {
+    name: "נוסח שעות היום - מילה במילה",
+    areas: ["reservation"],
+    turns: ["מקום ליום שלישי בבוקר ל-4 אנשים"],
+    includeAll: [
+      ["אנחנו לא לוקחים הזמנות מראש לשעות היום, פשוט מגיעים ויושבים על בסיס מקום פנוי"],
+      ["הזמנות מראש הן רק לשעות הערב (החל מ-18:00)"],
+    ],
+  },
+  {
+    name: "נוסח ברק - מילה במילה",
+    areas: ["reservation"],
+    turns: ["אני רוצה להזמין מקום ליום שישי הקרוב בשעה 11:00", "נהיה 9"],
+    includeAll: [
+      ["לקבוצה בגודל כזה הכי נוח לתאם ישירות מול ברק, איש הקשר שלנו לקבוצות ואירועים: 050-236-6466"],
+      ["תדברו איתו והוא ייתן לכם את כל הפרטים"],
+    ],
+  },
+  {
+    name: "נוסח שבת - מילה במילה",
+    areas: ["reservation"],
+    turns: ["אפשר להזמין שולחן לשבת?"],
+    includeAll: [["בשבת אנחנו סגורים, נשמח לפגוש אותכם ביום ראשון"]],
+  },
+  {
+    // ⚠️ נכשל כרגע **במכוון** - זו תקלה חיה שהבדיקה הזאת חשפה ב-24.9, לפני
+    // שנגענו בכלל 14. הבוט ענה "ביטול שבוע מראש זה בתוך חלון ה-24 שעות"
+    // (הפוך מהמדיניות), אמר "Tabit" ללקוח למרות האיסור, והמציא הסבר על
+    // חברת האשראי. השורש הוא פער בתוכן: אין לנו תשובה כתובה לשאלה מה קורה
+    // לפיקדון **ששולם** כשמבטלים מראש. עד שבעל העסק יכריע - המקרה נשאר אדום
+    // כדי שלא נשכח, ובהשוואת לפני/אחרי הוא נספר כ"לא השתנה".
+    name: "פיקדון - שאלה שאין עליה תשובה לא מקבלת המצאה",
+    areas: ["reservation", "deposit"],
+    turns: ["שילמתי פיקדון וביטלתי שבוע מראש, תוך כמה זמן הכסף חוזר לכרטיס?"],
+    includeAny: ["אבדוק", "אברר", "הצוות", "לוודא", "8149"],
+    exclude: ["ימי עסקים", "תוך 3", "תוך 5", "תוך 7", "תוך 14", "תוך שבוע", "מיידית", "באופן מיידי"],
+  },
+  {
+    // "אל תשתמש בכלי כפתק לצוות": יום שאי אפשר להזמין בו נשאר כזה גם כשמתעקשים
+    name: "התעקשות ביום לא זמין - לא נפתחת בקשה",
+    areas: ["reservation"],
+    turns: ["אפשר להזמין שולחן ליום שישי בצהריים?", "נהיה 4", "בכל זאת אפשר שתשריין לי בבקשה?"],
+    exclude: ["העברתי", "הבקשה הועברה", "שריינתי", "הצוות יבדוק שיש מקום", "רשמתי לך"],
+  },
+
   // ----- התפריט המלא (23.9) - התקלה שדווחה מהשטח -----
   // לקוחות שביקשו "את התפריט המלא" קיבלו "סליחה, יש לי תקלה טכנית": המודל
   // התבקש להקליד 3,400 תווים, חרג מהמגבלות, והבקשה נקטעה. נבנה עכשיו בקוד.
@@ -501,7 +574,7 @@ const CASES = [
   },
   {
     name: "זיהוי הזמנה - אחרי שנמסרו הפרטים לא אומר 'לא מצאתי'",
-    turns: ["יש לי הזמנה ואני רוצה להזיז אותה משעה 20:00 לשעה 21:00", "על שם שלומי, לתאריך 17.9 הקרוב, הטלפון 052-848-7546"],
+    turns: ["יש לי הזמנה ואני רוצה להזיז אותה משעה 20:00 לשעה 21:00", `על שם שלומי, לתאריך ${inDays(5)}, הטלפון 052-848-7546`],
     // מקבלים גם העברה לצוות וגם הפניה לחיוג: המסלול תלוי במרחק מהמועד, ומה
     // שנבדק כאן הוא שהבוט לא פוסק שאין הזמנה - לא באיזה מסלול הוא בחר.
     includeAny: ["צוות", "אעביר", "מעביר", "יבדקו", "8149"],
@@ -756,10 +829,21 @@ function takeawayCases() {
 async function send(text, conversationId, clientId) {
   const r = await fetch(B + "/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: AUTH,
     body: JSON.stringify({ message: text, conversationId, clientId }),
   });
-  return r.json();
+  const j = await r.json().catch(() => ({}));
+  // ⚠️ בלי זה כשל אימות הופיע כ"תשובה ריקה" בכל מקרה, וזה נראה כמו רגרסיה
+  // באיכות במקום מה שהוא באמת - בעיית סביבה.
+  if (!r.ok || j.error) {
+    console.error(`
+❌ הקריאה ל-/api/chat נכשלה (${r.status}): ${j.error ?? "ללא גוף"}`);
+    if (r.status === 401) {
+      console.error("   האתר נעול. הרץ עם ADMIN_TOKEN=<הטוקן> כדי שהחבילה תתחבר קודם.");
+    }
+    process.exit(1);
+  }
+  return j;
 }
 
 // ===== תיוג אזורים וסינון חכם (15.9) =====
@@ -782,7 +866,17 @@ const AREA_RULES = [
   { rx: /לשון נקבה|שם|עברית|ניסוח|שגיאת כתיב|ברכה/, areas: ["hebrew"] },
   { rx: /וואטסאפ|אינסטגרם|מספרים בהפניה/, areas: ["contact"] },
 ];
-function areasOf(name) {
+/**
+ * אזורי המקרה. מקבל את המקרה עצמו (או שם, לתאימות).
+ *
+ * ⚠️ 24.9: התיוג נעשה רק לפי ניחוש משם המקרה, ולכן מקרה חדש יכול ליפול
+ * בשקט ל"general" ולא לרוץ בהרצה ממוקדת - בדיוק מה שקרה לבדיקות שנכתבו
+ * כדי לשמור על כלל 14 לפני קיצוץ: הן לא נכללו בבסיס. עכשיו אפשר לציין
+ * areas במפורש על המקרה, והניחוש מהשם נשאר רק כברירת מחדל.
+ */
+function areasOf(c) {
+  if (typeof c === "object" && Array.isArray(c.areas) && c.areas.length) return c.areas;
+  const name = typeof c === "string" ? c : c.name;
   const hit = new Set();
   for (const r of AREA_RULES) if (r.rx.test(name)) r.areas.forEach((a) => hit.add(a));
   if (!hit.size) hit.add("general");
@@ -848,7 +942,7 @@ let RUNNING = CASES;
 if (ARGS.coreOnly) RUNNING = CASES.filter((c) => CORE_RX.test(c.name));
 else if (selectedAreas) {
   const want = new Set(selectedAreas);
-  RUNNING = CASES.filter((c) => CORE_RX.test(c.name) || areasOf(c.name).some((a) => want.has(a)));
+  RUNNING = CASES.filter((c) => CORE_RX.test(c.name) || areasOf(c).some((a) => want.has(a)));
 }
 if (ARGS.filter) RUNNING = RUNNING.filter((c) => c.name.includes(ARGS.filter));
 if (ARGS.max > 0) RUNNING = RUNNING.slice(0, ARGS.max);
@@ -863,7 +957,7 @@ if (IN_MIDNIGHT_WINDOW) {
 
 if (ARGS.list) {
   const byArea = {};
-  for (const c of CASES) for (const a of areasOf(c.name)) (byArea[a] ??= []).push(c.name);
+  for (const c of CASES) for (const a of areasOf(c)) (byArea[a] ??= []).push(c.name);
   console.log("אזורים זמינים (--areas=...):\n");
   for (const [a, names] of Object.entries(byArea).sort((x, y) => y[1].length - x[1].length))
     console.log(`  ${a.padEnd(12)} ${String(names.length).padStart(3)} מקרים`);
@@ -898,6 +992,26 @@ const costBefore = readLocalCost();
 let passed = 0;
 let failed = 0;
 const failures = [];
+
+// ----- התחברות (מאז נעילת האתר, /api/chat אינו אנונימי) -----
+// כשאין ADMIN_TOKEN בסביבה - שרת פיתוח בלי טוקן פתוח ממילא, ואז אין מה לעשות.
+const AUTH = { "Content-Type": "application/json" };
+if (process.env.ADMIN_TOKEN) {
+  try {
+    const lg = await fetch(B + "/api/admin/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ master: process.env.ADMIN_TOKEN }),
+    });
+    const ck = (lg.headers.getSetCookie?.() || [])
+      .map((c) => c.split(";")[0])
+      .find((c) => /cavalli_session=/.test(c));
+    if (ck) AUTH.cookie = ck;
+    else console.warn("⚠️ ההתחברות לא החזירה עוגייה - ממשיכים בלי.");
+  } catch (e) {
+    console.warn("⚠️ ההתחברות נכשלה:", e.message);
+  }
+}
 
 for (let i = 0; i < RUNNING.length; i++) {
   const c = RUNNING[i];

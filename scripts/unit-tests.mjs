@@ -23,6 +23,7 @@ const SUITES = [
   ["שער ההזמנה לביקורת", "scripts/review-invite-test.mts"],
   ["ניקוי תשובת המודל", "scripts/sanitize-test.mts"],
   ["בקשת תפריט ותפריט מלא", "scripts/menu-test.mts"],
+  ["נוסחי ההזמנה מול הקוד", "scripts/reservation-wording-test.mts"],
 ];
 
 let failed = 0;
