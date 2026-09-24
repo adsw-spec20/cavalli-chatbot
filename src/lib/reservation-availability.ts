@@ -310,7 +310,21 @@ export interface VerdictLine {
  * מקום פנוי" נקרא גם על 20:00. כאן הקוד מצליב (יום + שעה + גודל + שעות
  * הפעילות של אותו תאריך) ומוסר תשובה מוכנה. null כשאין עוד יום.
  */
+/** שורת ההכרעה של ברק - נוסח קבוע, זהה בכל יום ובכל שעה. */
+function barakLine(head: string): string {
+  return (
+    `${head} ➡️ ברק. **מסור את הנוסח הבא כמו שהוא, מילה במילה:**\n"${RESERVATION_TEXTS.barak}"\n` +
+    `בלי איסוף פרטים, בלי הכלי, ובלי להסביר למה דווקא ברק. **וזו אינה הסלמה** - אל תקרא ל-escalate_to_human.`
+  );
+}
+
 export function policyVerdictFor(cfg: BusinessConfig, s: SlotsForVerdict, now: Date = new Date()): VerdictLine | null {
+  // ⚠️ קבוצה של 9+ מוכרעת עוד לפני שידוע היום: בטבלה העמודה הזאת זהה בכל
+  // השורות. בלי זה "אנחנו 12, אפשר לארח?" בלי תאריך לא קיבל שום הכרעה, ואחרי
+  // שהנוסח ירד מהפרומפט לא היה לבוט מאיפה לקחת אותו.
+  if ((s.people ?? 0) >= GROUP_MIN_FOR_BARAK) {
+    return { verdict: "barak", line: barakLine("הכרעת המדיניות (מחושבת בקוד לפי מספר הסועדים, אל תכריע בעצמך):") };
+  }
   if (!s.dateISO || !/^\d{4}-\d{2}-\d{2}$/.test(s.dateISO)) return null;
   const iso = s.dateISO;
   const hm = s.time?.match(/^(\d{1,2}):(\d{2})$/);
@@ -331,7 +345,10 @@ export function policyVerdictFor(cfg: BusinessConfig, s: SlotsForVerdict, now: D
         line:
           `${head} 🔒 **סגורים כל היום**${note ? ` (${note})` : ""}` +
           (next ? `, ונפתחים שוב ${reopenRef(next, today)}` : "") +
-          `. אמור את זה בקצרה, עם היום והתאריך${note ? " והסיבה" : ""}, ואל תציע לבוא או לשריין לתאריך הזה.`,
+          `. אמור את זה בקצרה, עם היום והתאריך${note ? " והסיבה" : ""}, ואל תציע לבוא או לשריין לתאריך הזה.` +
+          // שבת רגילה: יש לה נוסח קבוע שבעל העסק כתב. סגירה חריגה (חג) מקבלת
+          // את המשפט המורכב למעלה, כי שם צריך לומר גם את התאריך ואת הסיבה.
+          (dow === 6 && !note ? `\n**הנוסח:** "${RESERVATION_TEXTS.saturday}"` : ""),
       };
     }
     case "closed_hour": {
@@ -346,12 +363,14 @@ export function policyVerdictFor(cfg: BusinessConfig, s: SlotsForVerdict, now: D
       };
     }
     case "barak":
-      return { verdict: "barak", line: `${head} ➡️ ברק - הנוסח של ברק מהטבלה בלבד.` };
+      return { verdict: "barak", line: barakLine(head) };
     case "walk_in": {
-      const which = dow === 5 ? "שישי" : dow === 0 ? "ראשון" : "שני-חמישי לפני 18:00";
+      const text = dow === 5 ? RESERVATION_TEXTS.friday : dow === 0 ? RESERVATION_TEXTS.sunday : RESERVATION_TEXTS.daytime;
       return {
         verdict: "walk_in",
-        line: `${head} 🚶 מקום פנוי - הנוסח של ${which} מהטבלה, בלי איסוף פרטים ובלי הכלי.`,
+        line:
+          `${head} 🚶 מקום פנוי. **מסור את הנוסח הבא כמו שהוא, מילה במילה:**\n"${text}"\n` +
+          `בלי איסוף פרטים, בלי סיכום, ובלי לקרוא לכלי.`,
       };
     }
     case "book":
